@@ -1,0 +1,44 @@
+name: Swift packages
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/swift-packages.yml"
+      - "ios/Packages/**"
+      - "shared/golden/**"
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - ".github/workflows/swift-packages.yml"
+      - "ios/Packages/**"
+      - "shared/golden/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: swift test (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    container: swift:6.2-noble
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [BandProtocol, Metrics, BandKit]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Test package
+        working-directory: ios/Packages/${{ matrix.package }}
+        run: swift test

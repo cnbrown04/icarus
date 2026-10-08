@@ -1,0 +1,280 @@
+name: iOS screenshots
+
+on:
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - ".github/workflows/ios-screenshots.yml"
+      - "ios/**"
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      quick:
+        description: "Run only iPhone 17 Pro, light"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app
+
+jobs:
+  setup:
+    name: Build screenshot matrix
+    # Pull requests run only when the "screenshots" label is added.
+    if: github.event_name != 'pull_request' || github.event.label.name == 'screenshots'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - id: matrix
+        env:
+          QUICK: ${{ github.event_name == 'workflow_dispatch' && inputs.quick == true }}
+        run: |
+          set -euo pipefail
+          full='[
+            {"device": "iPhone 17 Pro", "slug": "iphone17pro", "appearance": "light"},
+            {"device": "iPhone 17 Pro", "slug": "iphone17pro", "appearance": "dark"},
+            {"device": "iPhone 17 Pro Max", "slug": "iphone17promax", "appearance": "light"},
+            {"device": "iPhone 17 Pro Max", "slug": "iphone17promax", "appearance": "dark"},
+            {"device": "iPhone 17e", "slug": "iphone17e", "appearance": "light"},
+            {"device": "iPhone 17e", "slug": "iphone17e", "appearance": "dark"}
+          ]'
+          if [ "$QUICK" = "true" ]; then
+            matrix=$(jq -c '{include: [.[] | select(.slug == "iphone17pro" and .appearance == "light")]}' <<< "$full")
+          else
+            matrix=$(jq -c '{include: .}' <<< "$full")
+          fi
+          echo "Matrix: $matrix"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  screenshots:
+    name: ${{ matrix.device }} ${{ matrix.appearance }}
+    needs: setup
+    runs-on: macos-26
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set short SHA
+        run: echo "SHA7=${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install tools
+        run: |
+          brew install xcodegen jq
+          xcodegen --version
+          jq --version
+          python3 -m pip install -r ci/requirements.txt
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: |
+          xcodegen generate
+          python3 scripts/sync_testplan_ids.py
+
+      # Picks the highest iOS 26.x runtime instead of hard-coding iOS-26-5 (§16.3).
+      - name: Select runtime and device
+        id: sim
+        env:
+          DEVICE: ${{ matrix.device }}
+        run: |
+          set -euo pipefail
+          xcrun simctl list runtimes -j > "$RUNNER_TEMP/runtimes.json"
+          xcrun simctl list devices available -j > "$RUNNER_TEMP/devices.json"
+          RUNTIME_KEY=$(jq -r '
+            [.runtimes[]
+              | select(.isAvailable == true and (.identifier | contains(".iOS-")) and (.version | startswith("26.")))
+            ]
+            | sort_by(.version | split(".") | map(tonumber))
+            | last
+            | .identifier // empty' "$RUNNER_TEMP/runtimes.json")
+          if [ -z "$RUNTIME_KEY" ]; then
+            echo "No available iOS 26 runtime" >&2
+            exit 1
+          fi
+          UDID=$(jq -r --arg rt "$RUNTIME_KEY" --arg d "$DEVICE" '
+            first(.devices[$rt][]? | select(.name == $d and .isAvailable == true) | .udid) // empty' "$RUNNER_TEMP/devices.json")
+          if [ -z "$UDID" ]; then
+            echo "No available device named '$DEVICE' in $RUNTIME_KEY" >&2
+            exit 1
+          fi
+          echo "Runtime: $RUNTIME_KEY"
+          echo "Device: $DEVICE ($UDID)"
+          echo "runtime=$RUNTIME_KEY" >> "$GITHUB_OUTPUT"
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Boot simulator
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID"
+
+      # The status_bar flags are verified against `simctl help status_bar` in this job's log (§16.3).
+      - name: Set appearance and status bar
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+          APPEARANCE: ${{ matrix.appearance }}
+        run: |
+          set -euo pipefail
+          xcrun simctl help status_bar
+          xcrun simctl ui "$UDID" appearance "$APPEARANCE"
+          xcrun simctl status_bar "$UDID" override \
+            --time "9:41" \
+            --batteryState charged \
+            --batteryLevel 100 \
+            --wifiBars 3 \
+            --cellularMode active \
+            --cellularBars 4
+
+      - name: Run screenshot test plan
+        working-directory: ios
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+          SLUG: ${{ matrix.slug }}
+          APPEARANCE: ${{ matrix.appearance }}
+        run: |
+          set -o pipefail
+          RESULT="$GITHUB_WORKSPACE/ios/build/screens-$SLUG-$APPEARANCE.xcresult"
+          rm -rf "$RESULT"
+          xcodebuild test \
+            -project Icarus.xcodeproj \
+            -scheme Icarus \
+            -testPlan Screenshots \
+            -destination "platform=iOS Simulator,id=$UDID" \
+            -resultBundlePath "$RESULT" \
+            CODE_SIGNING_ALLOWED=NO | xcbeautify
+
+      - name: Export attachments
+        env:
+          SLUG: ${{ matrix.slug }}
+          APPEARANCE: ${{ matrix.appearance }}
+        run: |
+          set -euo pipefail
+          rm -rf out
+          xcrun xcresulttool export attachments \
+            --path "ios/build/screens-$SLUG-$APPEARANCE.xcresult" \
+            --output-path out/raw
+          python3 ci/rename_screenshots.py out/raw/manifest.json out/final "$SLUG" "$APPEARANCE"
+          python3 ci/contact_sheet.py out/final "out/contact-sheet-$SLUG-$APPEARANCE.png"
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: screenshots-${{ env.SHA7 }}-${{ matrix.slug }}-${{ matrix.appearance }}
+          path: |
+            out/final/*.png
+            out/contact-sheet-*.png
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload xcresult on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: xcresult-${{ env.SHA7 }}-${{ matrix.slug }}-${{ matrix.appearance }}
+          path: ios/build/screens-${{ matrix.slug }}-${{ matrix.appearance }}.xcresult
+          retention-days: 7
+          if-no-files-found: ignore
+
+  aggregate:
+    name: Combine screenshots
+    needs: [setup, screenshots]
+    if: always() && needs.setup.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # Credentials stay persisted: the commit step pushes screenshots/ios back to the branch.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set short SHA
+        run: echo "SHA7=${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install tools
+        run: python3 -m pip install -r ci/requirements.txt
+
+      - name: Download screenshot artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: screenshots-${{ env.SHA7 }}-*
+          path: artifacts
+
+      - name: Build combined sheet and index
+        run: python3 ci/aggregate.py artifacts out
+
+      - name: Upload combined screenshots
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: screenshots-${{ env.SHA7 }}-all
+          path: out
+          retention-days: 14
+          if-no-files-found: error
+
+      # Committed copy for browsing in the repo. The artifacts above remain the backup.
+      - name: Prepare committed screenshots
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          PUBLISH="$RUNNER_TEMP/publish-ios"
+          rm -rf "$PUBLISH"
+          mkdir -p "$PUBLISH"
+          cp out/screens/*.png "$PUBLISH/"
+          cp out/contact-sheet-all.png "$PUBLISH/contact-sheet.png"
+          {
+            echo "# iOS screenshots"
+            echo
+            echo "Commit: $GITHUB_SHA"
+            echo "Run: $RUN_URL"
+            # Drop the generated title line and point links at the flat folder.
+            sed -e '1d' \
+              -e 's#](screens/#](#g' \
+              -e 's#contact-sheet-all.png#contact-sheet.png#g' out/index.md
+          } > "$PUBLISH/index.md"
+          ls "$PUBLISH"
+
+      - name: Commit screenshots to repo
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          BRANCH: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Run a copy: the checkout below may change ci/ before bash finishes reading the script.
+          cp ci/commit_screenshots.sh "$RUNNER_TEMP/commit_screenshots.sh"
+          bash "$RUNNER_TEMP/commit_screenshots.sh" "$BRANCH" "$RUNNER_TEMP/publish-ios" \
+            screenshots/ios "screenshots: ios $SHA7 [skip ci]"
+
+      - name: Comment run link on pull request
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ARTIFACT: screenshots-${{ env.SHA7 }}-all
+        run: |
+          set -euo pipefail
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$(printf 'iOS screenshots for %s: %s\nArtifact: %s' "${GITHUB_SHA:0:7}" "$RUN_URL" "$ARTIFACT")"

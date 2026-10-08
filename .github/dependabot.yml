@@ -1,0 +1,37 @@
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: /server
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+
+  # SwiftPM packages that exist in Phase 0. Add Store, SyncKit and AlarmKitBridge when they land (PLAN.md §4.2).
+  - package-ecosystem: swift
+    directory: /ios/Packages/BandProtocol
+    schedule:
+      interval: weekly
+  - package-ecosystem: swift
+    directory: /ios/Packages/Metrics
+    schedule:
+      interval: weekly
+  - package-ecosystem: swift
+    directory: /ios/Packages/BandKit
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: pip
+    directory: /ci
+    schedule:
+      interval: weekly
+
+  # Keeps the commit SHA pins in .github/workflows current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

@@ -1,0 +1,27 @@
+name: TestFlight
+
+# Stub until Phase 1 (PLAN.md §16.6). Trigger and runner are final.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "ios-v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  testflight:
+    name: TestFlight upload (stub)
+    runs-on: macos-26
+    timeout-minutes: 5
+    steps:
+      - name: Stub
+        run: |
+          echo "TestFlight upload is stubbed until Phase 1 (PLAN.md §16.6)"
+          exit 0

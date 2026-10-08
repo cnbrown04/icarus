@@ -1,0 +1,94 @@
+name: iOS
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/ios.yml"
+      - "ios/**"
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - ".github/workflows/ios.yml"
+      - "ios/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app
+
+jobs:
+  build-and-test:
+    name: Build, unit tests and lint
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set short SHA
+        run: echo "SHA7=${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+
+      - name: Install XcodeGen
+        run: |
+          brew install xcodegen
+          xcodegen --version
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: |
+          xcodegen generate
+          python3 scripts/sync_testplan_ids.py
+
+      # Phase 0 check: confirms the runtime key and simctl output that §16.3 marks [Unverified].
+      - name: Print simulator runtimes and devices
+        run: |
+          xcrun simctl list runtimes -j
+          xcrun simctl list devices available
+
+      - name: Cache SwiftPM and DerivedData
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/Developer/Xcode/DerivedData
+          key: ${{ runner.os }}-xcode-${{ hashFiles('ios/project.yml', 'ios/Packages/**/Package.swift', 'ios/Packages/**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-xcode-
+
+      - name: Unit tests
+        working-directory: ios
+        run: |
+          set -o pipefail
+          rm -rf build/unit.xcresult
+          xcodebuild test \
+            -project Icarus.xcodeproj \
+            -scheme Icarus \
+            -testPlan Unit \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+            -resultBundlePath build/unit.xcresult \
+            CODE_SIGNING_ALLOWED=NO | xcbeautify
+
+      - name: Install SwiftLint
+        run: |
+          brew install swiftlint
+          swiftlint --version
+
+      - name: SwiftLint
+        working-directory: ios
+        run: swiftlint lint --strict --config .swiftlint.yml
+
+      - name: Upload xcresult on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: xcresult-${{ env.SHA7 }}-unit
+          path: ios/build/unit.xcresult
+          retention-days: 7
+          if-no-files-found: ignore
