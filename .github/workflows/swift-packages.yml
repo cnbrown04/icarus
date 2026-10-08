@@ -39,9 +39,8 @@ jobs:
       - name: Swift version
         run: swift --version
 
-      # Store links SQLite through GRDB.
+      # Store (and packages that depend on it) link SQLite through GRDB.
       - name: Install SQLite headers
-        if: matrix.package == 'Store'
         run: apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev
 
       - name: Test package

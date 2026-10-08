@@ -9,7 +9,12 @@ public final class BackgroundUploader: NSObject, URLSessionDataDelegate, @unchec
     public static let identifier = "com.cnbrown04.icarus.upload"
 
     /// Completion from the system's relaunch event, held until the session reports it has finished delivering.
-    private static let pendingCompletion = Mutex<(() -> Void)?>(nil)
+    private static let pendingCompletion = Mutex<PendingCompletion?>(nil)
+
+    /// UIKit hands over a plain closure; it is only stored here and called once on the main queue.
+    private struct PendingCompletion: @unchecked Sendable {
+        let run: () -> Void
+    }
 
     private let outbox: Outbox
     private var session: URLSession!
@@ -40,7 +45,8 @@ public final class BackgroundUploader: NSObject, URLSessionDataDelegate, @unchec
     /// Called by the app delegate when the system relaunches the app for this session. The handler runs once the
     /// session has delivered its events.
     public static func handleEvents(completion: @escaping () -> Void) {
-        pendingCompletion.withLock { $0 = completion }
+        let pending = PendingCompletion(run: completion)
+        pendingCompletion.withLock { $0 = pending }
     }
 
     public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
@@ -56,12 +62,12 @@ public final class BackgroundUploader: NSObject, URLSessionDataDelegate, @unchec
     }
 
     public func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
-        let handler = Self.pendingCompletion.withLock { value -> (() -> Void)? in
+        let handler = Self.pendingCompletion.withLock { value -> PendingCompletion? in
             let pending = value
             value = nil
             return pending
         }
-        DispatchQueue.main.async { handler?() }
+        DispatchQueue.main.async { handler?.run() }
     }
 }
 #endif
