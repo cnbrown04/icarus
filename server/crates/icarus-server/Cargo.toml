@@ -1,0 +1,19 @@
+[package]
+name = "icarus-server"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "icarus-server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+icarus-api.workspace = true
+icarus-core.workspace = true
+icarus-db.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

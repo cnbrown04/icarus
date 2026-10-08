@@ -1,0 +1,18 @@
+[package]
+name = "icarus-api"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+axum.workspace = true
+icarus-db.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

@@ -1,0 +1,41 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+# Internal crates
+icarus-api = { path = "crates/icarus-api" }
+icarus-core = { path = "crates/icarus-core" }
+icarus-db = { path = "crates/icarus-db" }
+icarus-jobs = { path = "crates/icarus-jobs" }
+icarus-push = { path = "crates/icarus-push" }
+
+# External crates (pinned to the versions verified on crates.io, 2026-10-08)
+anyhow = "1.0.104"
+axum = "0.8.9"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sqlx = { version = "0.8.6", features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "macros",
+    "migrate",
+    "uuid",
+    "chrono",
+] }
+thiserror = "2.0.21"
+tokio = { version = "1.53.2", features = ["full"] }
+tower = { version = "0.5.3", features = ["util"] }
+tower-http = { version = "0.7.1", features = [
+    "trace",
+    "request-id",
+    "timeout",
+    "compression-gzip",
+] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
