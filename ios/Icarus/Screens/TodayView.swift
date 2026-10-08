@@ -15,7 +15,6 @@ struct TodayView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .pagePadding()
-            .accessibilityIdentifier("tab.today")
         }
         .navigationTitle("Today")
     }
@@ -24,7 +23,7 @@ struct TodayView: View {
         VStack(alignment: .leading, spacing: Spacing.s8) {
             HStack(spacing: Spacing.s8) {
                 Circle()
-                    .fill(liveState.connection == .connected ? Color.green : Color.secondary)
+                    .fill(liveState.isStreaming ? Color.green : Color.secondary)
                     .frame(width: Spacing.s8, height: Spacing.s8)
                 Text(liveState.connectionText)
                     .font(.caption)

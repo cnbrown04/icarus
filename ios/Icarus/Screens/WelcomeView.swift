@@ -16,6 +16,5 @@ struct WelcomeView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .pagePadding()
-        .accessibilityIdentifier("welcome.screen")
     }
 }

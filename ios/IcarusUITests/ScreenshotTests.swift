@@ -48,6 +48,39 @@ final class ScreenshotTests: XCTestCase {
         attachScreenshot(named: "01-welcome")
     }
 
+    func testPairBandScreenshot() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-IcarusUITest", "1",
+            "-IcarusScreen", "pairBand",
+            "-IcarusFixture", "resting_day",
+            "-IcarusNow", "2026-10-07T14:30:00Z",
+            "-AppleLanguages", "(en)",
+            "-AppleLocale", "en_US",
+        ]
+        app.launch()
+
+        // The fixture scan reports one band; no real Bluetooth is involved.
+        XCTAssertTrue(app.buttons.matching(identifier: "pairBand.row").firstMatch.waitForExistence(timeout: 30))
+        attachScreenshot(named: "05-pair-band")
+    }
+
+    func testDebugScreenshot() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-IcarusUITest", "1",
+            "-IcarusScreen", "debug",
+            "-IcarusFixture", "resting_day",
+            "-IcarusNow", "2026-10-07T14:30:00Z",
+            "-AppleLanguages", "(en)",
+            "-AppleLocale", "en_US",
+        ]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Debug"].waitForExistence(timeout: 30))
+        attachScreenshot(named: "18-debug")
+    }
+
     private func attachScreenshot(named name: String) {
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name

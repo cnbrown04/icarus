@@ -1,28 +1,53 @@
 import SwiftUI
 
-/// Chooses between Welcome and the tab bar.
+/// Chooses between onboarding, the tab bar and the Debug screen.
 struct RootView: View {
     let liveState: LiveState
     let config: LaunchConfig
 
     @AppStorage("welcome.completed") private var welcomeCompleted = false
-    @State private var welcomeDismissed = false
+    @State private var step: Step?
 
-    private var showsWelcome: Bool {
-        guard !welcomeDismissed else { return false }
-        if config.startScreen == .welcome { return true }
-        return !config.isUITest && !welcomeCompleted
+    enum Step: Equatable {
+        case welcome
+        case pairBand
+        case tabs
+        case debug
+    }
+
+    /// The step after the user's own choices. Launch arguments pick the start screen for tests.
+    private var currentStep: Step {
+        if let step { return step }
+        switch config.startScreen {
+        case .welcome: return .welcome
+        case .pairBand: return .pairBand
+        case .debug: return .debug
+        case nil: return !config.isUITest && !welcomeCompleted ? .welcome : .tabs
+        }
     }
 
     var body: some View {
-        if showsWelcome {
+        switch currentStep {
+        case .welcome:
             WelcomeView {
-                welcomeDismissed = true
-                welcomeCompleted = true
+                step = .pairBand
             }
-        } else {
+        case .pairBand:
+            NavigationStack {
+                PairBandView(liveState: liveState, onFinish: finishOnboarding)
+            }
+        case .tabs:
             MainTabView(liveState: liveState)
+        case .debug:
+            NavigationStack {
+                DebugView(liveState: liveState)
+            }
         }
+    }
+
+    private func finishOnboarding() {
+        welcomeCompleted = true
+        step = .tabs
     }
 }
 
@@ -52,7 +77,7 @@ struct MainTabView: View {
             .tabItem { Label("Device", systemImage: "antenna.radiowaves.left.and.right") }
 
             NavigationStack {
-                SettingsView()
+                SettingsView(liveState: liveState)
             }
             .tabItem { Label("Settings", systemImage: "gearshape") }
         }

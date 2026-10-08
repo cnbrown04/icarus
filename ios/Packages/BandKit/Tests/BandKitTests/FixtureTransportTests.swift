@@ -26,6 +26,71 @@ import Testing
 }
 
 @Suite struct FixtureTransportTests {
+    private let band = DiscoveredBand(
+        id: UUID(uuidString: "6C1F3A10-2B7D-4E0A-9C11-0000000000B1")!,
+        name: "Fixture band",
+        rssi: -48
+    )
+
+    @Test func rememberedBandStreamsWithoutPairing() async {
+        let transport = FixtureTransport(ndjson: heartRateLine(t: 100, bpm: 60), clock: RecordingClock(), band: band)
+        await transport.start()
+        var received: [BandEvent] = []
+        for await event in transport.events {
+            received.append(event)
+        }
+        #expect(Array(received.prefix(3)) == [
+            .discovered(band),
+            .remembered(band.id),
+            .state(.streaming),
+        ])
+    }
+
+    @Test func stopBeforePairingEndsWithoutStreaming() async {
+        let transport = FixtureTransport(
+            ndjson: heartRateLine(t: 100, bpm: 60),
+            clock: RecordingClock(),
+            band: band,
+            pairingRequired: true
+        )
+        await transport.start()
+        await transport.pair(UUID())
+        await transport.stop()
+        var received: [BandEvent] = []
+        for await event in transport.events {
+            received.append(event)
+        }
+        #expect(received == [.discovered(band), .state(.scanning)])
+    }
+
+    @Test func pairingStartsTheReplayForThePairedBandOnly() async {
+        let transport = FixtureTransport(
+            ndjson: heartRateLine(t: 100, bpm: 60),
+            clock: RecordingClock(),
+            band: band,
+            pairingRequired: true
+        )
+        let collected = Task {
+            var received: [BandEvent] = []
+            for await event in transport.events {
+                received.append(event)
+            }
+            return received
+        }
+        await transport.start()
+        await transport.pair(UUID())
+        await transport.pair(band.id)
+
+        let received = await collected.value
+        #expect(Array(received.prefix(4)) == [
+            .discovered(band),
+            .state(.scanning),
+            .remembered(band.id),
+            .state(.streaming),
+        ])
+        #expect(received.count == 6)
+    }
+
     @Test func replaysEventsInOrderPacedBySpeed() async throws {
         let text = [
             heartRateLine(t: 100, bpm: 60),
@@ -43,8 +108,14 @@ import Testing
             received.append(event)
         }
 
-        #expect(received.count == 4)
-        #expect(received.first == .connected)
+        // .state(.streaming), then .raw and .hr for each of the three valid frames.
+        #expect(received.count == 7)
+        #expect(received.first == .state(.streaming))
+        let raw = received.compactMap { event -> [UInt8]? in
+            guard case let .raw(char, bytes, _) = event, char == "2a37" else { return nil }
+            return bytes
+        }
+        #expect(raw.map { $0.count } == [4, 4, 4])
         let heartRates = received.compactMap { event -> (Int, Date)? in
             guard case let .hr(measurement, receivedAt) = event else { return nil }
             return (measurement.bpm, receivedAt)
@@ -64,7 +135,7 @@ import Testing
         for await event in transport.events {
             received.append(event)
         }
-        #expect(received == [.connected])
+        #expect(received == [.state(.streaming)])
     }
 
     @Test func bundledRestingDayFixtureReplaysCleanly() async throws {

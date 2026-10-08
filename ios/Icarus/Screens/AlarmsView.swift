@@ -13,6 +13,5 @@ struct AlarmsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .pagePadding()
         .navigationTitle("Alarms")
-        .accessibilityIdentifier("tab.alarms")
     }
 }

@@ -44,7 +44,7 @@ import Testing
         for await event in transport.events {
             received.append(event)
         }
-        #expect(received.first == .connected)
+        #expect(received.first == .state(.streaming))
         let heartRateEvents = received.dropFirst().compactMap { event -> Int? in
             guard case let .hr(measurement, _) = event else { return nil }
             return measurement.bpm

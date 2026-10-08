@@ -46,9 +46,8 @@ public struct SyntheticHeartRateSource: Sendable {
     }
 }
 
-/// Emits `.connected`, then one heart-rate event every `interval` seconds, until `maxSamples` or `stop()`.
-///
-/// TODO(PLAN.md §7.2): Tier B commands are not implemented in Phase 0.
+/// Emits `.state(.streaming)`, then one raw notification and one heart-rate event every `interval`
+/// seconds, until `maxSamples` or `stop()`. Used for demos, previews and `-IcarusSynthetic 1`.
 public actor SyntheticTransport: BandTransport {
     public nonisolated let events: AsyncStream<BandEvent>
 
@@ -79,6 +78,11 @@ public actor SyntheticTransport: BandTransport {
         task = Task { await self.run() }
     }
 
+    /// The synthetic band has no scan list, so there is nothing to pair with.
+    public func pair(_ id: UUID) async {}
+
+    public func forget() async {}
+
     public func stop() {
         task?.cancel()
         task = nil
@@ -86,7 +90,7 @@ public actor SyntheticTransport: BandTransport {
     }
 
     private func run() async {
-        continuation.yield(.connected)
+        continuation.yield(.state(.streaming))
         for index in 0 ..< (maxSamples ?? Int.max) {
             if index > 0 {
                 do {
@@ -95,8 +99,12 @@ public actor SyntheticTransport: BandTransport {
                     break
                 }
             }
-            guard !Task.isCancelled, let measurement = try? source.nextMeasurement() else { break }
-            continuation.yield(.hr(measurement, receivedAt: Date()))
+            guard !Task.isCancelled else { break }
+            let payload = source.nextPayload()
+            guard let measurement = try? HeartRateMeasurementParser.parse(payload) else { break }
+            let receivedAt = Date()
+            continuation.yield(.raw(char: NDJSONFixture.heartRateCharacteristic, bytes: payload, at: receivedAt))
+            continuation.yield(.hr(measurement, receivedAt: receivedAt))
         }
         continuation.finish()
     }

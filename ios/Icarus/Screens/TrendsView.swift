@@ -12,6 +12,5 @@ struct TrendsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .pagePadding()
         .navigationTitle("Trends")
-        .accessibilityIdentifier("tab.trends")
     }
 }

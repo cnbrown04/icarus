@@ -25,4 +25,14 @@ struct LaunchConfigTests {
         let config = LaunchConfig(arguments: ["Icarus", "-IcarusScreen", "welcome"])
         #expect(config.startScreen == .welcome)
     }
+
+    @Test func parsesPairBandAndDebugScreens() {
+        #expect(LaunchConfig(arguments: ["Icarus", "-IcarusScreen", "pairBand"]).startScreen == .pairBand)
+        #expect(LaunchConfig(arguments: ["Icarus", "-IcarusScreen", "debug"]).startScreen == .debug)
+    }
+
+    @Test func parsesSyntheticFlag() {
+        #expect(LaunchConfig(arguments: ["Icarus", "-IcarusSynthetic", "1"]).isSynthetic)
+        #expect(!LaunchConfig(arguments: ["Icarus"]).isSynthetic)
+    }
 }

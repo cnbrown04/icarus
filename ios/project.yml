@@ -53,6 +53,8 @@ targets:
           - fetch
           - remote-notification
         UILaunchScreen: {}
+        # Only standard HTTPS, if any. Stops the TestFlight export-compliance prompt per build.
+        ITSAppUsesNonExemptEncryption: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cnbrown04.icarus

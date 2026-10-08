@@ -2,9 +2,13 @@ import Foundation
 
 /// Replays a recorded NDJSON session through HeartRateMeasurementParser.
 ///
-/// Emits `.connected`, then one `.hr` per recorded frame in file order, then finishes the stream.
+/// Without `band`, the session streams as soon as it starts. With `band`, the band is announced
+/// as `.discovered` and then either remembered and streamed (default), or, with `pairingRequired`,
+/// streamed only after `pair(_:)` for that band. Each frame yields `.raw` then `.hr`.
 /// Gaps between frames are paced by `speed` (2 means twice as fast). Use `speed: .infinity`
-/// to replay without pauses. The `receivedAt` value is the recorded timestamp, not wall time.
+/// to replay without pauses. Timestamps are the recorded ones, not wall time.
+///
+/// Used only by UI tests and screenshots (PLAN.md §16.3).
 public actor FixtureTransport: BandTransport {
     public nonisolated let events: AsyncStream<BandEvent>
     public nonisolated let skippedLineCount: Int
@@ -13,9 +17,18 @@ public actor FixtureTransport: BandTransport {
     private let frames: [NDJSONFixture.Frame]
     private let speed: Double
     private let clock: any ReplayClock
+    private let band: DiscoveredBand?
+    private let pairingRequired: Bool
+    private var started = false
     private var replayTask: Task<Void, Never>?
 
-    public init(ndjson: String, speed: Double = 1, clock: any ReplayClock = RealtimeClock()) {
+    public init(
+        ndjson: String,
+        speed: Double = 1,
+        clock: any ReplayClock = RealtimeClock(),
+        band: DiscoveredBand? = nil,
+        pairingRequired: Bool = false
+    ) {
         precondition(speed > 0, "FixtureTransport speed must be positive")
         let parsed = NDJSONFixture.parse(ndjson)
         let (stream, continuation) = AsyncStream<BandEvent>.makeStream()
@@ -25,12 +38,34 @@ public actor FixtureTransport: BandTransport {
         self.skippedLineCount = parsed.skippedLineCount
         self.speed = speed
         self.clock = clock
+        self.band = band
+        self.pairingRequired = pairingRequired
     }
 
     public func start() {
-        guard replayTask == nil else { return }
-        replayTask = Task { await self.replay() }
+        guard !started else { return }
+        started = true
+        guard let band else {
+            beginReplay()
+            return
+        }
+        continuation.yield(.discovered(band))
+        if pairingRequired {
+            continuation.yield(.state(.scanning))
+        } else {
+            continuation.yield(.remembered(band.id))
+            beginReplay()
+        }
     }
+
+    public func pair(_ id: UUID) async {
+        guard started, pairingRequired, replayTask == nil, let band, band.id == id else { return }
+        continuation.yield(.remembered(id))
+        beginReplay()
+    }
+
+    /// Nothing to forget: the fixture band is never persisted.
+    public func forget() async {}
 
     public func stop() {
         replayTask?.cancel()
@@ -38,8 +73,12 @@ public actor FixtureTransport: BandTransport {
         continuation.finish()
     }
 
+    private func beginReplay() {
+        replayTask = Task { await self.replay() }
+    }
+
     private func replay() async {
-        continuation.yield(.connected)
+        continuation.yield(.state(.streaming))
         var previous: Double?
         for frame in frames {
             if let previous {
@@ -54,7 +93,9 @@ public actor FixtureTransport: BandTransport {
             }
             guard !Task.isCancelled else { break }
             previous = frame.timestamp
-            continuation.yield(.hr(frame.measurement, receivedAt: Date(timeIntervalSince1970: frame.timestamp)))
+            let receivedAt = Date(timeIntervalSince1970: frame.timestamp)
+            continuation.yield(.raw(char: NDJSONFixture.heartRateCharacteristic, bytes: frame.bytes, at: receivedAt))
+            continuation.yield(.hr(frame.measurement, receivedAt: receivedAt))
         }
         continuation.finish()
     }

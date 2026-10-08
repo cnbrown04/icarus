@@ -5,9 +5,13 @@ import Foundation
 struct LaunchConfig: Equatable, Sendable {
     enum StartScreen: String, Sendable {
         case welcome
+        case pairBand
+        case debug
     }
 
     var isUITest = false
+    /// `-IcarusSynthetic 1` forces the synthetic band in DEBUG builds, instead of the real radio.
+    var isSynthetic = false
     var fixtureName: String?
     var fixedNow: Date?
     var startScreen: StartScreen?
@@ -21,6 +25,7 @@ struct LaunchConfig: Equatable, Sendable {
             values[argument] = arguments[index + 1]
         }
         isUITest = values["-IcarusUITest"] == "1"
+        isSynthetic = values["-IcarusSynthetic"] == "1"
         fixtureName = values["-IcarusFixture"]
         fixedNow = values["-IcarusNow"].flatMap(Self.parseDate)
         startScreen = values["-IcarusScreen"].flatMap(StartScreen.init(rawValue:))

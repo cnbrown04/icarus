@@ -6,6 +6,8 @@ public enum NDJSONFixture {
     public struct Frame: Sendable, Equatable {
         /// Unix seconds, as recorded.
         public let timestamp: Double
+        /// The raw 0x2A37 payload, as recorded.
+        public let bytes: [UInt8]
         public let measurement: HeartRateMeasurement
     }
 
@@ -49,7 +51,7 @@ public enum NDJSONFixture {
         else {
             return nil
         }
-        return Frame(timestamp: entry.t, measurement: measurement)
+        return Frame(timestamp: entry.t, bytes: bytes, measurement: measurement)
     }
 
     static func bytes(fromHex hex: String) -> [UInt8]? {

@@ -4,18 +4,37 @@ struct DeviceView: View {
     let liveState: LiveState
 
     @State private var bandChannelEnabled = false
+    @State private var confirmsForget = false
+
+    private var bandName: String {
+        liveState.bandName ?? "Paired band"
+    }
 
     var body: some View {
         Form {
+            if liveState.isCollectionPaused {
+                Section {
+                    Text("Collection paused: open Icarus")
+                        .font(.body.weight(.semibold))
+                }
+            }
+
             Section {
-                LabeledContent("Band", value: "Not paired")
+                LabeledContent("Band", value: liveState.rememberedID == nil ? "Not paired" : bandName)
                 LabeledContent("State", value: liveState.connectionText)
-                LabeledContent("Source", value: liveState.sourceName)
-                LabeledContent("Last data") {
-                    if let date = liveState.lastDataAt {
-                        Text(date, style: .time)
-                    } else {
-                        Text("None")
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    lastDataRow
+                }
+            }
+
+            Section {
+                if liveState.rememberedID == nil {
+                    NavigationLink("Pair band") {
+                        PairBandView(liveState: liveState)
+                    }
+                } else {
+                    Button("Forget band", role: .destructive) {
+                        confirmsForget = true
                     }
                 }
             }
@@ -26,11 +45,30 @@ struct DeviceView: View {
             } header: {
                 Text("Experimental")
             } footer: {
-                // TODO(PLAN.md §6, Phase 6): enable with the Tier B explainer.
-                Text("Not available yet.")
+                Text("Available in a later phase")
             }
         }
+        .confirmationDialog("Forget '\(bandName)'?", isPresented: $confirmsForget, titleVisibility: .visible) {
+            Button("Forget band", role: .destructive) {
+                liveState.forgetBand()
+            }
+            Button("Cancel", role: .cancel) {}
+        }
         .navigationTitle("Device")
-        .accessibilityIdentifier("tab.device")
+    }
+
+    @ViewBuilder
+    private var lastDataRow: some View {
+        LabeledContent("Last data") {
+            if let last = liveState.lastDataAt {
+                if let stale = DataAge.staleText(since: last, now: liveState.now) {
+                    Text(stale)
+                } else {
+                    Text(last, style: .time)
+                }
+            } else {
+                Text("None")
+            }
+        }
     }
 }
