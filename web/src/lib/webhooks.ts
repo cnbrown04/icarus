@@ -5,6 +5,10 @@ export const AUTH_LABEL: Record<Hook['auth_mode'], string> = {
   secret_url: 'Secret URL',
 }
 
+// Shown with the secret URL mode, in the create dialog and on the endpoints list.
+export const SECRET_URL_WARNING =
+  'Secret URLs are weaker. The secret is in the address, which can leak into logs. Use a signature when the sender can sign.'
+
 const HOOK_PATH = '/v1/hooks/'
 
 // "https://host" from "https://host/v1/hooks/slug" (or "https://host/v1/hooks/slug/secret").

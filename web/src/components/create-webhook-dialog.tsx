@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { describeError } from '@/lib/errors'
 import { useCreateHook } from '@/lib/queries'
-import { originOf, secretUrl } from '@/lib/webhooks'
+import { originOf, SECRET_URL_WARNING, secretUrl } from '@/lib/webhooks'
 import type { Alarm, CreatedHook, Hook } from '@/lib/types'
 
 const AUTH_OPTIONS = [
@@ -124,9 +124,7 @@ function CreateForm({
           <p className="text-xs text-muted-foreground">Auth mode</p>
           <Segmented label="Auth mode" options={AUTH_OPTIONS} value={authMode} onChange={setAuthMode} />
           {authMode === 'secret_url' && (
-            <p className="text-xs text-destructive">
-              Secret URLs are weaker. The secret is in the address, which can leak into logs. Use a signature when the sender can sign.
-            </p>
+            <p className="text-xs text-destructive">{SECRET_URL_WARNING}</p>
           )}
         </div>
 

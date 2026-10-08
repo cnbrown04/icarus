@@ -82,3 +82,35 @@ export function coverageLevel(coverage: number): 0 | 1 | 2 | 3 | 4 {
   if (coverage < 0.75) return 3
   return 4
 }
+
+export type StressBin = { t: number; value: number; band: StressBand }
+
+// Means of the stress minutes over fixed buckets, so a day fits as bars. Minutes without a value are skipped.
+export function binStress(minutes: MinuteMetric[], binMinutes = 5): StressBin[] {
+  const size = binMinutes * 60_000
+  const sums = new Map<number, { sum: number; count: number }>()
+  for (const minute of minutes) {
+    if (minute.stress === null) continue
+    const t = Math.floor(Date.parse(minute.minute) / size) * size
+    const bin = sums.get(t) ?? { sum: 0, count: 0 }
+    bin.sum += minute.stress
+    bin.count += 1
+    sums.set(t, bin)
+  }
+  return [...sums.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([t, { sum, count }]) => {
+      const value = Math.round(sum / count)
+      return { t, value, band: stressBand(value) }
+    })
+}
+
+// Change of the latest value against the mean of the values before it. Oldest first; nulls are skipped.
+export function changeAgainstMean(values: (number | null)[]): number | null {
+  const present = values.filter((value): value is number => value !== null)
+  if (present.length < 2) return null
+  const latest = present[present.length - 1]
+  const earlier = present.slice(0, -1)
+  const mean = earlier.reduce((sum, value) => sum + value, 0) / earlier.length
+  return Math.round(latest - mean)
+}

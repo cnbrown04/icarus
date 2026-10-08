@@ -5,17 +5,19 @@ import {
   CalendarIcon,
   ClockIcon,
   DeviceMobileIcon,
-  FireIcon,
+  FlameIcon,
+  GaugeIcon,
   GearIcon,
   HeartIcon,
   HeartbeatIcon,
   SignOutIcon,
-  WaveformIcon,
   WebhooksLogoIcon,
   type Icon,
 } from '@phosphor-icons/react'
 import { useState } from 'react'
 import { PageActionSlotProvider } from '@/components/page-action'
+import { StatusBadge } from '@/components/status-badge'
+import { SyncStatusBadge } from '@/components/sync-status-badge'
 import {
   Sidebar,
   SidebarContent,
@@ -29,14 +31,15 @@ import {
   SidebarTrigger,
   useSidebar,
 } from '@/components/ui/sidebar'
-import { useLogout } from '@/lib/queries'
+import { useNow } from '@/hooks/use-now'
+import { useLogout, useSyncState } from '@/lib/queries'
 import { formatDayTitle } from '@/lib/time'
 
 const navItems: { to: string; label: string; icon: Icon }[] = [
   { to: '/', label: 'Today', icon: ClockIcon },
   { to: '/heart-rate', label: 'Heart rate', icon: HeartIcon },
-  { to: '/stress', label: 'Stress', icon: WaveformIcon },
-  { to: '/calories', label: 'Calories', icon: FireIcon },
+  { to: '/stress', label: 'Stress', icon: GaugeIcon },
+  { to: '/calories', label: 'Calories', icon: FlameIcon },
   { to: '/history', label: 'History', icon: CalendarIcon },
   { to: '/alarms', label: 'Alarms', icon: BellIcon },
   { to: '/webhooks', label: 'Webhooks', icon: WebhooksLogoIcon },
@@ -55,7 +58,10 @@ function AppSidebar() {
   return (
     <Sidebar>
       <SidebarHeader>
-        <p className="px-2 py-1 text-base font-medium">Icarus</p>
+        <p className="flex items-center gap-2 px-2 py-1 text-base font-medium">
+          <HeartbeatIcon aria-hidden className="size-4 text-hr" />
+          Icarus
+        </p>
       </SidebarHeader>
       <SidebarContent>
         <nav aria-label="Primary">
@@ -66,6 +72,7 @@ function AppSidebar() {
                   isActive={Boolean(matchRoute({ to: item.to }))}
                   onClick={() => setOpenMobile(false)}
                   render={<Link to={item.to} />}
+                  className="border-l-2 border-transparent data-active:border-sidebar-primary"
                 >
                   <item.icon aria-hidden />
                   <span>{item.label}</span>
@@ -76,6 +83,7 @@ function AppSidebar() {
         </nav>
       </SidebarContent>
       <SidebarFooter>
+        <SyncFooter />
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
@@ -89,6 +97,23 @@ function AppSidebar() {
         </SidebarMenu>
       </SidebarFooter>
     </Sidebar>
+  )
+}
+
+// Connection state at a glance: how old the last phone batch is (PLAN.md §11.2).
+function SyncFooter() {
+  const sync = useSyncState()
+  const now = useNow(60_000)
+  if (sync.isPending) return null
+  return (
+    <div className="flex flex-col items-start gap-2 px-2 py-1 text-xs">
+      <p className="text-muted-foreground">Sync</p>
+      {sync.isError ? (
+        <StatusBadge variant="danger">Sync unavailable</StatusBadge>
+      ) : (
+        <SyncStatusBadge lastBatchAt={sync.data.last_batch_at} now={now} />
+      )}
+    </div>
   )
 }
 

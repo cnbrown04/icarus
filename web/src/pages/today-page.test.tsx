@@ -36,9 +36,10 @@ describe('Today page', () => {
 
     expect(await screen.findByText('Heart rate, 1 min')).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Stress' })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: 'Heart rate' })).toBeTruthy()
-    expect(screen.getByText('Now')).toBeTruthy()
-    expect(screen.getByRole('heading', { name: 'Resting heart rate' })).toBeTruthy()
+    // Tile labels are plain text; only section titles are headings.
+    expect(screen.getByText('Heart rate', { selector: 'p' })).toBeTruthy()
+    expect(screen.getByText('Live')).toBeTruthy()
+    expect(screen.getByText('Resting heart rate')).toBeTruthy()
     expect(screen.getByText('Estimated')).toBeTruthy()
     expect(screen.getByText('Last sync')).toBeTruthy()
     expect(screen.queryByText('No data yet')).toBeNull()

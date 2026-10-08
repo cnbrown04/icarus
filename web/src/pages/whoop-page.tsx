@@ -1,9 +1,13 @@
+import { ChartLineIcon, FlameIcon, HeartIcon, LightningIcon, LinkIcon, MoonIcon, PlugIcon, ShieldCheckIcon, WaveformIcon } from '@phosphor-icons/react'
 import { useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
+import { EmptyState } from '@/components/empty-state'
 import { ErrorLine } from '@/components/error-line'
 import { LoadingBlock, LoadingRows } from '@/components/loading'
 import { PageAction } from '@/components/page-action'
-import { Panel, Stat } from '@/components/stat'
+import { SectionCard } from '@/components/section-card'
+import { StatTile } from '@/components/stat-tile'
+import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useNow } from '@/hooks/use-now'
@@ -28,7 +32,7 @@ export function WhoopPage() {
 
   // The server answers 404 when the integration has no WHOOP client credentials (contract: WHOOP).
   if (status.error instanceof ApiError && status.error.status === 404) {
-    return <p className="text-muted-foreground">WHOOP integration is not configured on the server.</p>
+    return <EmptyState icon={PlugIcon} message="WHOOP integration is not configured on the server." />
   }
   if (status.isError) return <ErrorLine message={describeError(status.error)} />
   if (status.isPending || me.isPending) return <LoadingRows rows={3} />
@@ -41,10 +45,13 @@ export function WhoopPage() {
         </PageAction>
       )}
 
-      <Panel title="Connection">
+      <SectionCard
+        title="Connection"
+        icon={LinkIcon}
+        action={connected ? <StatusBadge variant="ok">Connected</StatusBadge> : <StatusBadge variant="neutral">Disconnected</StatusBadge>}
+      >
         {connected ? (
           <div className="flex flex-col gap-4">
-            <Field label="Status">Connected</Field>
             <Field label="Scopes">{status.data.scopes.join(', ') || '—'}</Field>
             <Field label="Connected since">
               {status.data.connected_at ? formatDateTime(Date.parse(status.data.connected_at), tz) : '—'}
@@ -59,12 +66,17 @@ export function WhoopPage() {
             </div>
           </div>
         ) : (
-          <p className="text-muted-foreground">WHOOP is not connected.</p>
+          <EmptyState icon={PlugIcon} message="WHOOP is not connected." />
         )}
-      </Panel>
+      </SectionCard>
 
+      {/* Tiles sit on the page, not in a card: a card inside a card is not allowed (PLAN.md §15.2 rule 15). */}
       {connected && (
-        <Panel title="Today">
+        <section aria-labelledby="whoop-today" className="flex flex-col gap-4">
+          <h2 id="whoop-today" className="flex items-center gap-2 text-xs font-medium">
+            <ChartLineIcon aria-hidden className="size-4 text-muted-foreground" />
+            Today
+          </h2>
           {summary.isPending ? (
             <LoadingBlock className="h-40" />
           ) : summary.isError ? (
@@ -72,17 +84,23 @@ export function WhoopPage() {
           ) : (
             <div className="flex flex-col gap-6">
               <p className="text-xs text-muted-foreground">Values are fetched live from WHOOP and are not stored.</p>
-              <div className="grid gap-6 sm:grid-cols-3">
-                <Stat label="Recovery" value={summary.data.recovery_score} unit="%" />
-                <Stat label="HRV (RMSSD)" value={summary.data.hrv_rmssd_milli} unit="ms" />
-                <Stat label="Resting heart rate" value={summary.data.resting_heart_rate} unit="bpm" />
-                <Stat label="Strain" value={summary.data.strain?.toFixed(1) ?? null} />
-                <Stat label="Energy" value={summary.data.kilojoule === null ? null : formatInt(summary.data.kilojoule)} unit="kJ" />
-                <Stat label="Sleep performance" value={summary.data.sleep_performance} unit="%" />
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                <StatTile icon={ShieldCheckIcon} label="Recovery" value={summary.data.recovery_score} unit="%" />
+                <StatTile icon={WaveformIcon} label="HRV (RMSSD)" value={summary.data.hrv_rmssd_milli} unit="ms" tone="hrv" />
+                <StatTile icon={HeartIcon} label="Resting heart rate" value={summary.data.resting_heart_rate} unit="bpm" tone="hr" />
+                <StatTile icon={LightningIcon} label="Strain" value={summary.data.strain?.toFixed(1) ?? null} />
+                <StatTile
+                  icon={FlameIcon}
+                  label="Energy"
+                  value={summary.data.kilojoule === null ? null : formatInt(summary.data.kilojoule)}
+                  unit="kJ"
+                  tone="kcal-active"
+                />
+                <StatTile icon={MoonIcon} label="Sleep performance" value={summary.data.sleep_performance} unit="%" />
               </div>
             </div>
           )}
-        </Panel>
+        </section>
       )}
 
       <Dialog open={confirming} onOpenChange={setConfirming}>

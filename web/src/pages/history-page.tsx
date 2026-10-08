@@ -1,6 +1,8 @@
+import { CalendarIcon } from '@phosphor-icons/react'
 import { Link } from '@tanstack/react-router'
 import { ErrorLine } from '@/components/error-line'
 import { LoadingBlock } from '@/components/loading'
+import { SectionCard } from '@/components/section-card'
 import { useNow } from '@/hooks/use-now'
 import { describeError } from '@/lib/errors'
 import { coverageLevel } from '@/lib/health'
@@ -12,14 +14,8 @@ const WEEKS = 12
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const LEVEL_LABEL = ['none', 'under 25 %', '25 to 49 %', '50 to 74 %', '75 % and over'] as const
 
-// Shading uses foreground opacity only, so it reads in both themes (PLAN.md §15.3 rule 18).
-const LEVEL_CLASS = [
-  'bg-muted',
-  'bg-foreground/15',
-  'bg-foreground/35',
-  'bg-foreground/60',
-  'bg-foreground/90',
-] as const
+// Coverage shades the app's ok colour in steps. Level 0 is the neutral muted fill, so a missing day still reads as a cell.
+const LEVEL_CLASS = ['bg-muted', 'bg-coverage-1', 'bg-coverage-2', 'bg-coverage-3', 'bg-coverage-4'] as const
 
 export function HistoryPage() {
   const me = useMe()
@@ -41,17 +37,14 @@ function HistoryView({ tz, now }: { tz: string; now: Date }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <section aria-labelledby="coverage-heading" className="flex flex-col gap-3">
-        <h2 id="coverage-heading" className="text-xs font-medium">
-          Last {WEEKS} weeks
-        </h2>
-        <div className="inline-grid grid-cols-[auto_repeat(12,max-content)] gap-1">
-            {WEEKDAYS.map((weekday, row) => (
-              <DayRow key={weekday} weekday={weekday} row={row} start={start} today={today} byDay={byDay} />
-            ))}
+      <SectionCard title={`Last ${WEEKS} weeks`} icon={CalendarIcon}>
+        <div className="grid w-max grid-cols-[auto_repeat(12,max-content)] gap-1">
+          {WEEKDAYS.map((weekday, row) => (
+            <DayRow key={weekday} weekday={weekday} row={row} start={start} today={today} byDay={byDay} />
+          ))}
         </div>
         <Legend />
-      </section>
+      </SectionCard>
     </div>
   )
 }
@@ -81,10 +74,12 @@ function DayRow({
       <p className="self-center pr-2 text-xs text-muted-foreground">{weekday}</p>
       {Array.from({ length: WEEKS }, (_, week) => {
         const day = addDays(start, week * 7 + row)
-        if (day > today) return <span key={day} aria-hidden className="size-5 md:size-6" />
+        if (day > today) return <span key={day} aria-hidden className="size-6 md:size-8" />
         const coverage = byDay.get(day)?.coverage ?? 0
         const level = coverageLevel(coverage)
         const label = `${formatDayTitle(day)}, ${Math.round(coverage * 100)} % covered`
+        // Today is outlined, so it is found without reading the dates.
+        const isToday = day === today
         return (
           <Link
             key={day}
@@ -92,7 +87,9 @@ function DayRow({
             params={{ day }}
             aria-label={label}
             title={label}
-            className={`size-5 md:size-6 ${LEVEL_CLASS[level]} hover:outline-2 hover:outline-offset-1 hover:outline-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring`}
+            className={`size-6 md:size-8 ${LEVEL_CLASS[level]} ${
+              isToday ? 'outline-2 outline-offset-2 outline-foreground' : ''
+            } hover:outline-2 hover:outline-offset-1 hover:outline-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring`}
           />
         )
       })}

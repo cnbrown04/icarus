@@ -1,5 +1,6 @@
 import '@fontsource-variable/jetbrains-mono'
 import './index.css'
+import './styles/semantic.css'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider } from '@tanstack/react-router'
 import { StrictMode } from 'react'

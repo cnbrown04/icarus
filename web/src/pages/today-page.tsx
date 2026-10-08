@@ -1,3 +1,4 @@
+import { DeviceMobileIcon } from '@phosphor-icons/react'
 import { Link } from '@tanstack/react-router'
 import { DayDashboard } from '@/components/day-dashboard'
 import { ErrorLine } from '@/components/error-line'
@@ -19,6 +20,7 @@ export function TodayPage() {
       day={dayInZone(now.getTime(), me.data.tz)}
       tz={me.data.tz}
       live
+      emptyIcon={DeviceMobileIcon}
       emptyMessage="No data yet"
       emptyAction={
         <Button variant="outline" render={<Link to="/devices" />}>
@@ -28,4 +30,3 @@ export function TodayPage() {
     />
   )
 }
-

@@ -1,3 +1,4 @@
+import { DatabaseIcon, DownloadSimpleIcon, SlidersIcon, TrashIcon } from '@phosphor-icons/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useState, type FormEvent } from 'react'
@@ -9,7 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ErrorLine } from '@/components/error-line'
 import { LoadingBlock } from '@/components/loading'
-import { Panel } from '@/components/stat'
+import { SectionCard } from '@/components/section-card'
 import { describeError } from '@/lib/errors'
 import { queryKeys, useDeleteAccount, useMe, useUpdateMe } from '@/lib/queries'
 import type { Me, MeUpdate } from '@/lib/types'
@@ -21,20 +22,21 @@ export function SettingsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <Panel title="Profile">
+      <SectionCard title="Profile" icon={SlidersIcon}>
         <ProfileForm me={me.data} />
-      </Panel>
-      <Panel title="Data">
+      </SectionCard>
+      <SectionCard title="Data" icon={DatabaseIcon}>
         <div className="flex flex-col gap-3">
           <p className="text-xs text-muted-foreground">Every record you have, one JSON object per line.</p>
           <Button variant="outline" className="self-start" render={<a href="/v1/export" download />}>
+            <DownloadSimpleIcon aria-hidden />
             Download data
           </Button>
         </div>
-      </Panel>
-      <Panel title="Delete account">
+      </SectionCard>
+      <SectionCard title="Delete account" icon={TrashIcon}>
         <DeleteAccount email={me.data.email} />
-      </Panel>
+      </SectionCard>
     </div>
   )
 }

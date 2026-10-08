@@ -1,9 +1,11 @@
+import { ClockIcon, FlameIcon, LightningIcon, MoonIcon, SlidersIcon } from '@phosphor-icons/react'
 import { Link } from '@tanstack/react-router'
 import { BarSeriesChart } from '@/components/charts/series-chart'
 import { EmptyState } from '@/components/empty-state'
 import { ErrorLine } from '@/components/error-line'
 import { LoadingBlock } from '@/components/loading'
-import { Panel, Stat } from '@/components/stat'
+import { SectionCard } from '@/components/section-card'
+import { StatTile } from '@/components/stat-tile'
 import { Button } from '@/components/ui/button'
 import { useNow } from '@/hooks/use-now'
 import { describeError } from '@/lib/errors'
@@ -41,6 +43,7 @@ function CaloriesView({ me, now }: { me: Me; now: Date }) {
   if (!hasDaily && minutes.data.minutes.length === 0) {
     return (
       <EmptyState
+        icon={FlameIcon}
         message="No calorie data yet"
         action={
           <Button variant="outline" render={<Link to="/devices" />}>
@@ -51,22 +54,26 @@ function CaloriesView({ me, now }: { me: Me; now: Date }) {
     )
   }
 
+  const resting = todayRow ? restingKcal(todayRow) : null
+
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Panel title="Today">
-          <div className="grid grid-cols-2 gap-4">
-            <Stat label="Total" value={formatOrNull(todayRow?.kcal_total)} unit="kcal" />
-            <Stat label="Active" value={formatOrNull(todayRow?.kcal_active)} unit="kcal" />
-          </div>
-          <p className="text-xs text-muted-foreground">Estimated</p>
-        </Panel>
-        <Panel title="Profile used">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatTile
+          icon={FlameIcon}
+          label="Total"
+          value={formatOrNull(todayRow?.kcal_total)}
+          unit="kcal"
+          caption={<span className="block">Estimated</span>}
+        />
+        <StatTile icon={MoonIcon} label="Resting" value={formatOrNull(resting)} unit="kcal" tone="kcal-resting" />
+        <StatTile icon={LightningIcon} label="Active" value={formatOrNull(todayRow?.kcal_active)} unit="kcal" tone="kcal-active" />
+        <SectionCard title="Profile used" icon={SlidersIcon}>
           <ProfileInputs me={me} />
-        </Panel>
+        </SectionCard>
       </div>
 
-      <Panel title="Resting and active, 14 days">
+      <SectionCard title="Resting and active, 14 days" icon={FlameIcon}>
         {hasDaily ? (
           <BarSeriesChart
             stacked
@@ -78,17 +85,17 @@ function CaloriesView({ me, now }: { me: Me; now: Date }) {
               active: row.kcal_active,
             }))}
             series={[
-              { key: 'resting', label: 'Resting', tone: 'secondary', unit: 'kcal' },
-              { key: 'active', label: 'Active', tone: 'primary', unit: 'kcal' },
+              { key: 'resting', label: 'Resting', tone: 'kcal-resting', unit: 'kcal' },
+              { key: 'active', label: 'Active', tone: 'kcal-active', unit: 'kcal' },
             ]}
             tooltipLabel={(row) => formatDayTitle(row.day ?? '')}
           />
         ) : (
-          <EmptyState message="No days with calories yet" />
+          <EmptyState icon={FlameIcon} message="No days with calories yet" />
         )}
-      </Panel>
+      </SectionCard>
 
-      <Panel title="Today by hour">
+      <SectionCard title="Today by hour" icon={ClockIcon}>
         {minutes.data.minutes.length > 0 ? (
           <BarSeriesChart
             stacked
@@ -101,15 +108,15 @@ function CaloriesView({ me, now }: { me: Me; now: Date }) {
               active: row.active,
             }))}
             series={[
-              { key: 'resting', label: 'Resting', tone: 'secondary', unit: 'kcal' },
-              { key: 'active', label: 'Active', tone: 'primary', unit: 'kcal' },
+              { key: 'resting', label: 'Resting', tone: 'kcal-resting', unit: 'kcal' },
+              { key: 'active', label: 'Active', tone: 'kcal-active', unit: 'kcal' },
             ]}
             tooltipLabel={(row) => `${String(row.category).padStart(2, '0')}:00`}
           />
         ) : (
-          <EmptyState message="No minutes recorded today" />
+          <EmptyState icon={ClockIcon} message="No minutes recorded today" />
         )}
-      </Panel>
+      </SectionCard>
     </div>
   )
 }

@@ -1,3 +1,4 @@
+import { BellIcon, ClockIcon, PulseIcon, WebhooksLogoIcon, type Icon } from '@phosphor-icons/react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { AlarmSheet, type AlarmEditorState } from '@/components/alarm-sheet'
@@ -6,15 +7,19 @@ import { EmptyState } from '@/components/empty-state'
 import { ErrorLine } from '@/components/error-line'
 import { LoadingRows } from '@/components/loading'
 import { PageAction } from '@/components/page-action'
+import { SectionCard } from '@/components/section-card'
+import { StatusBadge } from '@/components/status-badge'
+import { DispatchBadge } from '@/components/state-badges'
 import { Switch } from '@/components/switch'
-import { Panel } from '@/components/stat'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { describeChannels, describeDeliveryStatus, describeDispatchStatus, describeKind, describeRhythm, describeSchedule } from '@/lib/alarms'
+import { describeChannels, describeDeliveryStatus, describeKind, describeRhythm, describeSchedule } from '@/lib/alarms'
 import { describeError, isConflict } from '@/lib/errors'
 import { useAlarms, useDispatches, useMe, useTestAlarm, useUpdateAlarm } from '@/lib/queries'
 import { formatDateTime } from '@/lib/time'
 import type { Alarm, Dispatch } from '@/lib/types'
+
+const KIND_ICON: Record<Alarm['kind'], Icon> = { scheduled: ClockIcon, webhook: WebhooksLogoIcon, relay: BellIcon }
 
 export function AlarmsPage() {
   const alarms = useAlarms()
@@ -60,9 +65,9 @@ export function AlarmsPage() {
       ) : alarms.isPending ? (
         <LoadingRows rows={3} />
       ) : alarms.data.length === 0 ? (
-        <EmptyState message="No alarms" action={<Button variant="outline" onClick={openNew}>New alarm</Button>} />
+        <EmptyState icon={BellIcon} message="No alarms" action={<Button variant="outline" onClick={openNew}>New alarm</Button>} />
       ) : (
-        <Panel title="Alarms">
+        <SectionCard title="Alarms" icon={BellIcon}>
           <div>
             <Table>
               <TableHeader>
@@ -72,55 +77,68 @@ export function AlarmsPage() {
                   <TableHead>Schedule</TableHead>
                   <TableHead className="hidden md:table-cell">Rhythm</TableHead>
                   <TableHead className="hidden md:table-cell">Channels</TableHead>
-                  <TableHead>Enabled</TableHead>
+                  <TableHead>Status</TableHead>
                   <TableHead className="text-right">
                     <span className="sr-only">Actions</span>
                   </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {alarms.data.map((alarm) => (
-                  <TableRow key={alarm.id}>
-                    <TableCell className="whitespace-normal font-medium">{alarm.label}</TableCell>
-                    <TableCell className="whitespace-normal hidden md:table-cell">{describeKind(alarm.kind)}</TableCell>
-                    <TableCell className="whitespace-normal tabular-nums">{describeSchedule(alarm)}</TableCell>
-                    <TableCell className="whitespace-normal hidden md:table-cell">{describeRhythm(alarm.rhythm)}</TableCell>
-                    <TableCell className="whitespace-normal hidden md:table-cell">{describeChannels(alarm.channels)}</TableCell>
-                    <TableCell className="whitespace-normal">
-                      <Switch
-                        checked={alarm.enabled}
-                        label={`Enabled, ${alarm.label}`}
-                        onCheckedChange={(enabled) => setEnabled(alarm, enabled)}
-                      />
-                    </TableCell>
-                    <TableCell className="whitespace-normal text-right">
-                      <div className="flex flex-wrap justify-end gap-2">
-                        <Button variant="ghost" size="sm" aria-label={`Test ${alarm.label}`} onClick={() => sendTest(alarm)} disabled={test.isPending}>
-                          Test
-                        </Button>
-                        <Button variant="ghost" size="sm" aria-label={`Edit ${alarm.label}`} onClick={() => openEdit(alarm)}>
-                          Edit
-                        </Button>
-                        <Button variant="ghost" size="sm" aria-label={`Delete ${alarm.label}`} onClick={() => setDeleting(alarm)}>
-                          Delete
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {alarms.data.map((alarm) => {
+                  const KindIcon = KIND_ICON[alarm.kind]
+                  return (
+                    <TableRow key={alarm.id}>
+                      <TableCell className="whitespace-normal font-medium">{alarm.label}</TableCell>
+                      <TableCell className="whitespace-normal hidden md:table-cell">
+                        <span className="flex items-center gap-2">
+                          <KindIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                          {describeKind(alarm.kind)}
+                        </span>
+                      </TableCell>
+                      <TableCell className="whitespace-normal tabular-nums">{describeSchedule(alarm)}</TableCell>
+                      <TableCell className="whitespace-normal hidden md:table-cell">{describeRhythm(alarm.rhythm)}</TableCell>
+                      <TableCell className="whitespace-normal hidden md:table-cell">{describeChannels(alarm.channels)}</TableCell>
+                      <TableCell className="whitespace-normal">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <Switch
+                            checked={alarm.enabled}
+                            label={`Enabled, ${alarm.label}`}
+                            onCheckedChange={(enabled) => setEnabled(alarm, enabled)}
+                          />
+                          <StatusBadge variant={alarm.enabled ? 'ok' : 'neutral'}>
+                            {alarm.enabled ? 'Enabled' : 'Disabled'}
+                          </StatusBadge>
+                        </div>
+                      </TableCell>
+                      <TableCell className="whitespace-normal text-right">
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <Button variant="ghost" size="sm" aria-label={`Test ${alarm.label}`} onClick={() => sendTest(alarm)} disabled={test.isPending}>
+                            Test
+                          </Button>
+                          <Button variant="ghost" size="sm" aria-label={`Edit ${alarm.label}`} onClick={() => openEdit(alarm)}>
+                            Edit
+                          </Button>
+                          <Button variant="ghost" size="sm" aria-label={`Delete ${alarm.label}`} onClick={() => setDeleting(alarm)}>
+                            Delete
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
           </div>
-        </Panel>
+        </SectionCard>
       )}
 
-      <Panel title="Recent dispatches">
+      <SectionCard title="Recent dispatches" icon={PulseIcon}>
         {dispatches.isError ? (
           <ErrorLine message={describeError(dispatches.error)} />
         ) : dispatches.isPending || me.isPending || alarms.isPending ? (
           <LoadingRows rows={3} />
         ) : dispatches.data.length === 0 ? (
-          <EmptyState message="No dispatches yet" />
+          <EmptyState icon={PulseIcon} message="No dispatches yet" />
         ) : (
           <DispatchTable
             dispatches={dispatches.data}
@@ -128,7 +146,7 @@ export function AlarmsPage() {
             tz={me.data?.tz ?? 'UTC'}
           />
         )}
-      </Panel>
+      </SectionCard>
 
       <AlarmSheet editor={editor} onOpenChange={(open) => setEditor((current) => ({ ...current, open }))} />
       <DeleteAlarmDialog alarm={deleting} onClose={() => setDeleting(null)} />
@@ -157,7 +175,11 @@ function DispatchTable({ dispatches, labels, tz }: { dispatches: Dispatch[]; lab
               <TableCell className="whitespace-normal hidden md:table-cell">{(dispatch.alarm_id && labels.get(dispatch.alarm_id)) || '—'}</TableCell>
               <TableCell className="whitespace-normal">{describeDeliveryStatus(dispatch.phone_status)}</TableCell>
               <TableCell className="whitespace-normal">{describeDeliveryStatus(dispatch.band_status)}</TableCell>
-              <TableCell className="whitespace-normal text-right">{describeDispatchStatus(dispatch.status)}</TableCell>
+              <TableCell className="whitespace-normal text-right">
+                <span className="flex justify-end">
+                  <DispatchBadge status={dispatch.status} />
+                </span>
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>

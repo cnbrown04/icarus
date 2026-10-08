@@ -1,14 +1,18 @@
+import { ArrowsClockwiseIcon, ClockIcon, StackIcon } from '@phosphor-icons/react'
 import { Link } from '@tanstack/react-router'
 import { EmptyState } from '@/components/empty-state'
 import { ErrorLine } from '@/components/error-line'
 import { LoadingRows } from '@/components/loading'
-import { Panel, Stat } from '@/components/stat'
+import { SectionCard } from '@/components/section-card'
+import { StatTile } from '@/components/stat-tile'
+import { BatchBadge } from '@/components/state-badges'
+import { SyncStatusBadge } from '@/components/sync-status-badge'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { formatInt } from '@/lib/format'
 import { describeError } from '@/lib/errors'
 import { useDevices, useMe, useSyncState } from '@/lib/queries'
-import { formatAgo, formatClock, formatDateTime } from '@/lib/time'
+import { formatClock, formatDateTime } from '@/lib/time'
 import type { SyncBatch, SyncCounts } from '@/lib/types'
 
 export function SyncPage() {
@@ -23,28 +27,35 @@ export function SyncPage() {
   const names = new Map(devices.data?.devices.map((device) => [device.id, device.name]) ?? [])
   const last = sync.data.last_batch_at
   const serverTime = Date.parse(sync.data.server_time)
+  const serverNow = new Date(serverTime)
 
   return (
     <div className="flex flex-col gap-6">
       <div className="grid gap-4 sm:grid-cols-3">
-        <Panel title="Server">
-          <Stat label="Server time" value={formatClock(serverTime, tz)} caption={formatDateTime(serverTime, tz)} />
-        </Panel>
-        <Panel title="Last batch">
-          <Stat
-            label="Received"
-            value={last ? formatClock(Date.parse(last), tz) : null}
-            caption={last ? formatAgo(serverTime - Date.parse(last)) : 'No batches yet'}
-          />
-        </Panel>
-        <Panel title="Batches">
-          <Stat label="Recent" value={formatInt(sync.data.batches.length)} unit={sync.data.batches.length === 1 ? 'batch' : 'batches'} />
-        </Panel>
+        <StatTile
+          icon={ClockIcon}
+          label="Server time"
+          value={formatClock(serverTime, tz)}
+          caption={formatDateTime(serverTime, tz)}
+        />
+        <StatTile
+          icon={ArrowsClockwiseIcon}
+          label="Last batch"
+          value={last ? formatClock(Date.parse(last), tz) : null}
+          caption={<SyncStatusBadge lastBatchAt={last} now={serverNow} />}
+        />
+        <StatTile
+          icon={StackIcon}
+          label="Batches"
+          value={formatInt(sync.data.batches.length)}
+          unit={sync.data.batches.length === 1 ? 'batch' : 'batches'}
+        />
       </div>
 
-      <Panel title="Batches">
+      <SectionCard title="Batches" icon={StackIcon}>
         {sync.data.batches.length === 0 ? (
           <EmptyState
+            icon={ArrowsClockwiseIcon}
             message="No sync batches yet"
             action={
               <Button variant="outline" render={<Link to="/devices" />}>
@@ -72,7 +83,7 @@ export function SyncPage() {
             </Table>
           </div>
         )}
-      </Panel>
+      </SectionCard>
     </div>
   )
 }
@@ -86,7 +97,9 @@ function BatchRow({ batch, name, tz }: { batch: SyncBatch; name: string; tz: str
       <TableCell className="hidden text-right tabular-nums md:table-cell">
         {formatInt(batch.counts.minute_metrics?.upserted ?? 0)}
       </TableCell>
-      <TableCell>{capitalise(batch.status)}</TableCell>
+      <TableCell>
+        <BatchBadge status={batch.status} />
+      </TableCell>
     </TableRow>
   )
 }
@@ -99,8 +112,4 @@ function rowCount(counts: SyncCounts): number {
     (counts.events?.inserted ?? 0) +
     (counts.alarm_deliveries?.inserted ?? 0)
   )
-}
-
-function capitalise(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1)
 }

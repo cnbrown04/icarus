@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { coverageLevel, hourlyKcal, resolveHrMax, stressBand, zoneDistribution } from './health'
+import { binStress, changeAgainstMean, coverageLevel, hourlyKcal, resolveHrMax, stressBand, zoneDistribution } from './health'
 import type { MinuteMetric } from './types'
 
 const now = new Date('2026-10-08T12:00:00Z')
@@ -70,5 +70,34 @@ describe('hourly calories', () => {
     expect(rows[7]).toEqual({ hour: 7, kcal: 3, active: 0.5 })
     expect(rows[9]).toEqual({ hour: 9, kcal: 2, active: 0 })
     expect(rows).toHaveLength(24)
+  })
+})
+
+describe('stress bins', () => {
+  const minute = (iso: string, stress: number | null) =>
+    ({ minute: iso, stress }) as MinuteMetric
+
+  it('averages five-minute buckets and bands the mean', () => {
+    const bins = binStress([
+      minute('2026-10-08T10:00:00Z', 10),
+      minute('2026-10-08T10:01:00Z', 20),
+      minute('2026-10-08T10:02:00Z', null),
+      minute('2026-10-08T10:05:00Z', 60),
+    ])
+    expect(bins).toEqual([
+      { t: Date.parse('2026-10-08T10:00:00Z'), value: 15, band: 'low' },
+      { t: Date.parse('2026-10-08T10:05:00Z'), value: 60, band: 'moderate' },
+    ])
+  })
+})
+
+describe('change against the mean', () => {
+  it('compares the latest value with the mean of the earlier ones', () => {
+    expect(changeAgainstMean([54, null, 56, 52])).toBe(-3)
+  })
+
+  it('is null when there is nothing earlier to compare with', () => {
+    expect(changeAgainstMean([54])).toBeNull()
+    expect(changeAgainstMean([null, 54])).toBeNull()
   })
 })

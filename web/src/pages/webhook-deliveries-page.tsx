@@ -1,15 +1,17 @@
+import { ArrowLeftIcon, WebhooksLogoIcon } from '@phosphor-icons/react'
 import { Link, useParams } from '@tanstack/react-router'
+import { DispatchBadge, DeliveryBadge } from '@/components/state-badges'
 import { ErrorLine } from '@/components/error-line'
 import { EmptyState } from '@/components/empty-state'
 import { LoadingRows } from '@/components/loading'
-import { Panel } from '@/components/stat'
+import { SectionCard } from '@/components/section-card'
+import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { describeDeliveryStatus, describeDispatchStatus } from '@/lib/alarms'
+import { describeDeliveryStatus } from '@/lib/alarms'
 import { describeError } from '@/lib/errors'
 import { useHookDeliveries, useHooks, useMe } from '@/lib/queries'
 import { formatDateTime } from '@/lib/time'
-import { deliveryStatusLabel } from '@/lib/webhooks'
 
 export function WebhookDeliveriesPage() {
   const { hookId = '' } = useParams({ strict: false })
@@ -26,12 +28,13 @@ export function WebhookDeliveriesPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <Link to="/webhooks" className="self-start text-xs text-foreground underline underline-offset-4">
+      <Link to="/webhooks" className="flex items-center gap-2 self-start text-xs text-foreground underline underline-offset-4">
+        <ArrowLeftIcon aria-hidden className="size-3" />
         Back to webhooks
       </Link>
-      <Panel title={hook?.label ?? 'Deliveries'}>
+      <SectionCard title={hook?.label ?? 'Deliveries'} icon={WebhooksLogoIcon}>
         {rows.length === 0 ? (
-          <EmptyState message="No deliveries yet" />
+          <EmptyState icon={WebhooksLogoIcon} message="No deliveries yet" />
         ) : (
           <div className="flex flex-col gap-4">
             <Table>
@@ -49,12 +52,20 @@ export function WebhookDeliveriesPage() {
                 {rows.map((delivery) => (
                   <TableRow key={delivery.id}>
                     <TableCell className="whitespace-normal tabular-nums">{formatDateTime(Date.parse(delivery.received_at), tz)}</TableCell>
-                    <TableCell className="whitespace-normal">{deliveryStatusLabel(delivery.status)}</TableCell>
-                    <TableCell className="whitespace-normal hidden md:table-cell">{delivery.signature_valid ? 'Valid' : 'Invalid'}</TableCell>
+                    <TableCell className="whitespace-normal">
+                      <DeliveryBadge status={delivery.status} />
+                    </TableCell>
+                    <TableCell className="whitespace-normal hidden md:table-cell">
+                      {delivery.signature_valid ? (
+                        <StatusBadge variant="ok">Valid</StatusBadge>
+                      ) : (
+                        <StatusBadge variant="danger">Invalid</StatusBadge>
+                      )}
+                    </TableCell>
                     <TableCell className="whitespace-normal">{describeDeliveryStatus(delivery.dispatch?.phone_status ?? null)}</TableCell>
                     <TableCell className="whitespace-normal">{describeDeliveryStatus(delivery.dispatch?.band_status ?? null)}</TableCell>
                     <TableCell className="hidden whitespace-normal text-right md:table-cell">
-                      {delivery.dispatch ? describeDispatchStatus(delivery.dispatch.status) : '—'}
+                      {delivery.dispatch ? <DispatchBadge status={delivery.dispatch.status} /> : '—'}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -73,7 +84,7 @@ export function WebhookDeliveriesPage() {
             )}
           </div>
         )}
-      </Panel>
+      </SectionCard>
     </div>
   )
 }

@@ -1,18 +1,22 @@
+import { ArrowDownIcon, ArrowUpIcon, ChartLineIcon, HeartbeatIcon, HeartIcon, TargetIcon } from '@phosphor-icons/react'
 import { useState } from 'react'
 import { TimeSeriesChart } from '@/components/charts/series-chart'
 import { EmptyState } from '@/components/empty-state'
 import { ErrorLine } from '@/components/error-line'
 import { LoadingBlock } from '@/components/loading'
-import { Panel, Stat } from '@/components/stat'
 import { Segmented } from '@/components/segmented'
+import { SectionCard } from '@/components/section-card'
+import { StatTile } from '@/components/stat-tile'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { ZONE_FILL, ZONE_NAME, ZoneBar } from '@/components/zone-bar'
 import { useNow } from '@/hooks/use-now'
 import { describeError } from '@/lib/errors'
 import { formatInt } from '@/lib/format'
-import { useDaily, useHr, useMe } from '@/lib/queries'
 import { resolveHrMax, zoneDistribution, type ZoneRow } from '@/lib/health'
+import { useDaily, useHr, useMe } from '@/lib/queries'
 import { addDays, dayInZone, zonedMidnight } from '@/lib/time'
 import type { DailySummary, HrPoint, HrResolution, Me } from '@/lib/types'
+import { cn } from '@/lib/utils'
 
 type RangeKey = '6h' | '24h' | '7d' | '30d'
 
@@ -77,16 +81,21 @@ function HeartRateView({
       />
 
       {!hasData ? (
-        <EmptyState message="No heart rate in this range" />
+        <EmptyState icon={HeartbeatIcon} message="No heart rate in this range" />
       ) : (
         <>
-          <div className="grid grid-cols-3 gap-4">
-            <Stat label="Average" value={summary.avg === null ? null : formatInt(summary.avg)} unit="bpm" />
-            <Stat label="Minimum" value={summary.min === null ? null : formatInt(summary.min)} unit="bpm" />
-            <Stat label="Maximum" value={summary.max === null ? null : formatInt(summary.max)} unit="bpm" />
+          <div className="grid gap-4 sm:grid-cols-3">
+            <StatTile
+              icon={ChartLineIcon}
+              label="Average"
+              value={summary.avg === null ? null : formatInt(summary.avg)}
+              unit="bpm"
+            />
+            <StatTile icon={ArrowDownIcon} label="Minimum" value={summary.min === null ? null : formatInt(summary.min)} unit="bpm" />
+            <StatTile icon={ArrowUpIcon} label="Maximum" value={summary.max === null ? null : formatInt(summary.max)} unit="bpm" />
           </div>
 
-          <Panel title="Heart rate">
+          <SectionCard title="Heart rate" icon={HeartbeatIcon}>
             {isDaily ? (
               <TimeSeriesChart
                 tz={tz}
@@ -97,8 +106,8 @@ function HeartRateView({
                   max: row.hr_max,
                 }))}
                 series={[
-                  { key: 'avg', label: 'Daily average', tone: 'primary', unit: 'bpm' },
-                  { key: 'max', label: 'Daily maximum', tone: 'secondary', unit: 'bpm', hidden: true },
+                  { key: 'avg', label: 'Daily average', tone: 'hr', unit: 'bpm', area: true },
+                  { key: 'max', label: 'Daily maximum', tone: 'hr', unit: 'bpm', hidden: true },
                 ]}
               />
             ) : (
@@ -112,35 +121,35 @@ function HeartRateView({
                   max: point.max,
                 }))}
                 series={[
-                  { key: 'avg', label: 'Average', tone: 'primary', unit: 'bpm' },
-                  { key: 'min', label: 'Minimum', tone: 'secondary', unit: 'bpm', hidden: true },
-                  { key: 'max', label: 'Maximum', tone: 'secondary', unit: 'bpm', hidden: true },
+                  { key: 'avg', label: 'Average', tone: 'hr', unit: 'bpm', area: true },
+                  { key: 'min', label: 'Minimum', tone: 'hr', unit: 'bpm', hidden: true },
+                  { key: 'max', label: 'Maximum', tone: 'hr', unit: 'bpm', hidden: true },
                 ]}
               />
             )}
-          </Panel>
+          </SectionCard>
 
-          <ZonesPanel me={me} now={now} rhr={rhr?.rhr ?? null} points={points} isDaily={isDaily} />
+          <ZonesCard me={me} now={now} rhr={rhr?.rhr ?? null} points={points} isDaily={isDaily} />
         </>
       )}
 
-      <Panel title="Resting heart rate, 30 days">
+      <SectionCard title="Resting heart rate, 30 days" icon={HeartIcon}>
         {trendRows.length > 0 ? (
           <TimeSeriesChart
             tz={tz}
             summary="Resting heart rate by night, last 30 days"
             rows={trendRows.map((row) => ({ t: zonedMidnight(row.day, tz).getTime(), rhr: row.rhr }))}
-            series={[{ key: 'rhr', label: 'Resting heart rate', tone: 'primary', unit: 'bpm' }]}
+            series={[{ key: 'rhr', label: 'Resting heart rate', tone: 'hr', unit: 'bpm' }]}
           />
         ) : (
-          <EmptyState message="No resting heart rate yet" />
+          <EmptyState icon={HeartIcon} message="No resting heart rate yet" />
         )}
-      </Panel>
+      </SectionCard>
     </div>
   )
 }
 
-function ZonesPanel({
+function ZonesCard({
   me,
   now,
   rhr,
@@ -156,23 +165,23 @@ function ZonesPanel({
   const hrMax = resolveHrMax(me, now)
   if (isDaily) {
     return (
-      <Panel title="Zones">
-        <p className="text-muted-foreground">Zones need minute data. Choose 7 d or less.</p>
-      </Panel>
+      <SectionCard title="Zones" icon={TargetIcon}>
+        <EmptyState icon={TargetIcon} message="Zones need minute data. Choose 7 d or less." />
+      </SectionCard>
     )
   }
   if (hrMax === null) {
     return (
-      <Panel title="Zones">
-        <p className="text-muted-foreground">Set HRmax or birth year in Settings to see zones.</p>
-      </Panel>
+      <SectionCard title="Zones" icon={TargetIcon}>
+        <EmptyState icon={TargetIcon} message="Set HRmax or birth year in Settings to see zones." />
+      </SectionCard>
     )
   }
   if (rhr === null) {
     return (
-      <Panel title="Zones">
-        <p className="text-muted-foreground">Zones need a resting heart rate. It appears after the first night of data.</p>
-      </Panel>
+      <SectionCard title="Zones" icon={TargetIcon}>
+        <EmptyState icon={TargetIcon} message="Zones need a resting heart rate. It appears after the first night of data." />
+      </SectionCard>
     )
   }
   const rows: ZoneRow[] = zoneDistribution(
@@ -181,33 +190,41 @@ function ZonesPanel({
     hrMax.value,
   )
   return (
-    <Panel
+    <SectionCard
       title="Zones"
+      icon={TargetIcon}
       action={
         <p className="text-xs text-muted-foreground">
           {hrMax.source === 'entered' ? `HRmax ${hrMax.value} bpm` : `HRmax ${hrMax.value} bpm, estimated from age`}
         </p>
       }
     >
+      <ZoneBar rows={rows} />
       <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Zone, % of reserve</TableHead>
-              <TableHead className="text-right">Minutes</TableHead>
-              <TableHead className="text-right">Share</TableHead>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Zone, % of reserve</TableHead>
+            <TableHead className="text-right">Minutes</TableHead>
+            <TableHead className="text-right">Share</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row) => (
+            <TableRow key={row.id}>
+              <TableCell>
+                <span className="flex items-center gap-2">
+                  <span aria-hidden className={cn('size-3 shrink-0', ZONE_FILL[row.id])} />
+                  <span>{ZONE_NAME[row.id]}</span>
+                  <span className="text-muted-foreground">{row.label}</span>
+                </span>
+              </TableCell>
+              <TableCell className="text-right tabular-nums">{formatInt(row.minutes)} min</TableCell>
+              <TableCell className="text-right tabular-nums">{formatInt(row.share * 100)} %</TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((row) => (
-              <TableRow key={row.id}>
-                <TableCell>{row.label}</TableCell>
-                <TableCell className="text-right tabular-nums">{formatInt(row.minutes)}</TableCell>
-                <TableCell className="text-right tabular-nums">{formatInt(row.share * 100)} %</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-    </Panel>
+          ))}
+        </TableBody>
+      </Table>
+    </SectionCard>
   )
 }
 

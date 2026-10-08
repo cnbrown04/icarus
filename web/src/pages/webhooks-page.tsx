@@ -1,3 +1,4 @@
+import { WebhooksLogoIcon } from '@phosphor-icons/react'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -8,15 +9,16 @@ import { ErrorLine } from '@/components/error-line'
 import { LoadingRows } from '@/components/loading'
 import { PageAction } from '@/components/page-action'
 import { RotateSecretDialog } from '@/components/rotate-secret-dialog'
+import { SectionCard } from '@/components/section-card'
+import { StatusBadge } from '@/components/status-badge'
 import { Switch } from '@/components/switch'
-import { Panel } from '@/components/stat'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { describeError, isConflict } from '@/lib/errors'
 import { useAlarms, useHooks, useMe, useUpdateHook } from '@/lib/queries'
 import { formatDateTime } from '@/lib/time'
 import type { Hook } from '@/lib/types'
-import { AUTH_LABEL, hookAddress } from '@/lib/webhooks'
+import { AUTH_LABEL, hookAddress, SECRET_URL_WARNING } from '@/lib/webhooks'
 
 export function WebhooksPage() {
   const hooks = useHooks()
@@ -50,7 +52,11 @@ export function WebhooksPage() {
       ) : hooks.isPending || alarms.isPending || me.isPending ? (
         <LoadingRows rows={3} />
       ) : hooks.data.length === 0 ? (
-        <EmptyState message="No webhooks" action={<Button variant="outline" onClick={() => setCreating(true)}>New webhook</Button>} />
+        <EmptyState
+          icon={WebhooksLogoIcon}
+          message="No webhooks"
+          action={<Button variant="outline" onClick={() => setCreating(true)}>New webhook</Button>}
+        />
       ) : (
         <WebhookTable
           hooks={hooks.data}
@@ -85,7 +91,7 @@ function WebhookTable({
   onDelete: (hook: Hook) => void
 }) {
   return (
-    <Panel title="Endpoints">
+    <SectionCard title="Endpoints" icon={WebhooksLogoIcon}>
       <div>
         <Table>
           <TableHeader>
@@ -106,7 +112,15 @@ function WebhookTable({
               <TableRow key={hook.id}>
                 <TableCell className="whitespace-normal font-medium">{hook.label}</TableCell>
                 <TableCell className="whitespace-normal break-all">{hookAddress(hook)}</TableCell>
-                <TableCell className="whitespace-normal hidden md:table-cell">{AUTH_LABEL[hook.auth_mode]}</TableCell>
+                <TableCell className="whitespace-normal hidden md:table-cell">
+                  <div className="flex flex-col items-start gap-2">
+                    {hook.auth_mode === 'hmac' ? (
+                      <StatusBadge variant="ok">{AUTH_LABEL.hmac}</StatusBadge>
+                    ) : (
+                      <StatusBadge variant="warn">{AUTH_LABEL.secret_url}</StatusBadge>
+                    )}
+                  </div>
+                </TableCell>
                 <TableCell className="whitespace-normal hidden md:table-cell">{(hook.alarm_id && alarmLabels.get(hook.alarm_id)) || '—'}</TableCell>
                 <TableCell className="whitespace-normal hidden tabular-nums md:table-cell">
                   {hook.last_triggered_at ? formatDateTime(Date.parse(hook.last_triggered_at), tz) : 'Never'}
@@ -137,6 +151,9 @@ function WebhookTable({
           </TableBody>
         </Table>
       </div>
-    </Panel>
+      {hooks.some((hook) => hook.auth_mode === 'secret_url') && (
+        <p className="text-xs text-muted-foreground">{SECRET_URL_WARNING}</p>
+      )}
+    </SectionCard>
   )
 }
