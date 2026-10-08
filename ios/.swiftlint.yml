@@ -10,12 +10,6 @@ included:
   - IcarusUITests
 
 custom_rules:
-  no_corner_radius:
-    name: "No rounded corners"
-    regex: '\.cornerRadius\(|RoundedRectangle|\.clipShape\(\s*\.?RoundedRectangle'
-    message: "Icarus uses square corners only (PLAN.md §14, §15.2). Remove the rounded shape."
-    severity: error
-
   no_literal_padding:
     name: "No literal padding values"
     regex: '\.padding\([^)]*(?<![A-Za-z0-9_.])[0-9]'

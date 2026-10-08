@@ -24,7 +24,7 @@ Checklist copy of PLAN.md §15. Rule numbers match the plan. Apply to every web 
 - [ ] 12. **Vertical rhythm:** 24 between sections, 12 between items in a section, 8 between label and value.
 - [ ] 13. **One primary action per screen/page**, top-right on web, toolbar trailing on iOS. Secondary actions go in menus.
 - [ ] 14. **No hero sections, banners or marketing blocks** inside the product.
-- [ ] 15. **Cards only when grouping is meaningful.** No card-inside-card. On web, Lyra cards with zero radius; on iOS, plain grouped sections with square corners.
+- [ ] 15. **Cards only when grouping is meaningful.** No card-inside-card. On web, Lyra cards with zero radius. On iOS, default SwiftUI styling with rounded corners (Caleb, 2026-10-08; answers PLAN.md §20 Q9).
 - [ ] 16. **Alignment:** numbers right-aligned in tables; metric tiles align baselines across a row.
 
 ## 15.3 Visual
@@ -49,5 +49,19 @@ Checklist copy of PLAN.md §15. Rule numbers match the plan. Apply to every web 
 ## 15.5 Mechanical enforcement
 
 - [ ] Web: ESLint rules (no `rounded-*`, no arbitrary spacing values like `p-[13px]`, no emoji in JSX text), Lyra CSS hash lock, Playwright and axe accessibility checks, screenshot review.
-- [ ] iOS: SwiftLint custom rules (no `.cornerRadius` or `.clipShape(RoundedRectangle` outside an allowlist, no literal padding values outside the `Spacing` enum, no emoji in string literals), snapshot screenshots reviewed per PR.
+- [ ] iOS: SwiftLint custom rules (no literal padding values outside the `Spacing` enum, no emoji in string literals), snapshot screenshots reviewed per PR.
 - [ ] Both: this checklist is part of the PR template (`.github/pull_request_template.md`).
+
+## iOS exceptions (Caleb, 2026-10-08)
+
+The iOS app uses the default SwiftUI look instead of the Lyra-style square layout:
+
+- Rounded corners, inset grouped lists, system materials and standard controls are allowed and preferred.
+- Charts may use gradient area fills, colour by category (stress bands, HR zones) and interactive selection.
+- Rules 1-9 (copy), 10-13 (spacing scale, page padding, one primary action), 22-26 (motion, loading, stale data, destructive confirmations, accessibility) still apply.
+- Rule 17 (no gradients or decorative shadows) does not apply to iOS chart fills and system materials.
+
+## Web additions (Caleb, 2026-10-08)
+
+- Icons: Phosphor icons on cards, stat tiles, status badges, empty states and navigation. Icons sit beside a label, never alone, except icon-only buttons with an aria-label.
+- Semantic colour: app-level tokens in `web/src/styles/semantic.css` (never in the generated Lyra CSS): success, warning, danger, info, plus stress bands (low, moderate, high) and five HR zones, each with light and dark values that pass WCAG AA on the card background. Colour still carries meaning (state, threshold, series) and is paired with text or an icon.
