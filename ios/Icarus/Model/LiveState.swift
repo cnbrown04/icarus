@@ -18,6 +18,8 @@ final class LiveState {
 
     private(set) var state: ConnectionState = .idle
     private(set) var latestBPM: Int?
+    private(set) var batteryPercent: Int?
+    private(set) var tierBState: TierBState = .disabled
     private(set) var lastDataAt: Date?
     /// Bands seen while scanning, plus the connected band, in the order first seen.
     private(set) var bands: [DiscoveredBand] = []
@@ -147,7 +149,12 @@ final class LiveState {
                     rrMs: measurement.rrIntervalsMs
                 )))
             }
-        case .battery:
+        case let .battery(percent):
+            batteryPercent = percent
+        case let .tierB(newState):
+            tierBState = newState
+        case .bandEvent:
+            // Wrist and double-tap events are shown by the Phase 6 band screens.
             break
         }
     }

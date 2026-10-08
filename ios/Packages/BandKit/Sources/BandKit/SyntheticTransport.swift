@@ -83,6 +83,25 @@ public actor SyntheticTransport: BandTransport {
 
     public func forget() async {}
 
+    /// Tier B calls are recorded for UI tests and otherwise ignored. Nothing is sent.
+    public private(set) var tierBRequests: [TierBRequest] = []
+
+    public func setTierBEnabled(_ enabled: Bool) async {
+        tierBRequests.append(.setEnabled(enabled))
+    }
+
+    public func runRhythm(_ rhythm: Rhythm) async {
+        tierBRequests.append(.runRhythm(rhythm))
+    }
+
+    public func stopHaptics() async {
+        tierBRequests.append(.stopHaptics)
+    }
+
+    public func armBandAlarm(at date: Date?) async {
+        tierBRequests.append(.armAlarm(date))
+    }
+
     public func stop() {
         task?.cancel()
         task = nil

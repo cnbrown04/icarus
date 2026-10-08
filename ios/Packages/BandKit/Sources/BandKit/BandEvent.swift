@@ -24,5 +24,10 @@ public enum BandEvent: Sendable, Equatable {
     /// A raw notification from a recorded characteristic, before parsing. Feeds FrameLog.
     case raw(char: String, bytes: [UInt8], at: Date)
     case hr(HeartRateMeasurement, receivedAt: Date)
+    /// Battery percent. From the standard 0x2A19 read, or from Tier B GET_BATTERY_LEVEL (PLAN.md 5.3.4).
     case battery(Int)
+    /// Tier B link state changed (PLAN.md 5.3.6, 7.2).
+    case tierB(TierBState)
+    /// An EVENT (0x30) frame from the band, such as wrist on/off or a double tap (PLAN.md 5.3.4).
+    case bandEvent(BandEventKind)
 }
