@@ -1,7 +1,7 @@
 # Web screenshots
 
-Commit: 46858c49888dafa1ecbad6fee462e5e6958c5cb1
-Run: https://github.com/cnbrown04/icarus/actions/runs/37740499017
+Commit: 71d9f9eef2fef76044f7410e95f39d79eef33e08
+Run: https://github.com/cnbrown04/icarus/actions/runs/37743452200
 
 - [alarm-editor.png](alarm-editor.png)
 - [alarms.png](alarms.png)
