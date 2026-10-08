@@ -4,9 +4,11 @@ pub mod accounts;
 pub mod auth;
 pub mod error;
 pub mod extract;
+pub mod openapi;
 pub mod ratelimit;
 pub mod routes;
 pub mod secrets;
+pub mod security;
 pub mod state;
 pub mod whoop;
 
@@ -15,18 +17,20 @@ use std::time::Duration;
 use axum::{
     Json, Router,
     extract::State,
+    http::{HeaderValue, header},
     middleware::from_fn_with_state,
     response::{IntoResponse, Response},
     routing::{any, delete, get, patch, post, put},
 };
 use icarus_db::ReadyError;
-use serde_json::json;
+use serde::Serialize;
 use tower::ServiceBuilder;
 use tower_http::{
     compression::CompressionLayer,
     decompression::RequestDecompressionLayer,
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     services::{ServeDir, ServeFile},
+    set_header::SetResponseHeaderLayer,
     timeout::TimeoutLayer,
     trace::TraceLayer,
 };
@@ -117,40 +121,78 @@ pub fn router(state: AppState) -> Router {
     app = match web_dir {
         Some(dir) => {
             let index = dir.join("index.html");
-            app.fallback_service(ServeDir::new(&dir).fallback(ServeFile::new(index)))
+            let files = ServeDir::new(&dir).fallback(ServeFile::new(index));
+            app.fallback_service(
+                ServiceBuilder::new()
+                    .layer(SetResponseHeaderLayer::overriding(
+                        header::CONTENT_SECURITY_POLICY,
+                        HeaderValue::from_static(security::WEB_CSP),
+                    ))
+                    .service(files),
+            )
         }
         None => app.fallback(api_not_found),
     };
 
-    app.layer(from_fn_with_state(
-        state.clone(),
-        auth::refresh_session_cookie,
-    ))
-    .layer(
-        ServiceBuilder::new()
-            .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
-            .layer(TraceLayer::new_for_http())
-            .layer(TimeoutLayer::with_status_code(
-                axum::http::StatusCode::REQUEST_TIMEOUT,
-                REQUEST_TIMEOUT,
-            ))
-            .layer(PropagateRequestIdLayer::x_request_id())
-            .layer(CompressionLayer::new()),
-    )
-    .with_state(state)
+    app.layer(from_fn_with_state(state.clone(), security::set_headers))
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::refresh_session_cookie,
+        ))
+        .layer(
+            ServiceBuilder::new()
+                .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
+                .layer(TraceLayer::new_for_http())
+                .layer(TimeoutLayer::with_status_code(
+                    axum::http::StatusCode::REQUEST_TIMEOUT,
+                    REQUEST_TIMEOUT,
+                ))
+                .layer(PropagateRequestIdLayer::x_request_id())
+                .layer(CompressionLayer::new()),
+        )
+        .with_state(state)
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct StatusResponse {
+    pub status: String,
 }
 
 async fn api_not_found() -> ApiError {
     ApiError::NotFound
 }
 
-async fn healthz() -> Json<serde_json::Value> {
-    Json(json!({ "status": "ok" }))
+/// Liveness. Does not touch the database.
+#[utoipa::path(
+    get,
+    path = "/healthz",
+    operation_id = "healthz",
+    tag = "Health",
+    responses((status = 200, description = "The process is up.", body = StatusResponse))
+)]
+async fn healthz() -> Json<StatusResponse> {
+    Json(StatusResponse {
+        status: "ok".into(),
+    })
 }
 
+/// Readiness: the database answers and every embedded migration is applied.
+#[utoipa::path(
+    get,
+    path = "/readyz",
+    operation_id = "readyz",
+    tag = "Health",
+    responses(
+        (status = 200, description = "Ready to serve.", body = StatusResponse),
+        (status = "default", description = "Not ready.", body = openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 async fn readyz(State(state): State<AppState>) -> Response {
     match icarus_db::check_ready(&state.pool).await {
-        Ok(()) => Json(json!({ "status": "ready" })).into_response(),
+        Ok(()) => Json(StatusResponse {
+            status: "ready".into(),
+        })
+        .into_response(),
         Err(err) => {
             tracing::warn!(error = %err, "readiness check failed");
             // Only the variant leaves this function. The driver message stays in the log.

@@ -2,15 +2,14 @@
 
 use std::{
     collections::{HashMap, VecDeque},
+    hash::Hash,
     net::IpAddr,
     sync::Mutex,
     time::{Duration, Instant},
 };
 
-use uuid::Uuid;
-
 const MAX_TRACKED_IPS: usize = 4096;
-const MAX_TRACKED_ENDPOINTS: usize = 10_000;
+const MAX_TRACKED_KEYS: usize = 10_000;
 
 #[derive(Debug)]
 pub struct RateLimiter {
@@ -61,11 +60,20 @@ impl RateLimiter {
     }
 }
 
-/// Token buckets per webhook endpoint (PLAN.md §12.4). The capacity is the per-minute budget, and
-/// tokens refill continuously at that rate, so a burst up to the budget is allowed.
-#[derive(Debug, Default)]
-pub struct TokenBuckets {
-    buckets: Mutex<HashMap<Uuid, Bucket>>,
+/// Token buckets keyed by webhook endpoint (PLAN.md §12.4) or by client IP (PLAN.md §18). The
+/// capacity is the per-minute budget, and tokens refill continuously at that rate, so a burst up
+/// to the budget is allowed.
+#[derive(Debug)]
+pub struct TokenBuckets<K> {
+    buckets: Mutex<HashMap<K, Bucket>>,
+}
+
+impl<K> Default for TokenBuckets<K> {
+    fn default() -> Self {
+        Self {
+            buckets: Mutex::new(HashMap::new()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -74,20 +82,20 @@ struct Bucket {
     updated: Instant,
 }
 
-impl TokenBuckets {
+impl<K: Eq + Hash> TokenBuckets<K> {
     /// Takes one token for `key`. Returns `false` when the bucket is empty.
-    pub fn take(&self, key: Uuid, per_minute: u32) -> bool {
+    pub fn take(&self, key: K, per_minute: u32) -> bool {
         self.take_at(key, per_minute, Instant::now())
     }
 
-    fn take_at(&self, key: Uuid, per_minute: u32, now: Instant) -> bool {
+    fn take_at(&self, key: K, per_minute: u32, now: Instant) -> bool {
         let capacity = f64::from(per_minute.max(1));
         let rate_per_sec = capacity / 60.0;
         let mut map = self
             .buckets
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if map.len() > MAX_TRACKED_ENDPOINTS {
+        if map.len() > MAX_TRACKED_KEYS {
             // Full buckets carry no information, so dropping them is safe.
             map.retain(|_, b| b.tokens < capacity);
         }
@@ -115,8 +123,8 @@ mod tests {
 
     #[test]
     fn token_bucket_allows_the_budget_then_refills() {
-        let buckets = TokenBuckets::default();
-        let key = Uuid::now_v7();
+        let buckets: TokenBuckets<uuid::Uuid> = TokenBuckets::default();
+        let key = uuid::Uuid::now_v7();
         let t0 = Instant::now();
         for i in 0..10 {
             assert!(buckets.take_at(key, 10, t0), "token {i}");
@@ -126,7 +134,7 @@ mod tests {
         assert!(!buckets.take_at(key, 10, t0 + Duration::from_secs(5)));
         assert!(buckets.take_at(key, 10, t0 + Duration::from_secs(7)));
         assert!(
-            buckets.take_at(Uuid::now_v7(), 1, t0),
+            buckets.take_at(uuid::Uuid::now_v7(), 1, t0),
             "other endpoints have their own budget"
         );
     }

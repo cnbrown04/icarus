@@ -21,12 +21,24 @@ use crate::{
     state::AppState,
 };
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct LoginBody {
     email: String,
     password: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/auth/login",
+    operation_id = "login",
+    tag = "Auth",
+    request_body = LoginBody,
+    responses(
+        (status = 204, description = "Signed in. Sets the icarus_session cookie (HttpOnly, SameSite=Lax, Secure unless ICARUS_INSECURE_COOKIES=1)."),
+        (status = 401, description = "Bad credentials."),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn login(
     State(state): State<AppState>,
     ClientIp(ip): ClientIp,
@@ -78,6 +90,16 @@ pub async fn login(
         .into_response())
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/auth/logout",
+    operation_id = "logout",
+    tag = "Auth",
+    responses(
+        (status = 204, description = "Signed out. Clears the session cookie."),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn logout(
     State(state): State<AppState>,
     headers: HeaderMap,

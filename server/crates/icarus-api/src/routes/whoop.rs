@@ -57,7 +57,7 @@ fn back_to_settings() -> Response {
     (StatusCode::FOUND, [(LOCATION, SETTINGS_PATH)]).into_response()
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct StatusBody {
     connected: bool,
     scopes: Vec<String>,
@@ -66,7 +66,19 @@ pub struct StatusBody {
 }
 
 /// `GET /v1/integrations/whoop`. Only our own bookkeeping: no WHOOP values.
-async fn status(
+#[utoipa::path(
+    get,
+    path = "/v1/integrations/whoop",
+    operation_id = "get_whoop_status",
+    tag = "WHOOP",
+    security(("session" = [])),
+    responses(
+        (status = 200, description = "Connection state. No WHOOP values.", body = StatusBody),
+        (status = 404, description = "WHOOP is off on this server."),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
+pub async fn status(
     State(state): State<AppState>,
     WebUser(user_id): WebUser,
 ) -> Result<Json<StatusBody>, ApiError> {
@@ -99,7 +111,18 @@ async fn status(
 }
 
 /// `GET /v1/integrations/whoop/connect`: 302 to WHOOP's authorize page with a fresh 8-character state.
-async fn connect(
+#[utoipa::path(
+    get,
+    path = "/v1/integrations/whoop/connect",
+    operation_id = "connect_whoop",
+    tag = "WHOOP",
+    security(("session" = [])),
+    responses(
+        (status = 302, description = "Redirect to WHOOP authorization.", headers(("location" = String, description = "WHOOP authorize URL."))),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
+pub async fn connect(
     State(state): State<AppState>,
     WebUser(user_id): WebUser,
 ) -> Result<Response, ApiError> {
@@ -112,14 +135,28 @@ async fn connect(
 }
 
 #[derive(Deserialize)]
-struct CallbackQuery {
+pub struct CallbackQuery {
     code: Option<String>,
     state: Option<String>,
     error: Option<String>,
 }
 
 /// `GET /v1/integrations/whoop/callback`. The state names the user, so no session cookie is needed.
-async fn callback(
+#[utoipa::path(
+    get,
+    path = "/v1/integrations/whoop/callback",
+    operation_id = "whoop_callback",
+    tag = "WHOOP",
+    params(
+        ("code" = String, Query, description = "WHOOP authorization code."),
+        ("state" = String, Query, description = "The 8-character state from connect."),
+    ),
+    responses(
+        (status = 302, description = "Redirect to /integrations/whoop."),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
+pub async fn callback(
     State(state): State<AppState>,
     ApiQuery(query): ApiQuery<CallbackQuery>,
 ) -> Result<Response, ApiError> {
@@ -159,7 +196,18 @@ async fn callback(
 }
 
 /// `POST /v1/integrations/whoop/webhook`: verify, dedupe by trace id, store the row, answer 204.
-async fn webhook(
+#[utoipa::path(
+    post,
+    path = "/v1/integrations/whoop/webhook",
+    operation_id = "whoop_webhook",
+    tag = "WHOOP",
+    request_body(content = Object, content_type = "application/json", description = "WHOOP event. Verified against the signature header, never stored raw."),
+    responses(
+        (status = 204, description = "Accepted. Verified with WHOOP's signature header."),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
+pub async fn webhook(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: Body,
@@ -174,12 +222,26 @@ async fn webhook(
 }
 
 #[derive(Deserialize)]
-struct SummaryQuery {
+pub struct SummaryQuery {
     day: Option<String>,
 }
 
 /// `GET /v1/integrations/whoop/summary?day=`: live fetch, nothing written except refreshed tokens.
-async fn summary(
+#[utoipa::path(
+    get,
+    path = "/v1/integrations/whoop/summary",
+    operation_id = "get_whoop_summary",
+    tag = "WHOOP",
+    security(("session" = [])),
+    params(
+        ("day" = Option<String>, Query, description = "YYYY-MM-DD. Defaults to today in the user time zone."),
+    ),
+    responses(
+        (status = 200, description = "Live from WHOOP, not stored. Any value may be null.", body = Summary),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
+pub async fn summary(
     State(state): State<AppState>,
     WebUser(user_id): WebUser,
     ApiQuery(query): ApiQuery<SummaryQuery>,
@@ -219,7 +281,18 @@ fn day_window(day: NaiveDate, tz: Tz) -> Result<std::ops::Range<DateTime<Utc>>, 
 }
 
 /// `DELETE /v1/integrations/whoop`: revoke at WHOOP, then delete tokens and webhook rows. 204.
-async fn disconnect(
+#[utoipa::path(
+    delete,
+    path = "/v1/integrations/whoop",
+    operation_id = "disconnect_whoop",
+    tag = "WHOOP",
+    security(("session" = [])),
+    responses(
+        (status = 204, description = "Revoked at WHOOP and tokens deleted."),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
+pub async fn disconnect(
     State(state): State<AppState>,
     WebUser(user_id): WebUser,
 ) -> Result<StatusCode, ApiError> {

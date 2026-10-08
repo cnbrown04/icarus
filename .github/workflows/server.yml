@@ -5,11 +5,15 @@ on:
     paths:
       - ".github/workflows/server.yml"
       - "server/**"
+      - "shared/openapi.yaml"
+      - "scripts/**"
   push:
     branches: [main, 'claude/**']
     paths:
       - ".github/workflows/server.yml"
       - "server/**"
+      - "shared/openapi.yaml"
+      - "scripts/**"
   workflow_dispatch:
 
 permissions:
@@ -65,4 +69,17 @@ jobs:
         working-directory: server
         run: cargo test --workspace
 
-      # TODO: OpenAPI drift check against shared/openapi.yaml (PLAN.md §16.2, §17.2) once icarus-api has routes.
+  # The OpenAPI drift check (shared/openapi.yaml, PLAN.md §17.2) is the openapi_matches_checked_in_file
+  # test, so the Tests step above covers it.
+
+  scripts:
+    name: shellcheck scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Shellcheck
+        run: shellcheck scripts/*.sh

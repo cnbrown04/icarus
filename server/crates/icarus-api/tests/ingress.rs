@@ -1,12 +1,28 @@
 mod common;
 
-use axum::{body::Body, http::StatusCode};
+use std::net::{Ipv4Addr, SocketAddr};
+
+use axum::{
+    body::Body,
+    extract::ConnectInfo,
+    http::{Request, StatusCode},
+};
 use chrono::Utc;
 use common::*;
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
 use sha2::Sha256;
 use sqlx::PgPool;
+
+/// A signed ingress request from one client address, for the per-IP limit.
+fn signed_from(ip: Ipv4Addr, slug: &str, secret: &str, key: usize) -> Request<Body> {
+    let body = format!(r#"{{"idempotency_key":"k{key}"}}"#);
+    let sig = signature(secret, Utc::now().timestamp(), body.as_bytes());
+    let mut req = post_signed(slug, Some(&sig), body.as_bytes());
+    req.extensions_mut()
+        .insert(ConnectInfo(SocketAddr::new(ip.into(), 40_000)));
+    req
+}
 
 fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -465,4 +481,42 @@ async fn ingress_answers_503_without_the_key(pool: PgPool) {
     )
     .await;
     expect_problem(res, StatusCode::SERVICE_UNAVAILABLE, "internal").await;
+}
+
+#[sqlx::test(migrator = "icarus_db::MIGRATOR")]
+async fn per_ip_limit_rejects_before_any_row_is_written(pool: PgPool) {
+    // The endpoint's own budget is generous, so only the per-IP limit can refuse.
+    let (app, _, hook) = setup(&pool, "hmac", 600).await;
+    let noisy = Ipv4Addr::new(203, 0, 113, 7);
+    for i in 0..60 {
+        let res = send(&app, signed_from(noisy, &hook.slug, &hook.secret, i)).await;
+        assert_eq!(res.status(), StatusCode::ACCEPTED, "request {i}");
+    }
+    expect_problem(
+        send(&app, signed_from(noisy, &hook.slug, &hook.secret, 60)).await,
+        StatusCode::TOO_MANY_REQUESTS,
+        "rate-limited",
+    )
+    .await;
+    // Refused before the signature check, so a bad signature is not recorded either.
+    let mut forged = post_signed(&hook.slug, Some("t=1,v1=00"), b"{}");
+    forged
+        .extensions_mut()
+        .insert(ConnectInfo(SocketAddr::new(noisy.into(), 40_000)));
+    expect_problem(
+        send(&app, forged).await,
+        StatusCode::TOO_MANY_REQUESTS,
+        "rate-limited",
+    )
+    .await;
+    assert_eq!(
+        count(&pool, "SELECT count(*) FROM webhook_deliveries").await,
+        60,
+        "only the 60 admitted requests left rows"
+    );
+
+    // Another address has its own budget.
+    let other = Ipv4Addr::new(203, 0, 113, 8);
+    let res = send(&app, signed_from(other, &hook.slug, &hook.secret, 100)).await;
+    assert_eq!(res.status(), StatusCode::ACCEPTED);
 }

@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::alarm::Rhythm;
 use crate::time::rfc3339;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum FormulaSex {
     Male,
@@ -15,7 +15,7 @@ pub enum FormulaSex {
 }
 
 /// `GET /v1/me`. Profile fields may be null.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Me {
     pub id: Uuid,
     pub email: String,
@@ -28,7 +28,7 @@ pub struct Me {
     pub version: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Device {
     pub id: Uuid,
     pub name: String,
@@ -43,7 +43,7 @@ pub struct Device {
     pub revoked_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Band {
     pub id: Uuid,
     pub name: Option<String>,
@@ -54,7 +54,7 @@ pub struct Band {
     pub last_seen_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthMode {
     Hmac,
@@ -62,7 +62,7 @@ pub enum AuthMode {
 }
 
 /// `Hook` in api-contract.md. `url` is built from `PUBLIC_BASE_URL` at read time.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Hook {
     pub id: Uuid,
     pub slug: String,
@@ -79,7 +79,7 @@ pub struct Hook {
     pub version: i64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DispatchStatus {
     Pending,
@@ -90,7 +90,7 @@ pub enum DispatchStatus {
 }
 
 /// `Dispatch` in api-contract.md.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Dispatch {
     pub id: Uuid,
     pub alarm_id: Option<Uuid>,

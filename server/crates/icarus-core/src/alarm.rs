@@ -8,7 +8,7 @@ use crate::time::rfc3339;
 use crate::{ValidationError, invalid};
 
 /// Built-in rhythm names. PLAN.md §9.2.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum NamedRhythm {
     Single,
@@ -20,7 +20,7 @@ pub enum NamedRhythm {
 }
 
 /// One rhythm step. A buzz loop counts as 1 s toward the 30 s limit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Step {
     Buzz { preset: u8, loops: u8 },
@@ -28,7 +28,7 @@ pub enum Step {
 }
 
 /// A built-in name, or an explicit list of steps.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(untagged)]
 pub enum Rhythm {
     Named(NamedRhythm),
@@ -71,7 +71,7 @@ impl Rhythm {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum AlarmKind {
     Scheduled,
@@ -79,7 +79,7 @@ pub enum AlarmKind {
     Relay,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Channel {
     Phone,
@@ -87,7 +87,7 @@ pub enum Channel {
 }
 
 /// Scheduled alarms only. `weekdays` uses ISO numbering (1 = Monday). Empty means the next occurrence.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Schedule {
     pub time: String,
     pub weekdays: Vec<u8>,
@@ -148,7 +148,7 @@ pub fn validate_alarm(
 }
 
 /// `Alarm` in api-contract.md.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Alarm {
     pub id: Uuid,
     pub kind: AlarmKind,

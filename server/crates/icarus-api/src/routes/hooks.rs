@@ -10,8 +10,8 @@ use axum::{
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, SecondsFormat, Utc};
 use icarus_core::{AuthMode, Dispatch, Hook, time::format as format_time};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
@@ -185,10 +185,26 @@ async fn load_hook(pool: &PgPool, user_id: Uuid, id: Uuid) -> Result<HookRow, Ap
     row.ok_or(ApiError::NotFound)
 }
 
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct HookList {
+    pub hooks: Vec<Hook>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/hooks",
+    operation_id = "list_hooks",
+    tag = "Webhooks",
+    security(("session" = [])),
+    responses(
+        (status = 200, description = "Hooks, without secrets.", body = HookList),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn list(
     State(state): State<AppState>,
     WebUser(user_id): WebUser,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<HookList>, ApiError> {
     let rows: Vec<HookRow> = sqlx::query_as(&format!(
         "SELECT {HOOK_COLUMNS} FROM webhook_endpoints WHERE user_id = $1 ORDER BY id"
     ))
@@ -200,10 +216,18 @@ pub async fn list(
         .into_iter()
         .map(|row| hook_from_row(row, base, state.config.secrets.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Json(json!({ "hooks": hooks })))
+    Ok(Json(HookList { hooks }))
 }
 
-#[derive(Deserialize)]
+/// The created hook. `secret` is shown once and never returned again.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct HookCreated {
+    #[serde(flatten)]
+    pub hook: Hook,
+    pub secret: String,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HookCreate {
     label: String,
@@ -213,6 +237,18 @@ pub struct HookCreate {
     rate_limit_per_min: Option<i16>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/hooks",
+    operation_id = "create_hook",
+    tag = "Webhooks",
+    security(("session" = [])),
+    request_body = HookCreate,
+    responses(
+        (status = 201, description = "The hook. The secret is in this response only.", body = HookCreated),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn create(
     State(state): State<AppState>,
     WebUser(user_id): WebUser,
@@ -249,12 +285,10 @@ pub async fn create(
 
     let hook = hook_from_row(row, base_url(&state), Some(secrets))?;
     // The secret is returned here and never again. Only the ciphertext is stored.
-    let mut body = to_json(&hook)?;
-    body["secret"] = json!(secret);
-    Ok((StatusCode::CREATED, Json(body)).into_response())
+    Ok((StatusCode::CREATED, Json(HookCreated { hook, secret })).into_response())
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HookPatch {
     label: Option<String>,
@@ -263,6 +297,22 @@ pub struct HookPatch {
     rate_limit_per_min: Option<i16>,
 }
 
+#[utoipa::path(
+    patch,
+    path = "/v1/hooks/{id}",
+    operation_id = "patch_hook",
+    tag = "Webhooks",
+    security(("session" = [])),
+    params(
+        ("id" = Uuid, Path, description = "Id of the resource."),
+        ("If-Match" = i64, Header, description = "Current version. Required; a stale value gets 409."),
+    ),
+    request_body = HookPatch,
+    responses(
+        (status = 200, description = "The updated hook.", body = Hook),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn patch(
     State(state): State<AppState>,
     WebUser(user_id): WebUser,
@@ -334,6 +384,20 @@ pub async fn patch(
 
 /// Hard delete. Deliveries and their dispatches go with it. The sync config has no tombstone for
 /// hooks (api-contract.md `Hook` has no `deleted_at`), so the app learns of it on its next full read.
+#[utoipa::path(
+    delete,
+    path = "/v1/hooks/{id}",
+    operation_id = "delete_hook",
+    tag = "Webhooks",
+    security(("session" = [])),
+    params(
+        ("id" = Uuid, Path, description = "Id of the resource."),
+    ),
+    responses(
+        (status = 204, description = "Hard-deleted with its deliveries."),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn delete(
     State(state): State<AppState>,
     WebUser(user_id): WebUser,
@@ -353,11 +417,30 @@ pub async fn delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct SecretResponse {
+    pub secret: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/hooks/{id}/rotate-secret",
+    operation_id = "rotate_hook_secret",
+    tag = "Webhooks",
+    security(("session" = [])),
+    params(
+        ("id" = Uuid, Path, description = "Id of the resource."),
+    ),
+    responses(
+        (status = 200, description = "The new secret. Shown once.", body = SecretResponse),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn rotate(
     State(state): State<AppState>,
     WebUser(user_id): WebUser,
     Path(raw_id): Path<String>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<SecretResponse>, ApiError> {
     let secrets = state.secrets()?;
     let id = uuid_or_not_found(&raw_id)?;
     let secret = new_secret();
@@ -378,7 +461,7 @@ pub async fn rotate(
     found.ok_or(ApiError::NotFound)?;
     notify_config_changed(&mut tx, user_id).await?;
     tx.commit().await?;
-    Ok(Json(json!({ "secret": secret })))
+    Ok(Json(SecretResponse { secret }))
 }
 
 /// Cursor: base64url of `<received_at, RFC 3339 with microseconds>|<delivery id>`.
@@ -415,12 +498,44 @@ pub struct DeliveriesQuery {
     cursor: Option<String>,
 }
 
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct DeliveriesPage {
+    pub deliveries: Vec<DeliveryView>,
+    pub next_cursor: Option<String>,
+}
+
+/// One webhook request as the web page shows it. `status` is `accepted`, `rejected`,
+/// `rate_limited` or `duplicate`. Raw bodies are never stored.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct DeliveryView {
+    pub id: Uuid,
+    pub received_at: String,
+    pub status: String,
+    pub signature_valid: bool,
+    pub dispatch: Option<Dispatch>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/hooks/{id}/deliveries",
+    operation_id = "list_hook_deliveries",
+    tag = "Webhooks",
+    security(("session" = [])),
+    params(
+        ("id" = Uuid, Path, description = "Id of the resource."),
+        ("cursor" = Option<String>, Query, description = "Opaque cursor from next_cursor."),
+    ),
+    responses(
+        (status = 200, description = "50 per page, newest first.", body = DeliveriesPage),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn deliveries(
     State(state): State<AppState>,
     WebUser(user_id): WebUser,
     Path(raw_id): Path<String>,
     ApiQuery(query): ApiQuery<DeliveriesQuery>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<DeliveriesPage>, ApiError> {
     let id = uuid_or_not_found(&raw_id)?;
     load_hook(&state.pool, user_id, id).await?;
     let cursor = query.cursor.as_deref().map(decode_cursor).transpose()?;
@@ -466,24 +581,21 @@ pub async fn deliveries(
         }
     }
 
-    let items = rows
+    let deliveries = rows
         .into_iter()
         .map(|r| {
-            let dispatch = dispatches.get(&r.id);
-            delivery_json(r, dispatch)
+            let dispatch = dispatches.get(&r.id).cloned();
+            DeliveryView {
+                id: r.id,
+                received_at: format_time(&r.received_at),
+                status: r.status,
+                signature_valid: r.signature_valid,
+                dispatch,
+            }
         })
-        .collect::<Vec<_>>();
-    Ok(Json(
-        json!({ "deliveries": items, "next_cursor": next_cursor }),
-    ))
-}
-
-fn delivery_json(row: DeliveryRow, dispatch: Option<&Dispatch>) -> Value {
-    json!({
-        "id": row.id,
-        "received_at": format_time(&row.received_at),
-        "status": row.status,
-        "signature_valid": row.signature_valid,
-        "dispatch": dispatch,
-    })
+        .collect();
+    Ok(Json(DeliveriesPage {
+        deliveries,
+        next_cursor,
+    }))
 }

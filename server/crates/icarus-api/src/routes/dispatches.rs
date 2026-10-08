@@ -7,8 +7,8 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use icarus_core::{Dispatch, Rhythm};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::{FromRow, Postgres, Transaction};
 use uuid::Uuid;
 
@@ -92,10 +92,21 @@ pub(crate) async fn enqueue(
 }
 
 /// Unacked dispatches from the last 10 minutes, for the app's pull (PLAN.md §9.3).
+#[utoipa::path(
+    get,
+    path = "/v1/alarms/pending",
+    operation_id = "pending_alarm_dispatches",
+    tag = "Alarms",
+    security(("device" = [])),
+    responses(
+        (status = 200, description = "Unacked dispatches from the last 10 minutes.", body = DispatchList),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn pending(
     State(state): State<AppState>,
     AppDevice { user_id, .. }: AppDevice,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<DispatchList>, ApiError> {
     let rows: Vec<DispatchRow> = sqlx::query_as(&format!(
         "SELECT {DISPATCH_COLUMNS}
          FROM alarm_dispatches d JOIN alarms a ON a.id = d.alarm_id
@@ -111,7 +122,18 @@ pub async fn pending(
         .into_iter()
         .map(dispatch_from_row)
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Json(json!({ "dispatches": dispatches })))
+    Ok(Json(DispatchList { dispatches }))
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct DispatchList {
+    pub dispatches: Vec<Dispatch>,
+}
+
+/// Returned by the test route and by webhook ingress.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct DispatchIdResponse {
+    pub dispatch_id: Uuid,
 }
 
 #[derive(Deserialize)]
@@ -119,11 +141,25 @@ pub struct ListQuery {
     limit: Option<i64>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/alarm-dispatches",
+    operation_id = "list_alarm_dispatches",
+    tag = "Alarms",
+    security(("session" = []), ("device" = [])),
+    params(
+        ("limit" = Option<i64>, Query, description = "1 to 200. Default 50."),
+    ),
+    responses(
+        (status = 200, description = "Newest first.", body = DispatchList),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn list(
     State(state): State<AppState>,
     Either(principal): Either,
     Query(query): Query<ListQuery>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<DispatchList>, ApiError> {
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT);
     if !(1..=MAX_LIMIT).contains(&limit) {
         return Err(ApiError::Validation(format!(
@@ -145,10 +181,10 @@ pub async fn list(
         .into_iter()
         .map(dispatch_from_row)
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Json(json!({ "dispatches": dispatches })))
+    Ok(Json(DispatchList { dispatches }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AckBody {
     phone: String,
@@ -158,6 +194,21 @@ pub struct AckBody {
 
 /// The app reports what the phone and band did. The first ack sets `acked_at`; later acks replace
 /// the statuses.
+#[utoipa::path(
+    post,
+    path = "/v1/alarm-dispatches/{id}/ack",
+    operation_id = "ack_alarm_dispatch",
+    tag = "Alarms",
+    security(("device" = [])),
+    params(
+        ("id" = Uuid, Path, description = "Id of the resource."),
+    ),
+    request_body = AckBody,
+    responses(
+        (status = 204, description = "Recorded. The first ack sets acked_at."),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn ack(
     State(state): State<AppState>,
     AppDevice { user_id, .. }: AppDevice,

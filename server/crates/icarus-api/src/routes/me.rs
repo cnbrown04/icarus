@@ -75,6 +75,17 @@ pub(crate) async fn load_me(pool: &sqlx::PgPool, user_id: Uuid) -> Result<Me, Ap
     row.ok_or(ApiError::NotFound)?.try_into()
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/me",
+    operation_id = "get_me",
+    tag = "Me",
+    security(("session" = []), ("device" = [])),
+    responses(
+        (status = 200, description = "The account profile.", body = Me),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn get_me(
     State(state): State<AppState>,
     Either(principal): Either,
@@ -91,7 +102,7 @@ where
     Option::<T>::deserialize(deserializer).map(Some)
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, utoipa::ToSchema)]
 pub struct MePatch {
     #[serde(default, deserialize_with = "double_option")]
     tz: Option<Option<String>>,
@@ -121,6 +132,21 @@ fn check_range<T: PartialOrd + std::fmt::Display + Copy>(
     Ok(())
 }
 
+#[utoipa::path(
+    patch,
+    path = "/v1/me",
+    operation_id = "patch_me",
+    tag = "Me",
+    security(("session" = []), ("device" = [])),
+    params(
+        ("If-Match" = i64, Header, description = "Current version. Required; a stale value gets 409."),
+    ),
+    request_body = MePatch,
+    responses(
+        (status = 200, description = "The updated profile.", body = Me),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn patch_me(
     State(state): State<AppState>,
     Either(principal): Either,
@@ -216,12 +242,24 @@ pub async fn patch_me(
     Ok(Json(next))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct DeleteBody {
     confirm: String,
 }
 
 /// Deletes the account and, through cascades, every row that belongs to it.
+#[utoipa::path(
+    delete,
+    path = "/v1/me",
+    operation_id = "delete_me",
+    tag = "Me",
+    security(("session" = [])),
+    request_body = DeleteBody,
+    responses(
+        (status = 204, description = "Account and all of its rows deleted."),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn delete_me(
     State(state): State<AppState>,
     WebUser(user_id): WebUser,

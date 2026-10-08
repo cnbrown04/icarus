@@ -37,7 +37,7 @@ const ALARM_DELIVERY_STATUSES: [&str; 5] = ["shown", "ok", "not_connected", "dis
 
 // ---- wire types ----
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct BatchBody {
     schema: i64,
     batch_id: Uuid,
@@ -57,14 +57,14 @@ struct BatchBody {
     alarm_deliveries: Vec<DeliveryIn>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct BandIn {
     id: Uuid,
     name: String,
     firmware: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct HrIn {
     band_id: Uuid,
     ts_ms: Vec<i64>,
@@ -73,7 +73,7 @@ struct HrIn {
     contact: Vec<Option<bool>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct RrIn {
     band_id: Uuid,
     ts_ms: Vec<i64>,
@@ -82,7 +82,7 @@ struct RrIn {
     accepted: Vec<bool>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct MinuteIn {
     minute_ms: i64,
     hr_avg: Option<f64>,
@@ -101,7 +101,7 @@ struct MinuteIn {
     sync_rev: i64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct EventIn {
     band_id: Uuid,
     ts_ms: i64,
@@ -109,7 +109,7 @@ struct EventIn {
     payload: Option<Value>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct DeliveryIn {
     id: Uuid,
     alarm_id: Option<Uuid>,
@@ -120,7 +120,7 @@ struct DeliveryIn {
     detail: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, utoipa::ToSchema)]
 pub struct Counts {
     pub hr: Inserted,
     pub rr: Inserted,
@@ -129,19 +129,19 @@ pub struct Counts {
     pub alarm_deliveries: Inserted,
 }
 
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, utoipa::ToSchema)]
 pub struct Inserted {
     pub inserted: u64,
     pub duplicate: u64,
 }
 
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, utoipa::ToSchema)]
 pub struct Upserted {
     pub upserted: u64,
     pub stale: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct BatchResponse {
     batch_id: Uuid,
     duplicate: bool,
@@ -449,6 +449,22 @@ fn validate(body: BatchBody) -> Result<Batch, ApiError> {
 
 // ---- POST /v1/sync/batches ----
 
+#[utoipa::path(
+    post,
+    path = "/v1/sync/batches",
+    operation_id = "post_sync_batch",
+    tag = "Sync",
+    security(("device" = [])),
+    params(
+        ("Idempotency-Key" = Uuid, Header, description = "Same value as batch_id."),
+        ("Content-Encoding" = Option<String>, Header, description = "gzip, or absent."),
+    ),
+    request_body = BatchBody,
+    responses(
+        (status = 200, description = "Stored. A repeated batch_id answers with the stored counts and duplicate = true.", body = BatchResponse),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn post_batch(
     State(state): State<AppState>,
     AppDevice { user_id, device_id }: AppDevice,
@@ -783,7 +799,7 @@ pub struct ConfigQuery {
     since: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct ConfigResponse {
     alarms: Vec<Alarm>,
     webhook_endpoints: Vec<Hook>,
@@ -794,6 +810,20 @@ pub struct ConfigResponse {
 }
 
 /// Rows with `version > since`, tombstones included, plus the profile (api-contract.md).
+#[utoipa::path(
+    get,
+    path = "/v1/sync/config",
+    operation_id = "get_sync_config",
+    tag = "Sync",
+    security(("device" = [])),
+    params(
+        ("since" = Option<i64>, Query, description = "Return rows with version greater than this. Omit for all rows."),
+    ),
+    responses(
+        (status = 200, description = "Alarms (tombstones included), hooks, profile and the newest version.", body = ConfigResponse),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn get_config(
     State(state): State<AppState>,
     AppDevice { user_id, .. }: AppDevice,
@@ -861,7 +891,7 @@ struct BatchRow {
     status: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct BatchSummary {
     id: Uuid,
     device_id: Uuid,
@@ -871,7 +901,7 @@ pub struct BatchSummary {
     status: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct StateResponse {
     #[serde(with = "rfc3339")]
     server_time: DateTime<Utc>,
@@ -879,6 +909,17 @@ pub struct StateResponse {
     batches: Vec<BatchSummary>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/sync/state",
+    operation_id = "get_sync_state",
+    tag = "Sync",
+    security(("session" = []), ("device" = [])),
+    responses(
+        (status = 200, description = "The latest 50 batches.", body = StateResponse),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn get_state(
     State(state): State<AppState>,
     crate::auth::Either(principal): crate::auth::Either,

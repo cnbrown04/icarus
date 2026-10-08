@@ -29,7 +29,7 @@ pub struct TokenSet {
 }
 
 /// The day's values as the API contract shows them. Any may be null.
-#[derive(Debug, Default, Serialize, PartialEq)]
+#[derive(Debug, Default, Serialize, PartialEq, utoipa::ToSchema)]
 pub struct Summary {
     pub recovery_score: Option<f64>,
     pub hrv_rmssd_milli: Option<f64>,

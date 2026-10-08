@@ -4,7 +4,7 @@
 //! per-endpoint rate limit, parse the body, then insert the delivery and dispatch in one
 //! transaction. Rejected requests leave a delivery row with no body, so the web page can show them.
 
-use std::{future::Future, time::Duration};
+use std::{future::Future, net::IpAddr, time::Duration};
 
 use axum::{
     Json,
@@ -16,7 +16,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
 use icarus_core::{Channel, Rhythm};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::{FromRow, PgPool};
@@ -25,8 +25,11 @@ use uuid::Uuid;
 
 use crate::{
     error::ApiError,
-    extract::read_limited,
-    routes::{dispatches::enqueue, hooks::open_secret},
+    extract::{ClientIp, read_limited},
+    routes::{
+        dispatches::{DispatchIdResponse, enqueue},
+        hooks::open_secret,
+    },
     state::AppState,
 };
 
@@ -36,6 +39,8 @@ pub const BODY_LIMIT: usize = 16 * 1024;
 const REQUEST_DEADLINE: Duration = Duration::from_secs(2);
 const SIGNATURE_HEADER: &str = "x-icarus-signature";
 const SIGNATURE_WINDOW_SECS: i64 = 300;
+/// PLAN.md §18: pre-auth budget per client IP, across all endpoints.
+const INGRESS_PER_IP_PER_MIN: u32 = 60;
 const KEY_MAX_CHARS: usize = 200;
 const MESSAGE_MAX_CHARS: usize = 120;
 const USER_AGENT_MAX_CHARS: usize = 128;
@@ -51,13 +56,20 @@ struct Endpoint {
     alarm_channels: Vec<String>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 struct IngressBody {
     idempotency_key: Option<String>,
     rhythm: Option<Rhythm>,
     message: Option<String>,
     channels: Option<Vec<Channel>>,
+}
+
+/// A repeated idempotency key: the original dispatch, with `duplicate` set.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct DuplicateDispatch {
+    pub duplicate: bool,
+    pub dispatch_id: Uuid,
 }
 
 #[derive(Clone, Copy)]
@@ -67,24 +79,62 @@ enum Auth<'a> {
 }
 
 /// `POST /v1/hooks/{key}`: HMAC-signed, for endpoints in `hmac` mode.
+#[utoipa::path(
+    post,
+    path = "/v1/hooks/{id}",
+    operation_id = "post_hook_ingress",
+    tag = "Webhook ingress",
+    params(
+        ("id" = String, Path, description = "Hook id for management routes. For ingress, the endpoint slug."),
+        ("X-Icarus-Signature" = String, Header, description = "t=<unix>,v1=<hex HMAC-SHA256(secret, t + \".\" + body)>. Timestamp within 300 s."),
+    ),
+    request_body = IngressBody,
+    responses(
+        (status = 202, description = "Queued.", body = DispatchIdResponse),
+        (status = 200, description = "Repeated idempotency_key. The original dispatch.", body = DuplicateDispatch),
+        (status = 429, description = "Over the per-IP budget (60 per minute) or the endpoint budget. No delivery row is written for the per-IP case."),
+        (status = 408, description = "Did not finish within 2 s. Empty body."),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn post_signed(
     State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
     Path(slug): Path<String>,
     headers: HeaderMap,
     body: Body,
 ) -> Result<Response, ApiError> {
-    within_deadline(receive(&state, &slug, Auth::Signature, &headers, body)).await
+    within_deadline(receive(&state, ip, &slug, Auth::Signature, &headers, body)).await
 }
 
 /// `POST /v1/hooks/{key}/{secret}`: secret-URL mode, for endpoints that opted in.
+#[utoipa::path(
+    post,
+    path = "/v1/hooks/{id}/{secret}",
+    operation_id = "post_hook_ingress_secret",
+    tag = "Webhook ingress",
+    params(
+        ("id" = String, Path, description = "Endpoint slug."),
+        ("secret" = String, Path, description = "The secret from the hook, for secret_url endpoints only."),
+    ),
+    request_body = IngressBody,
+    responses(
+        (status = 202, description = "Queued.", body = DispatchIdResponse),
+        (status = 200, description = "Repeated idempotency_key. The original dispatch.", body = DuplicateDispatch),
+        (status = 429, description = "Over the per-IP budget (60 per minute) or the endpoint budget."),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn post_secret(
     State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
     Path((slug, secret)): Path<(String, String)>,
     headers: HeaderMap,
     body: Body,
 ) -> Result<Response, ApiError> {
     within_deadline(receive(
         &state,
+        ip,
         &slug,
         Auth::Secret(&secret),
         &headers,
@@ -105,11 +155,13 @@ where
 
 async fn receive(
     state: &AppState,
+    ip: IpAddr,
     slug: &str,
     auth: Auth<'_>,
     headers: &HeaderMap,
     body: Body,
 ) -> Result<Response, ApiError> {
+    admit_client(state, ip)?;
     let secrets = state.secrets()?;
     let endpoint = load_endpoint(&state.pool, slug)
         .await?
@@ -242,7 +294,10 @@ async fn receive(
         tx.commit().await?;
         return Ok((
             StatusCode::OK,
-            Json(json!({ "duplicate": true, "dispatch_id": dispatch_id })),
+            Json(DuplicateDispatch {
+                duplicate: true,
+                dispatch_id,
+            }),
         )
             .into_response());
     }
@@ -265,7 +320,7 @@ async fn receive(
     tx.commit().await?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(json!({ "dispatch_id": dispatch_id })),
+        Json(DispatchIdResponse { dispatch_id }),
     )
         .into_response())
 }
@@ -281,6 +336,16 @@ async fn load_endpoint(pool: &PgPool, slug: &str) -> Result<Option<Endpoint>, Ap
     .fetch_optional(pool)
     .await?;
     Ok(endpoint)
+}
+
+/// Runs before any database work or signature check, so floods cost little. A rejected request
+/// writes no delivery row. The log line is the only record, and it carries no address or body.
+fn admit_client(state: &AppState, ip: IpAddr) -> Result<(), ApiError> {
+    if state.ingress_ip_buckets.take(ip, INGRESS_PER_IP_PER_MIN) {
+        return Ok(());
+    }
+    tracing::warn!("webhook ingress rejected a request: per-IP rate limit");
+    Err(ApiError::RateLimited)
 }
 
 fn rate_budget(per_minute: i16) -> u32 {

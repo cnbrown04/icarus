@@ -7,7 +7,6 @@ use axum::{Json, extract::State};
 use chrono::{DateTime, Duration, NaiveDate, SecondsFormat, Utc};
 use icarus_core::time::rfc3339;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use sqlx::FromRow;
 
 use crate::{auth::Either, error::ApiError, extract::ApiQuery, state::AppState};
@@ -75,7 +74,7 @@ fn round1(value: f64) -> f64 {
     (value * 10.0).round() / 10.0
 }
 
-#[derive(Serialize, FromRow)]
+#[derive(Serialize, FromRow, utoipa::ToSchema)]
 pub struct HrPoint {
     #[serde(with = "rfc3339")]
     t: DateTime<Utc>,
@@ -84,11 +83,34 @@ pub struct HrPoint {
     max: Option<i32>,
 }
 
+/// Heart-rate points. `t` is the start of each bucket.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct HrResponse {
+    pub res: &'static str,
+    pub points: Vec<HrPoint>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/metrics/hr",
+    operation_id = "get_hr",
+    tag = "Metrics",
+    security(("session" = []), ("device" = [])),
+    params(
+        ("from" = String, Query, description = "RFC 3339 start."),
+        ("to" = String, Query, description = "RFC 3339 end, exclusive."),
+        ("res" = String, Query, description = "raw (up to 6 h), 1m or 5m (up to 14 d), or 1h (up to 14 d)."),
+    ),
+    responses(
+        (status = 200, description = "Points, oldest first.", body = HrResponse),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn hr(
     State(state): State<AppState>,
     Either(principal): Either,
     ApiQuery(query): ApiQuery<HrQuery>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<HrResponse>, ApiError> {
     let res = match query.res.as_deref() {
         Some("raw") => Resolution::Raw,
         Some("1m") => Resolution::Minute,
@@ -169,10 +191,13 @@ pub async fn hr(
         Resolution::FiveMinutes => "5m",
         Resolution::Hour => "1h",
     };
-    Ok(Json(json!({ "res": res_name, "points": points })))
+    Ok(Json(HrResponse {
+        res: res_name,
+        points,
+    }))
 }
 
-#[derive(Serialize, FromRow)]
+#[derive(Serialize, FromRow, utoipa::ToSchema)]
 pub struct MinuteOut {
     #[serde(with = "rfc3339")]
     minute: DateTime<Utc>,
@@ -191,11 +216,26 @@ pub struct MinuteOut {
 }
 
 /// Typed responses: going through `json!` would widen `f32` values and show their binary noise.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct MinutesResponse {
     minutes: Vec<MinuteOut>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/metrics/minutes",
+    operation_id = "get_minutes",
+    tag = "Metrics",
+    security(("session" = []), ("device" = [])),
+    params(
+        ("from" = String, Query, description = "RFC 3339 start."),
+        ("to" = String, Query, description = "RFC 3339 end, exclusive. At most 14 days."),
+    ),
+    responses(
+        (status = 200, description = "Minute metrics. Estimates, not medical readings.", body = MinutesResponse),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn minutes(
     State(state): State<AppState>,
     Either(principal): Either,
@@ -217,7 +257,7 @@ pub async fn minutes(
     Ok(Json(MinutesResponse { minutes: rows }))
 }
 
-#[derive(Serialize, FromRow)]
+#[derive(Serialize, FromRow, utoipa::ToSchema)]
 pub struct DayOut {
     day: NaiveDate,
     rhr: Option<i16>,
@@ -238,11 +278,26 @@ fn parse_day(raw: Option<&str>, name: &str) -> Result<NaiveDate, ApiError> {
         .map_err(|_| ApiError::Validation(format!("{name} must be a YYYY-MM-DD day.")))
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct DailyResponse {
     days: Vec<DayOut>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/metrics/daily",
+    operation_id = "get_daily",
+    tag = "Metrics",
+    security(("session" = []), ("device" = [])),
+    params(
+        ("from" = String, Query, description = "YYYY-MM-DD in the user time zone."),
+        ("to" = String, Query, description = "YYYY-MM-DD, inclusive. At most 3660 days after from."),
+    ),
+    responses(
+        (status = 200, description = "Daily summaries.", body = DailyResponse),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn daily(
     State(state): State<AppState>,
     Either(principal): Either,
@@ -273,11 +328,29 @@ pub async fn daily(
     Ok(Json(DailyResponse { days: rows }))
 }
 
+/// The latest raw sample, or both fields null when there is none.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct LiveResponse {
+    pub bpm: Option<i16>,
+    pub ts: Option<String>,
+}
+
 /// Latest raw sample across the user's bands, or nulls when there is none.
+#[utoipa::path(
+    get,
+    path = "/v1/metrics/live",
+    operation_id = "get_live",
+    tag = "Metrics",
+    security(("session" = []), ("device" = [])),
+    responses(
+        (status = 200, description = "The latest raw sample, or nulls.", body = LiveResponse),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn live(
     State(state): State<AppState>,
     Either(principal): Either,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<LiveResponse>, ApiError> {
     let row: Option<(DateTime<Utc>, i16)> = sqlx::query_as(
         "SELECT h.ts, h.bpm
          FROM hr_samples h JOIN bands b ON b.id = h.band_id
@@ -289,11 +362,14 @@ pub async fn live(
     .fetch_optional(&state.pool)
     .await?;
     Ok(Json(match row {
-        Some((ts, bpm)) => json!({
-            "bpm": bpm,
-            "ts": ts.to_rfc3339_opts(SecondsFormat::Secs, true),
-        }),
-        None => json!({ "bpm": null, "ts": null }),
+        Some((ts, bpm)) => LiveResponse {
+            bpm: Some(bpm),
+            ts: Some(ts.to_rfc3339_opts(SecondsFormat::Secs, true)),
+        },
+        None => LiveResponse {
+            bpm: None,
+            ts: None,
+        },
     }))
 }
 

@@ -26,14 +26,17 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       ICARUS_ENC_KEY: ${ICARUS_ENC_KEY:?set ICARUS_ENC_KEY in .env}
       ICARUS_INSECURE_COOKIES: ${ICARUS_INSECURE_COOKIES:-0}
+      # The server sits behind a reverse proxy (docs/deploy.md); trust its X-Forwarded-For.
+      ICARUS_TRUST_PROXY: ${ICARUS_TRUST_PROXY:-1}
       APNS_KEY_P8: ${APNS_KEY_P8:-}
       APNS_KEY_ID: ${APNS_KEY_ID:-}
       APNS_TEAM_ID: ${APNS_TEAM_ID:-}
       APNS_TOPIC: ${APNS_TOPIC:-com.cnbrown04.icarus}
       WHOOP_CLIENT_ID: ${WHOOP_CLIENT_ID:-}
       WHOOP_CLIENT_SECRET: ${WHOOP_CLIENT_SECRET:-}
+    # Only the local reverse proxy reaches the server.
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
 
 volumes:
   pgdata:

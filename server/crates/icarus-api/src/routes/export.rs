@@ -13,7 +13,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, SecondsFormat, Utc};
-use futures_util::{TryStreamExt, stream};
+use futures_util::{StreamExt, TryStreamExt, stream};
 use icarus_core::time::rfc3339;
 use serde::Serialize;
 use serde_json::Value;
@@ -26,6 +26,17 @@ use crate::{auth::WebUser, error::ApiError, routes::me::load_me, state::AppState
 const CHUNK_BYTES: usize = 64 * 1024;
 const CHANNEL_DEPTH: usize = 8;
 
+#[utoipa::path(
+    get,
+    path = "/v1/export",
+    operation_id = "export_data",
+    tag = "Data",
+    security(("session" = [])),
+    responses(
+        (status = 200, description = "One JSON object per line, each with a kind field.", content_type = "application/x-ndjson", body = String),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn export(
     State(state): State<AppState>,
     WebUser(user_id): WebUser,
@@ -44,9 +55,13 @@ pub async fn export(
         }
     });
 
-    let body = Body::from_stream(stream::unfold(rx, |mut rx| async move {
-        rx.recv().await.map(|item| (item, rx))
-    }));
+    // Fused: compression polls the body once more after the last chunk, and `unfold` panics on that.
+    let body = Body::from_stream(
+        stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|item| (item, rx))
+        })
+        .fuse(),
+    );
     Ok((
         [
             (CONTENT_TYPE, "application/x-ndjson"),

@@ -53,7 +53,9 @@ tower-http = { version = "0.7.1", features = [
     "compression-gzip",
     "decompression-gzip",
     "fs",
+    "set-header",
 ] }
 uuid = { version = "1.27.0", features = ["v7", "serde"] }
+utoipa = { version = "6.0.0", features = ["chrono", "uuid", "yaml"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }

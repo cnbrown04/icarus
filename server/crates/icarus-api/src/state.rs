@@ -1,6 +1,7 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{net::IpAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use sqlx::PgPool;
+use uuid::Uuid;
 
 use crate::{
     error::ApiError,
@@ -45,7 +46,9 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub login_limiter: Arc<RateLimiter>,
     pub pairing_limiter: Arc<RateLimiter>,
-    pub hook_buckets: Arc<TokenBuckets>,
+    pub hook_buckets: Arc<TokenBuckets<Uuid>>,
+    /// Pre-auth budget for all webhook ingress from one client IP (PLAN.md §18).
+    pub ingress_ip_buckets: Arc<TokenBuckets<IpAddr>>,
     pub whoop: Option<Arc<WhoopClient>>,
 }
 
@@ -61,6 +64,7 @@ impl AppState {
             login_limiter: Arc::new(RateLimiter::new(5, Duration::from_secs(60))),
             pairing_limiter: Arc::new(RateLimiter::new(30, Duration::from_secs(60))),
             hook_buckets: Arc::new(TokenBuckets::default()),
+            ingress_ip_buckets: Arc::new(TokenBuckets::default()),
             whoop: config
                 .whoop
                 .clone()

@@ -22,11 +22,8 @@ test('the data link points at the NDJSON export, which includes the account reco
   expect(records.some((record) => record.kind === 'me')).toBe(true)
 })
 
-// Known server bug: GET /v1/export with Accept-Encoding gzip (every browser) is cut off after about 58 KB.
-// crates/icarus-api/src/routes/export.rs wraps the channel in futures_util stream::unfold, which panics when the
-// compression layer polls it again after it returned None. Remove test.fail once the server streams with a fused
-// stream (for example tokio_stream ReceiverStream); the test then passes and the annotation must go.
-test.fail('the browser download of the export completes', async ({ page }) => {
+// Regression check: gzip-compressed exports used to be cut off after about 58 KB (fixed in routes/export.rs).
+test('the browser download of the export completes', async ({ page }) => {
   await page.goto('/settings')
   const [download] = await Promise.all([
     page.waitForEvent('download'),

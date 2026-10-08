@@ -50,7 +50,7 @@ fn normalise_code(raw: &str) -> Option<String> {
     valid.then_some(code)
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct PairingCodeResponse {
     code: String,
     qr_svg: String,
@@ -58,6 +58,17 @@ pub struct PairingCodeResponse {
     expires_at: DateTime<Utc>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/devices/pairing-codes",
+    operation_id = "create_pairing_code",
+    tag = "Devices",
+    security(("session" = [])),
+    responses(
+        (status = 200, description = "A single-use code, valid for 10 minutes, and its QR code.", body = PairingCodeResponse),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn create_pairing_code(
     State(state): State<AppState>,
     WebUser(user_id): WebUser,
@@ -84,7 +95,7 @@ pub async fn create_pairing_code(
     }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct PairBody {
     code: String,
     name: String,
@@ -93,7 +104,7 @@ pub struct PairBody {
     app_version: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct PairResponse {
     device_id: Uuid,
     token: String,
@@ -112,6 +123,17 @@ fn check_text(value: &str, what: &str, max: usize, required: bool) -> Result<(),
 }
 
 /// Exchanges a single-use pairing code for a device token. The token is returned once.
+#[utoipa::path(
+    post,
+    path = "/v1/devices/pair",
+    operation_id = "pair_device",
+    tag = "Devices",
+    request_body = PairBody,
+    responses(
+        (status = 201, description = "Paired. The token is shown once.", body = PairResponse),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn pair(
     State(state): State<AppState>,
     ClientIp(ip): ClientIp,
@@ -185,12 +207,23 @@ struct BandRow {
     last_seen_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct DeviceList {
     devices: Vec<Device>,
     bands: Vec<Band>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/devices",
+    operation_id = "list_devices",
+    tag = "Devices",
+    security(("session" = []), ("device" = [])),
+    responses(
+        (status = 200, description = "Devices and bands of the account.", body = DeviceList),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn list(
     State(state): State<AppState>,
     Either(principal): Either,
@@ -238,6 +271,20 @@ pub async fn list(
 }
 
 /// Revokes a device. Its token gets 401 from the next request on.
+#[utoipa::path(
+    delete,
+    path = "/v1/devices/{id}",
+    operation_id = "revoke_device",
+    tag = "Devices",
+    security(("session" = [])),
+    params(
+        ("id" = Uuid, Path, description = "Id of the resource."),
+    ),
+    responses(
+        (status = 204, description = "Device revoked. Its token gets 401 from now on."),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn revoke(
     State(state): State<AppState>,
     WebUser(user_id): WebUser,
@@ -263,12 +310,24 @@ pub async fn revoke(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct PushTokenBody {
     apns_token: String,
     environment: String,
 }
 
+#[utoipa::path(
+    put,
+    path = "/v1/devices/me/push-token",
+    operation_id = "put_push_token",
+    tag = "Devices",
+    security(("device" = [])),
+    request_body = PushTokenBody,
+    responses(
+        (status = 204, description = "Stored for this device."),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn put_push_token(
     State(state): State<AppState>,
     crate::auth::AppDevice { device_id, .. }: crate::auth::AppDevice,

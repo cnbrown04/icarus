@@ -10,8 +10,8 @@ use chrono::{DateTime, Utc};
 use icarus_core::{
     Alarm, AlarmKind, Channel, Rhythm, Schedule, ValidationError, alarm::validate_alarm,
 };
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
@@ -20,8 +20,10 @@ use crate::{
     error::ApiError,
     extract::ApiJson,
     routes::{
-        dispatches::enqueue, if_match_version, me::double_option, notify_config_changed,
-        optional_if_match, stored, uuid_or_not_found,
+        dispatches::{DispatchIdResponse, enqueue},
+        if_match_version,
+        me::double_option,
+        notify_config_changed, optional_if_match, stored, uuid_or_not_found,
     },
     state::AppState,
 };
@@ -124,10 +126,26 @@ async fn lock_alarm(
     }
 }
 
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct AlarmList {
+    alarms: Vec<Alarm>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/alarms",
+    operation_id = "list_alarms",
+    tag = "Alarms",
+    security(("session" = []), ("device" = [])),
+    responses(
+        (status = 200, description = "Alarms that are not deleted.", body = AlarmList),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn list(
     State(state): State<AppState>,
     Either(principal): Either,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<AlarmList>, ApiError> {
     let rows: Vec<AlarmRow> = sqlx::query_as(&format!(
         "SELECT {ALARM_COLUMNS} FROM alarms WHERE user_id = $1 AND deleted_at IS NULL ORDER BY id"
     ))
@@ -138,10 +156,10 @@ pub async fn list(
         .into_iter()
         .map(alarm_from_row)
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Json(json!({ "alarms": alarms })))
+    Ok(Json(AlarmList { alarms }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AlarmCreate {
     #[serde(default)]
@@ -160,6 +178,18 @@ fn enabled_default() -> bool {
     true
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/alarms",
+    operation_id = "create_alarm",
+    tag = "Alarms",
+    security(("session" = []), ("device" = [])),
+    request_body = AlarmCreate,
+    responses(
+        (status = 201, description = "The created alarm.", body = Alarm),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn create(
     State(state): State<AppState>,
     Either(principal): Either,
@@ -224,7 +254,7 @@ async fn id_taken(pool: &PgPool, user_id: Uuid, id: Uuid) -> Result<ApiError, Ap
     })
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AlarmPatch {
     #[serde(default)]
@@ -241,6 +271,22 @@ pub struct AlarmPatch {
     enabled: Option<bool>,
 }
 
+#[utoipa::path(
+    patch,
+    path = "/v1/alarms/{id}",
+    operation_id = "patch_alarm",
+    tag = "Alarms",
+    security(("session" = []), ("device" = [])),
+    params(
+        ("id" = Uuid, Path, description = "Id of the resource."),
+        ("If-Match" = i64, Header, description = "Current version. Required; a stale value gets 409."),
+    ),
+    request_body = AlarmPatch,
+    responses(
+        (status = 200, description = "The updated alarm.", body = Alarm),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn patch(
     State(state): State<AppState>,
     Either(principal): Either,
@@ -311,6 +357,21 @@ pub async fn patch(
 }
 
 /// Soft delete: the row stays as a tombstone with a new version, so the app learns of the deletion.
+#[utoipa::path(
+    delete,
+    path = "/v1/alarms/{id}",
+    operation_id = "delete_alarm",
+    tag = "Alarms",
+    security(("session" = []), ("device" = [])),
+    params(
+        ("id" = Uuid, Path, description = "Id of the resource."),
+        ("If-Match" = Option<i64>, Header, description = "Optional. When sent, a stale value gets 409."),
+    ),
+    responses(
+        (status = 204, description = "Soft-deleted. The version is bumped so the app sees a tombstone."),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn delete(
     State(state): State<AppState>,
     Either(principal): Either,
@@ -344,6 +405,20 @@ pub async fn delete(
 
 /// Queues a test dispatch with the alarm's own rhythm and channels. The app and dispatcher treat it
 /// like a webhook dispatch.
+#[utoipa::path(
+    post,
+    path = "/v1/alarms/{id}/test",
+    operation_id = "test_alarm",
+    tag = "Alarms",
+    security(("session" = []), ("device" = [])),
+    params(
+        ("id" = Uuid, Path, description = "Id of the resource."),
+    ),
+    responses(
+        (status = 202, description = "Queued with the alarm rhythm and channels.", body = DispatchIdResponse),
+        (status = "default", description = "An error as application/problem+json (api-contract.md Errors).", body = crate::openapi::Problem, content_type = "application/problem+json")
+    )
+)]
 pub async fn test(
     State(state): State<AppState>,
     Either(principal): Either,
@@ -367,7 +442,7 @@ pub async fn test(
     tx.commit().await?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(json!({ "dispatch_id": dispatch_id })),
+        Json(DispatchIdResponse { dispatch_id }),
     )
         .into_response())
 }
