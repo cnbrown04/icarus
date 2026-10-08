@@ -19,14 +19,14 @@ The latest screenshots are committed to the repo, so they can be read on GitHub 
 
 | Folder | Contents | Committed when |
 |---|---|---|
-| `screenshots/ios/` | One PNG per screen, device and appearance, `contact-sheet.png` and `index.md` | Every iOS screenshot run that finishes, on push to `main` or `claude/**` and on same-repo PRs with the label |
-| `screenshots/web/` | Playwright PNGs and `index.md` | Push to `main` or `claude/**` after the web tests pass. Not on PRs |
+| `screenshots/phase-N/ios/` | One PNG per screen (iPhone 17 Pro Max, light), `contact-sheet.png` and `index.md` | Every iOS screenshot run that finishes, on push to `main` or `claude/**` and on same-repo PRs with the label |
+| `screenshots/phase-N/web/` | Playwright PNGs at 1920x1080, light, and `index.md` | Push to `main` or `claude/**` after the web tests pass. Not on PRs |
 
 Each commit replaces the whole folder, so it holds only the latest set. `index.md` records the commit SHA and the run URL. Commit messages are `screenshots: ios <sha7> [skip ci]` and `screenshots: web <sha7> [skip ci]`, and the commits are made by `github-actions[bot]`. Forks cannot get the iOS commit, because their pull requests have no write token.
 
 ## Where to find them
 
-1. Browse `screenshots/ios/` or `screenshots/web/` on the branch. Open `index.md` for the list.
+1. Browse `screenshots/phase-N/ios/` or `screenshots/phase-N/web/` on the branch. Open `index.md` for the list.
 2. Open the workflow run in the Actions tab for the logs and the artifacts.
 3. Download the artifacts from the bottom of the run page, or with the CLI:
 
@@ -67,3 +67,5 @@ python3 ci/contact_sheet.py out/final out/contact-sheet-iphone17pro-dark.png
 ```
 
 `out/raw/manifest.json` comes from `xcrun xcresulttool export attachments --path <bundle>.xcresult --output-path out/raw`.
+
+`N` comes from the head commit subject of the push (`phase-N: ...`). A push whose subject has no phase prefix does not get a committed set.

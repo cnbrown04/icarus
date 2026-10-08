@@ -73,9 +73,9 @@ Workflows are in `.github/workflows/`. Every action is pinned to a commit SHA.
 |---|---|---|---|
 | `swift-packages.yml` | `ubuntu-latest` (Swift 6.2 container) | PRs and pushes to `main` touching `ios/Packages/**` or `shared/golden/**`; manual | `swift test` for BandProtocol, Metrics and BandKit |
 | `ios.yml` | `macos-26` | PRs and pushes to `main` or `claude/**` touching `ios/**`; manual | XcodeGen, `Unit` test plan, SwiftLint; uploads the `.xcresult` on failure |
-| `ios-screenshots.yml` | `macos-26` matrix | Push to `main` or `claude/**` touching `ios/**`; PR labelled `screenshots`; manual with `quick` | Screenshot test plan on 3 devices by 2 appearances; commits the set to `screenshots/ios/` and uploads it as an artifact |
+| `ios-screenshots.yml` | `macos-26` matrix | Push to `main` or `claude/**` touching `ios/**`; PR labelled `screenshots`; manual with `quick` | Screenshot test plan on iPhone 17 Pro Max (light); commits the set to `screenshots/phase-N/ios/` (N from the head commit subject) and uploads it as an artifact |
 | `server.yml` | `ubuntu-latest` with `postgres:17` | PRs and pushes to `main` or `claude/**` touching `server/**`; manual | `cargo fmt`, `cargo clippy -D warnings`, `cargo test --workspace` |
-| `web.yml` | `ubuntu-latest` | PRs and pushes to `main` or `claude/**` touching `web/**`; manual | Typecheck, lint, unit tests, Lyra lock check, build, Playwright e2e and screenshots; on push, commits them to `screenshots/web/` |
+| `web.yml` | `ubuntu-latest` | PRs and pushes to `main` or `claude/**` touching `web/**`; manual | Typecheck, lint, unit tests, Lyra lock check, build, Playwright e2e and screenshots; on push, commits 1920x1080 light screenshots to `screenshots/phase-N/web/` |
 | `web-lyra-init.yml` | `ubuntu-latest` | Manual | Runs the shadcn Lyra init and component add, regenerates the lock, commits and pushes to the branch |
 | `ci.yml` | `ubuntu-latest` | PRs and pushes to `main` or `claude/**` touching `ci/**`; manual | Unit tests for the `ci/` scripts |
 | `secrets-scan.yml` | `ubuntu-latest` | PRs, pushes to `main` or `claude/**`; manual | gitleaks over the full history |
@@ -83,4 +83,4 @@ Workflows are in `.github/workflows/`. Every action is pinned to a commit SHA.
 
 Dependabot checks Cargo, npm, SwiftPM (BandProtocol, Metrics, BandKit), pip and GitHub Actions weekly.
 
-The latest screenshots are committed under `screenshots/ios/` and `screenshots/web/`, with the workflow artifacts as backup. See [docs/screenshots.md](docs/screenshots.md).
+Screenshots are committed per phase under `screenshots/phase-N/ios/` and `screenshots/phase-N/web/`, with the workflow artifacts as backup. Build status per phase, open items and what is still needed from you: [docs/status.md](docs/status.md). See [docs/screenshots.md](docs/screenshots.md).
