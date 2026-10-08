@@ -9,7 +9,7 @@ use axum::{
     http::HeaderMap,
 };
 use chrono::{DateTime, Utc};
-use icarus_core::{Alarm, AlarmKind, AuthMode, Channel, Hook, Me, Rhythm, Schedule, time::rfc3339};
+use icarus_core::{Alarm, Hook, Me, time::rfc3339};
 use icarus_jobs::rollup;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,7 +20,11 @@ use crate::{
     auth::{AppDevice, sha256},
     error::ApiError,
     extract::read_limited,
-    routes::me::load_me,
+    routes::{
+        alarms::{ALARM_COLUMNS, AlarmRow, alarm_from_row},
+        hooks::{HOOK_COLUMNS, HookRow, hook_from_row},
+        me::load_me,
+    },
     state::AppState,
 };
 
@@ -789,80 +793,6 @@ pub struct ConfigResponse {
     server_time: DateTime<Utc>,
 }
 
-#[derive(FromRow)]
-struct AlarmRow {
-    id: Uuid,
-    kind: String,
-    label: String,
-    schedule: Option<Value>,
-    rhythm: Value,
-    channels: Vec<String>,
-    enabled: bool,
-    version: i64,
-    updated_at: DateTime<Utc>,
-    deleted_at: Option<DateTime<Utc>>,
-}
-
-#[derive(FromRow)]
-struct HookRow {
-    id: Uuid,
-    slug: String,
-    label: String,
-    alarm_id: Option<Uuid>,
-    auth_mode: String,
-    rate_limit_per_min: i16,
-    enabled: bool,
-    version: i64,
-    created_at: DateTime<Utc>,
-    last_triggered_at: Option<DateTime<Utc>>,
-}
-
-fn stored<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, ApiError> {
-    serde_json::from_value(value).map_err(|_| ApiError::Internal)
-}
-
-fn alarm_from_row(row: AlarmRow) -> Result<Alarm, ApiError> {
-    let channels = row
-        .channels
-        .into_iter()
-        .map(|c| stored::<Channel>(Value::String(c)))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(Alarm {
-        id: row.id,
-        kind: stored::<AlarmKind>(Value::String(row.kind))?,
-        label: row.label,
-        schedule: row
-            .schedule
-            .filter(|v| !v.is_null())
-            .map(stored::<Schedule>)
-            .transpose()?,
-        rhythm: stored::<Rhythm>(row.rhythm)?,
-        channels,
-        enabled: row.enabled,
-        version: row.version,
-        updated_at: row.updated_at,
-        deleted_at: row.deleted_at,
-    })
-}
-
-fn hook_from_row(row: HookRow, base_url: &str) -> Result<Hook, ApiError> {
-    Ok(Hook {
-        id: row.id,
-        // TODO(PLAN.md §12.4, Phase 5): secret_url hooks need the secret in `url`. That requires
-        // ICARUS_ENC_KEY to decrypt the stored secret, which this phase does not read.
-        url: format!("{base_url}/v1/hooks/{}", row.slug),
-        slug: row.slug,
-        label: row.label,
-        alarm_id: row.alarm_id,
-        auth_mode: stored::<AuthMode>(Value::String(row.auth_mode))?,
-        rate_limit_per_min: row.rate_limit_per_min,
-        enabled: row.enabled,
-        created_at: row.created_at,
-        last_triggered_at: row.last_triggered_at,
-        version: row.version,
-    })
-}
-
 /// Rows with `version > since`, tombstones included, plus the profile (api-contract.md).
 pub async fn get_config(
     State(state): State<AppState>,
@@ -878,18 +808,16 @@ pub async fn get_config(
             .ok_or_else(|| invalid("since must be a non-negative integer."))?,
     };
 
-    let alarm_rows: Vec<AlarmRow> = sqlx::query_as(
-        "SELECT id, kind, label, schedule, rhythm, channels, enabled, version, updated_at, deleted_at
-         FROM alarms WHERE user_id = $1 AND version > $2 ORDER BY version",
-    )
+    let alarm_rows: Vec<AlarmRow> = sqlx::query_as(&format!(
+        "SELECT {ALARM_COLUMNS} FROM alarms WHERE user_id = $1 AND version > $2 ORDER BY version"
+    ))
     .bind(user_id)
     .bind(since)
     .fetch_all(&state.pool)
     .await?;
-    let hook_rows: Vec<HookRow> = sqlx::query_as(
-        "SELECT id, slug, label, alarm_id, auth_mode, rate_limit_per_min, enabled, version, created_at, last_triggered_at
-         FROM webhook_endpoints WHERE user_id = $1 AND version > $2 ORDER BY version",
-    )
+    let hook_rows: Vec<HookRow> = sqlx::query_as(&format!(
+        "SELECT {HOOK_COLUMNS} FROM webhook_endpoints WHERE user_id = $1 AND version > $2 ORDER BY version"
+    ))
     .bind(user_id)
     .bind(since)
     .fetch_all(&state.pool)
@@ -910,7 +838,7 @@ pub async fn get_config(
     let base = state.config.public_base_url.trim_end_matches('/');
     let webhook_endpoints = hook_rows
         .into_iter()
-        .map(|row| hook_from_row(row, base))
+        .map(|row| hook_from_row(row, base, state.config.secrets.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(Json(ConfigResponse {

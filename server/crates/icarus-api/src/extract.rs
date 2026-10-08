@@ -4,7 +4,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use axum::{
     body::{Body, Bytes},
-    extract::{ConnectInfo, FromRequest, FromRequestParts, Request},
+    extract::{ConnectInfo, FromRequest, FromRequestParts, Query, Request},
     http::request::Parts,
 };
 use http_body_util::{BodyExt, LengthLimitError, Limited};
@@ -39,6 +39,22 @@ impl<T: DeserializeOwned> FromRequest<AppState> for ApiJson<T> {
         serde_json::from_slice(&bytes)
             .map(ApiJson)
             .map_err(|err| ApiError::Validation(format!("Invalid JSON: {err}.")))
+    }
+}
+
+/// Query string with problem-shaped errors.
+pub struct ApiQuery<T>(pub T);
+
+impl<T: DeserializeOwned> FromRequestParts<AppState> for ApiQuery<T> {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
+        Query::<T>::from_request_parts(parts, state)
+            .await
+            .map(|Query(value)| ApiQuery(value))
+            .map_err(|_| {
+                ApiError::Validation("The query string is not valid for this route.".into())
+            })
     }
 }
 

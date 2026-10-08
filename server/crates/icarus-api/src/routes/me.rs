@@ -83,7 +83,7 @@ pub async fn get_me(
 }
 
 /// Distinguishes "absent" (`None`) from "explicit null" (`Some(None)`) in PATCH bodies.
-fn double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+pub(crate) fn double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
 where
     T: Deserialize<'de>,
     D: Deserializer<'de>,

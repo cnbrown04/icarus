@@ -25,6 +25,10 @@ pub enum ApiError {
     PayloadTooLarge(String),
     RateLimited,
     PairingCodeInvalid,
+    /// Webhook signature or secret did not verify (api-contract.md "Errors").
+    SignatureInvalid(String),
+    /// A feature needs configuration that is not set, such as `ICARUS_ENC_KEY`. Uses the `internal` slug.
+    NotConfigured(String),
     MigrationsPending,
     DatabaseUnavailable,
     Internal,
@@ -83,6 +87,18 @@ impl ApiError {
                 "pairing-code-invalid",
                 "Pairing code invalid",
                 "The code is wrong, expired or already used.",
+            ),
+            ApiError::SignatureInvalid(d) => (
+                StatusCode::UNAUTHORIZED,
+                "signature-invalid",
+                "Signature invalid",
+                d,
+            ),
+            ApiError::NotConfigured(d) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "internal",
+                "Not configured",
+                d,
             ),
             ApiError::MigrationsPending => (
                 StatusCode::SERVICE_UNAVAILABLE,

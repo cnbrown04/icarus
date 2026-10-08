@@ -2,7 +2,11 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use sqlx::PgPool;
 
-use crate::ratelimit::RateLimiter;
+use crate::{
+    error::ApiError,
+    ratelimit::{RateLimiter, TokenBuckets},
+    secrets::Secrets,
+};
 
 /// Runtime settings. `main` fills these from the environment.
 #[derive(Debug, Clone)]
@@ -14,6 +18,9 @@ pub struct Config {
     pub public_base_url: String,
     /// Static web build. Served only if the directory exists.
     pub web_dir: Option<PathBuf>,
+    /// Webhook secrets and hook URLs need this key (`ICARUS_ENC_KEY`). Without it, those routes
+    /// answer 503 `internal`.
+    pub secrets: Option<Secrets>,
 }
 
 impl Default for Config {
@@ -23,6 +30,7 @@ impl Default for Config {
             trust_proxy: false,
             public_base_url: "http://localhost:8080".to_owned(),
             web_dir: None,
+            secrets: None,
         }
     }
 }
@@ -33,6 +41,7 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub login_limiter: Arc<RateLimiter>,
     pub pairing_limiter: Arc<RateLimiter>,
+    pub hook_buckets: Arc<TokenBuckets>,
 }
 
 impl AppState {
@@ -47,6 +56,15 @@ impl AppState {
             // PLAN.md §12.2: 5 login attempts per minute per IP.
             login_limiter: Arc::new(RateLimiter::new(5, Duration::from_secs(60))),
             pairing_limiter: Arc::new(RateLimiter::new(30, Duration::from_secs(60))),
+            hook_buckets: Arc::new(TokenBuckets::default()),
         }
+    }
+
+    pub fn secrets(&self) -> Result<&Secrets, ApiError> {
+        self.config.secrets.as_ref().ok_or_else(|| {
+            ApiError::NotConfigured(
+                "ICARUS_ENC_KEY is not set, so webhook secrets cannot be used.".into(),
+            )
+        })
     }
 }

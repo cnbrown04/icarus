@@ -150,3 +150,15 @@ Profile fields may be `null`.
 `ICARUS_ENC_KEY` (base64 32 bytes; required for hooks/WHOOP), `ICARUS_WEB_DIR` (static web build, default `../web/dist`),
 `ICARUS_INSECURE_COOKIES=1` (local dev/tests only), `APNS_KEY_P8`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_TOPIC`
 (APNs disabled with a log line when unset), `WHOOP_CLIENT_ID`, `WHOOP_CLIENT_SECRET`.
+
+## Decisions made during implementation (2026-10-08)
+- Hooks are hard-deleted. `GET /v1/sync/config` always returns the full current hook list; the app replaces its copy instead of applying tombstones.
+- `alarm_dispatches` gained `message`, `rhythm`, `channels`, `last_attempt_at`, `ack_detail` (migration 0003). `phone_status` values: `sent`, `apns_disabled`, `retrying`, `no_device`, `apns_error`, plus the ack values.
+- HMAC key = the UTF-8 bytes of the base64url secret string as shown to the user.
+- Secret-URL deliveries without `idempotency_key` are not deduplicated (no timestamp to hash).
+- Rejected, rate-limited and duplicate ingress requests are recorded as delivery rows (no body); retention removes them after 90 days.
+- `/v1/metrics/hr` requires `res`; `1h` is capped at 14 days like `1m`/`5m`; daily ranges are capped at 3660 days.
+- Export lines name the inner kinds `event_kind` and `alarm_kind`; hook secrets are never exported.
+- Ingress timeout (2 s) returns an empty 408. Missing `ICARUS_ENC_KEY` returns 503 `internal`.
+- Batch row-limit overflow returns 413 `payload-too-large`. `Idempotency-Key` must equal `batch_id`.
+- `PATCH /v1/hooks/{id}` requires `If-Match` like every PATCH.

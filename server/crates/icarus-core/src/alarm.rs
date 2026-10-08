@@ -121,6 +121,32 @@ impl Schedule {
     }
 }
 
+/// Checks the fields of one alarm together: the rhythm, the schedule (required for `scheduled` only)
+/// and the channels (one or both, each once).
+pub fn validate_alarm(
+    kind: AlarmKind,
+    schedule: Option<&Schedule>,
+    rhythm: &Rhythm,
+    channels: &[Channel],
+) -> Result<(), ValidationError> {
+    rhythm.validate()?;
+    match (kind, schedule) {
+        (AlarmKind::Scheduled, Some(schedule)) => schedule.validate()?,
+        (AlarmKind::Scheduled, None) => return invalid("scheduled alarms need a schedule"),
+        (_, Some(_)) => return invalid("only scheduled alarms take a schedule"),
+        (_, None) => {}
+    }
+    if channels.is_empty() {
+        return invalid("channels must name phone, band or both");
+    }
+    for (i, channel) in channels.iter().enumerate() {
+        if channels[..i].contains(channel) {
+            return invalid("channels must not repeat");
+        }
+    }
+    Ok(())
+}
+
 /// `Alarm` in api-contract.md.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Alarm {

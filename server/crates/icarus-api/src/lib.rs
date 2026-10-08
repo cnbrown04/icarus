@@ -6,6 +6,7 @@ pub mod error;
 pub mod extract;
 pub mod ratelimit;
 pub mod routes;
+pub mod secrets;
 pub mod state;
 
 use std::time::Duration;
@@ -15,7 +16,7 @@ use axum::{
     extract::State,
     middleware::from_fn_with_state,
     response::{IntoResponse, Response},
-    routing::{any, delete, get, post, put},
+    routing::{any, delete, get, patch, post, put},
 };
 use icarus_db::ReadyError;
 use serde_json::json;
@@ -31,6 +32,7 @@ use tower_http::{
 
 pub use accounts::{CreateUserError, create_user};
 pub use error::ApiError;
+pub use secrets::Secrets;
 pub use state::{AppState, Config};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -67,6 +69,44 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/sync/config", get(routes::sync::get_config))
         .route("/v1/sync/state", get(routes::sync::get_state))
+        .route("/v1/metrics/hr", get(routes::metrics::hr))
+        .route("/v1/metrics/minutes", get(routes::metrics::minutes))
+        .route("/v1/metrics/daily", get(routes::metrics::daily))
+        .route("/v1/metrics/live", get(routes::metrics::live))
+        .route(
+            "/v1/alarms",
+            get(routes::alarms::list).post(routes::alarms::create),
+        )
+        // Before `/v1/alarms/{id}`: `pending` is a fixed segment, so it wins for GET.
+        .route("/v1/alarms/pending", get(routes::dispatches::pending))
+        .route(
+            "/v1/alarms/{id}",
+            patch(routes::alarms::patch).delete(routes::alarms::delete),
+        )
+        .route("/v1/alarms/{id}/test", post(routes::alarms::test))
+        .route("/v1/alarm-dispatches", get(routes::dispatches::list))
+        .route(
+            "/v1/alarm-dispatches/{id}/ack",
+            post(routes::dispatches::ack),
+        )
+        .route(
+            "/v1/hooks",
+            get(routes::hooks::list).post(routes::hooks::create),
+        )
+        // One path, three meanings: management takes the hook id, and the public ingress takes the slug.
+        .route(
+            "/v1/hooks/{key}",
+            patch(routes::hooks::patch)
+                .delete(routes::hooks::delete)
+                .post(routes::ingress::post_signed),
+        )
+        .route("/v1/hooks/{key}/rotate-secret", post(routes::hooks::rotate))
+        .route("/v1/hooks/{key}/deliveries", get(routes::hooks::deliveries))
+        .route(
+            "/v1/hooks/{key}/{secret}",
+            post(routes::ingress::post_secret),
+        )
+        .route("/v1/export", get(routes::export::export))
         // Unknown API paths get a problem response, never the SPA page.
         .route("/v1", any(api_not_found))
         .route("/v1/{*rest}", any(api_not_found));

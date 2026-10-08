@@ -7,7 +7,7 @@ use axum::{
     http::{HeaderMap, Request, Response, StatusCode},
 };
 use http_body_util::BodyExt;
-use icarus_api::{AppState, Config, create_user, router};
+use icarus_api::{AppState, Config, Secrets, create_user, router};
 use serde_json::Value;
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -22,6 +22,17 @@ pub fn app(pool: PgPool) -> Router {
 
 pub fn app_with(pool: PgPool, config: Config) -> Router {
     router(AppState::with_config(pool, config))
+}
+
+/// Test-only key. Production keys come from `ICARUS_ENC_KEY`.
+pub fn app_with_key(pool: PgPool) -> Router {
+    app_with(
+        pool,
+        Config {
+            secrets: Some(Secrets::new([9; 32])),
+            ..Config::default()
+        },
+    )
 }
 
 pub async fn setup_user(pool: &PgPool) -> Uuid {
@@ -149,6 +160,14 @@ pub async fn pair_with_code(app: &Router, code: &str, name: &str) -> (String, St
         body["device_id"].as_str().unwrap().to_owned(),
         body["token"].as_str().unwrap().to_owned(),
     )
+}
+
+pub async fn user_id(pool: &PgPool) -> Uuid {
+    sqlx::query_scalar("SELECT id FROM users WHERE email = $1")
+        .bind(EMAIL)
+        .fetch_one(pool)
+        .await
+        .expect("user exists")
 }
 
 pub fn ms(rfc3339: &str) -> i64 {

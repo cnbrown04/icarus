@@ -7,7 +7,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use uuid::Uuid;
+
 const MAX_TRACKED_IPS: usize = 4096;
+const MAX_TRACKED_ENDPOINTS: usize = 10_000;
 
 #[derive(Debug)]
 pub struct RateLimiter {
@@ -58,11 +61,75 @@ impl RateLimiter {
     }
 }
 
+/// Token buckets per webhook endpoint (PLAN.md §12.4). The capacity is the per-minute budget, and
+/// tokens refill continuously at that rate, so a burst up to the budget is allowed.
+#[derive(Debug, Default)]
+pub struct TokenBuckets {
+    buckets: Mutex<HashMap<Uuid, Bucket>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Bucket {
+    tokens: f64,
+    updated: Instant,
+}
+
+impl TokenBuckets {
+    /// Takes one token for `key`. Returns `false` when the bucket is empty.
+    pub fn take(&self, key: Uuid, per_minute: u32) -> bool {
+        self.take_at(key, per_minute, Instant::now())
+    }
+
+    fn take_at(&self, key: Uuid, per_minute: u32, now: Instant) -> bool {
+        let capacity = f64::from(per_minute.max(1));
+        let rate_per_sec = capacity / 60.0;
+        let mut map = self
+            .buckets
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if map.len() > MAX_TRACKED_ENDPOINTS {
+            // Full buckets carry no information, so dropping them is safe.
+            map.retain(|_, b| b.tokens < capacity);
+        }
+        let bucket = map.entry(key).or_insert(Bucket {
+            tokens: capacity,
+            updated: now,
+        });
+        let elapsed = now.saturating_duration_since(bucket.updated).as_secs_f64();
+        bucket.tokens = (bucket.tokens + elapsed * rate_per_sec).min(capacity);
+        bucket.updated = now;
+        if bucket.tokens >= 1.0 {
+            bucket.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::Ipv4Addr;
 
     use super::*;
+
+    #[test]
+    fn token_bucket_allows_the_budget_then_refills() {
+        let buckets = TokenBuckets::default();
+        let key = Uuid::now_v7();
+        let t0 = Instant::now();
+        for i in 0..10 {
+            assert!(buckets.take_at(key, 10, t0), "token {i}");
+        }
+        assert!(!buckets.take_at(key, 10, t0), "budget spent");
+        // 10 per minute is one token every 6 s.
+        assert!(!buckets.take_at(key, 10, t0 + Duration::from_secs(5)));
+        assert!(buckets.take_at(key, 10, t0 + Duration::from_secs(7)));
+        assert!(
+            buckets.take_at(Uuid::now_v7(), 1, t0),
+            "other endpoints have their own budget"
+        );
+    }
 
     #[test]
     fn allows_limit_hits_then_blocks_until_window_passes() {

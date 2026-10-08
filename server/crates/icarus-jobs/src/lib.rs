@@ -1,6 +1,7 @@
 //! Background jobs: time-series partitions and daily rollups (PLAN.md §10.3, §10.4, §11.3).
 
 pub mod partitions;
+pub mod retention;
 pub mod rollup;
 
 use std::time::Duration;
@@ -8,13 +9,21 @@ use std::time::Duration;
 use chrono::Utc;
 use sqlx::PgPool;
 
-/// Partitions for this month and next, the day rollups for the last three local days, and removal
-/// of expired sessions and pairing codes. Safe to run repeatedly.
+/// Partitions for this month and next, the day rollups for the last three local days, removal of
+/// expired sessions and pairing codes, and retention (PLAN.md §10.4). Safe to run repeatedly.
 pub async fn run_maintenance(pool: &PgPool) -> Result<(), sqlx::Error> {
     let now = Utc::now();
     partitions::ensure_current_and_next(pool, now).await?;
     rollup::recompute_recent_for_all_users(pool, now).await?;
     prune_expired(pool).await?;
+    let report = retention::run(pool, now).await?;
+    if !report.partitions_dropped.is_empty() || report.deliveries_deleted > 0 {
+        tracing::info!(
+            partitions = report.partitions_dropped.len(),
+            deliveries = report.deliveries_deleted,
+            "retention removed old rows"
+        );
+    }
     Ok(())
 }
 
