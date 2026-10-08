@@ -1,7 +1,7 @@
 # iOS screenshots
 
-Commit: 2467c613fe724a172437f8781fc75aef5e5b02a6
-Run: https://github.com/cnbrown04/icarus/actions/runs/37748570827
+Commit: cbe6d90c3a905a523453b3bc3be136d75b585e78
+Run: https://github.com/cnbrown04/icarus/actions/runs/37752250229
 
 Contact sheet: [contact-sheet.png](contact-sheet.png)
 
