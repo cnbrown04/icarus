@@ -1,6 +1,8 @@
+import Store
 import SwiftUI
 import SyncKit
 
+/// Settings in the system Settings style: icons in coloured squares, grouped sections (IOS_UI_SPEC, Screen 17).
 struct SettingsView: View {
     let environment: AppEnvironment
     let liveState: LiveState
@@ -14,29 +16,47 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Profile") {
-                NavigationLink("Profile") {
+            Section {
+                NavigationLink {
                     ProfileView(environment: environment, mode: .settings)
+                } label: {
+                    settingsLabel("Profile", symbol: "person.fill", tint: .blue)
+                }
+                NavigationLink {
+                    DeviceView(liveState: liveState)
+                } label: {
+                    settingsLabel("Band", symbol: "bolt.heart.fill", tint: Palette.heartRate)
                 }
             }
 
-            Section("Server") {
+            Section("Server and sync") {
                 LabeledContent("Server", value: serverText)
-                NavigationLink("Sync") {
+                NavigationLink {
                     SyncView(environment: environment)
+                } label: {
+                    settingsLabel("Sync", symbol: "arrow.triangle.2.circlepath", tint: Palette.syncOK)
                 }
                 if environment.sync.status.phase == .notPaired {
-                    NavigationLink("Pair with server") {
+                    NavigationLink {
                         ServerView(sync: environment.sync)
+                    } label: {
+                        settingsLabel("Pair with server", symbol: "link", tint: .blue)
                     }
                 } else {
-                    NavigationLink("Re-pair") {
+                    NavigationLink {
                         ServerView(sync: environment.sync)
+                    } label: {
+                        settingsLabel("Re-pair", symbol: "link", tint: .blue)
                     }
                     Button("Unpair", role: .destructive) {
                         confirmsUnpair = true
                     }
                 }
+            }
+
+            Section("Data") {
+                LabeledContent("Raw heart rate kept", value: "\(RetentionPolicy.rawDays) days")
+                LabeledContent("Minute metrics kept", value: "\(RetentionPolicy.minuteDays) days")
             }
 
             Section {
@@ -49,9 +69,10 @@ struct SettingsView: View {
                             showsDebug = true
                         }
                     }
-                Text("Icarus is not a medical device. Stress and calorie figures are estimates.")
             } header: {
                 Text("About")
+            } footer: {
+                Text("Icarus is not a medical device. Stress and calorie figures are estimates.")
             }
         }
         .confirmationDialog(
@@ -69,6 +90,14 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .navigationDestination(isPresented: $showsDebug) {
             DebugView(liveState: liveState)
+        }
+    }
+
+    private func settingsLabel(_ title: String, symbol: String, tint: Color) -> some View {
+        Label {
+            Text(title)
+        } icon: {
+            SettingsIcon(symbol: symbol, tint: tint)
         }
     }
 

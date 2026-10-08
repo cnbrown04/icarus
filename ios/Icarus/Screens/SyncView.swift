@@ -3,7 +3,7 @@ import SwiftUI
 import SyncKit
 
 /// Status, pending rows, batches and the interval setting (PLAN.md 14 row 16). Reached from Settings and from
-/// Today's "Last sync" row.
+/// Today's "Band and sync" card.
 struct SyncView: View {
     let environment: AppEnvironment
 
@@ -14,10 +14,19 @@ struct SyncView: View {
         Form {
             Section {
                 TimelineView(.periodic(from: .now, by: 30)) { context in
-                    LabeledContent("State", value: stateText(now: context.date))
+                    LabeledContent("Status") {
+                        StatusPill(
+                            text: stateText(now: context.date),
+                            symbol: stateSymbol,
+                            tint: Palette.sync(environment.sync.status.phase)
+                        )
+                    }
                     LabeledContent("Last success", value: lastSuccessText(now: context.date))
                 }
-                LabeledContent("Pending rows", value: "\(data?.pendingRows ?? 0) rows")
+                LabeledContent("Pending rows") {
+                    Text("\(data?.pendingRows ?? 0) rows")
+                        .monospacedDigit()
+                }
             } footer: {
                 if environment.sync.status.clockSkewWarning {
                     Text("This iPhone's clock differs from the server by more than 2 min.")
@@ -25,10 +34,12 @@ struct SyncView: View {
             }
 
             Section {
-                Picker("Sync every", selection: $intervalMinutes) {
+                Picker(selection: $intervalMinutes) {
                     ForEach(SyncInterval.allCases, id: \.rawValue) { interval in
                         Text(interval.label).tag(interval.rawValue)
                     }
+                } label: {
+                    Label("Sync every", systemImage: "timer")
                 }
             } footer: {
                 Text("Also syncs when you pull to refresh on Today.")
@@ -51,20 +62,27 @@ struct SyncView: View {
             Section("Batches") {
                 if let batches = data?.batches, !batches.isEmpty {
                     ForEach(batches, id: \.batchID) { row in
-                        VStack(alignment: .leading, spacing: Spacing.s4) {
-                            HStack {
-                                Text(Date(epochMs: row.createdAt), style: .time)
-                                Spacer()
-                                Text("\(row.rows) rows")
-                                    .monospacedDigit()
+                        HStack(alignment: .top, spacing: Spacing.s12) {
+                            Image(systemName: Self.statusSymbol(row))
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(Self.statusTint(row))
+                                .frame(width: Spacing.s24)
+                            VStack(alignment: .leading, spacing: Spacing.s4) {
+                                HStack {
+                                    Text(Date(epochMs: row.createdAt), style: .time)
+                                    Spacer(minLength: Spacing.s8)
+                                    Text("\(row.rows) rows")
+                                        .monospacedDigit()
+                                }
+                                Text(Self.statusText(row))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
-                            Text(Self.statusText(row))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
                         }
                     }
                 } else {
                     Text("No batches yet")
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -92,6 +110,18 @@ struct SyncView: View {
         }
     }
 
+    private var stateSymbol: String {
+        let sync = environment.sync
+        if sync.isRunning { return "arrow.triangle.2.circlepath" }
+        switch sync.status.phase {
+        case .idle: return "checkmark.circle.fill"
+        case .syncing: return "arrow.triangle.2.circlepath"
+        case .retrying: return "clock"
+        case .notPaired: return "minus.circle"
+        case .needsRepair: return "exclamationmark.triangle.fill"
+        }
+    }
+
     private func stateText(now: Date) -> String {
         let sync = environment.sync
         if sync.isRunning { return "Syncing" }
@@ -107,6 +137,24 @@ struct SyncView: View {
     private func lastSuccessText(now: Date) -> String {
         guard let last = environment.sync.status.lastSuccessAt else { return "Never" }
         return DataAge.text(seconds: now.timeIntervalSince(last))
+    }
+
+    private static func statusSymbol(_ row: SyncBatchRow) -> String {
+        switch row.status {
+        case "acked": "checkmark.seal.fill"
+        case "rejected": "exclamationmark.triangle.fill"
+        case "sent": "arrow.up.circle.fill"
+        default: "clock"
+        }
+    }
+
+    private static func statusTint(_ row: SyncBatchRow) -> Color {
+        switch row.status {
+        case "acked": Palette.syncOK
+        case "rejected": Palette.error
+        case "sent": Palette.warn
+        default: Palette.neutral
+        }
     }
 
     private static func statusText(_ row: SyncBatchRow) -> String {

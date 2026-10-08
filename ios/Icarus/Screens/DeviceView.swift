@@ -1,5 +1,6 @@
 import SwiftUI
 
+/// The band: a hero card with its state, then signal, battery and the age of the last reading (IOS_UI_SPEC, Screen 15).
 struct DeviceView: View {
     let liveState: LiveState
 
@@ -14,23 +15,53 @@ struct DeviceView: View {
         Form {
             if liveState.isCollectionPaused {
                 Section {
-                    Text("Collection paused: open Icarus")
-                        .font(.body.weight(.semibold))
+                    Label("Collection paused: open Icarus", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Palette.warn)
                 }
             }
 
             Section {
-                LabeledContent("Band", value: liveState.rememberedID == nil ? "Not paired" : bandName)
-                LabeledContent("State", value: liveState.connectionText)
+                VStack(spacing: Spacing.s12) {
+                    Image(systemName: "bolt.heart.fill")
+                        .font(.system(size: 44, weight: .semibold))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(Palette.heartRate)
+                    Text(liveState.rememberedID == nil ? "Not paired" : bandName)
+                        .font(.title3.weight(.semibold))
+                    StatusPill.link(liveState)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, Spacing.s8)
+            }
+
+            Section {
+                LabeledContent {
+                    Text(signalText)
+                        .monospacedDigit()
+                } label: {
+                    Label("Signal", systemImage: "cellularbars")
+                }
+                LabeledContent {
+                    Text(batteryText)
+                        .monospacedDigit()
+                } label: {
+                    Label("Battery", systemImage: batterySymbol)
+                }
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
-                    lastDataRow
+                    LabeledContent {
+                        lastDataText
+                    } label: {
+                        Label("Last data", systemImage: "clock")
+                    }
                 }
             }
 
             Section {
                 if liveState.rememberedID == nil {
-                    NavigationLink("Pair band") {
+                    NavigationLink {
                         PairBandView(liveState: liveState)
+                    } label: {
+                        Label("Pair band", systemImage: "plus.circle")
                     }
                 } else {
                     Button("Forget band", role: .destructive) {
@@ -40,8 +71,10 @@ struct DeviceView: View {
             }
 
             Section {
-                Toggle("Band channel", isOn: $bandChannelEnabled)
-                    .disabled(true)
+                Toggle(isOn: $bandChannelEnabled) {
+                    Label("Band channel", systemImage: "waveform")
+                }
+                .disabled(true)
             } header: {
                 Text("Experimental")
             } footer: {
@@ -57,18 +90,28 @@ struct DeviceView: View {
         .navigationTitle("Device")
     }
 
+    private var signalText: String {
+        liveState.connectedRSSI.map { "\($0) dBm" } ?? "--"
+    }
+
+    private var batteryText: String {
+        liveState.batteryPercent.map { Format.percent($0) } ?? "--"
+    }
+
+    private var batterySymbol: String {
+        liveState.batteryPercent.map { Format.batterySymbol($0) } ?? "battery.0percent"
+    }
+
     @ViewBuilder
-    private var lastDataRow: some View {
-        LabeledContent("Last data") {
-            if let last = liveState.lastDataAt {
-                if let stale = DataAge.staleText(since: last, now: liveState.now) {
-                    Text(stale)
-                } else {
-                    Text(last, style: .time)
-                }
+    private var lastDataText: some View {
+        if let last = liveState.lastDataAt {
+            if let stale = DataAge.staleText(since: last, now: liveState.now) {
+                Text(stale)
             } else {
-                Text("None")
+                Text(last, style: .time)
             }
+        } else {
+            Text("None")
         }
     }
 }

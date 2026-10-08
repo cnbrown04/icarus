@@ -1,3 +1,4 @@
+import Store
 import SwiftUI
 
 /// Formula sex, birth year, height, weight and optional HRmax (PLAN.md §14 row 4). Used in onboarding and
@@ -21,31 +22,68 @@ struct ProfileView: View {
     var body: some View {
         Form {
             Section {
-                Picker("Formula sex", selection: $draft.sex) {
+                Picker(selection: $draft.sex) {
                     Text("Not set").tag(ProfileDraft.Sex?.none)
                     ForEach(ProfileDraft.Sex.allCases) { sex in
                         Text(sex.label).tag(ProfileDraft.Sex?.some(sex))
                     }
+                } label: {
+                    Label("Formula sex", systemImage: "person.fill")
                 }
 
-                TextField("Birth year", text: $draft.birthYear)
-                    .keyboardType(.numberPad)
-                    .accessibilityIdentifier("profile.birthYear")
-                TextField("Height (cm)", text: $draft.heightCm)
-                    .keyboardType(.decimalPad)
-                    .accessibilityIdentifier("profile.height")
-                TextField("Weight (kg)", text: $draft.weightKg)
-                    .keyboardType(.decimalPad)
-                    .accessibilityIdentifier("profile.weight")
-                TextField("HRmax (optional)", text: $draft.hrMax)
-                    .keyboardType(.numberPad)
-                    .accessibilityIdentifier("profile.hrMax")
-            } footer: {
-                if attempted, let issue = draft.firstIssue {
-                    Text(issue.message)
-                } else {
-                    Text("Formula sex, birth year, height and weight give calorie estimates. HRmax comes from birth year when blank.")
+                LabeledContent {
+                    TextField("Required", text: $draft.birthYear)
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .accessibilityIdentifier("profile.birthYear")
+                } label: {
+                    Label("Birth year", systemImage: "calendar")
                 }
+
+                LabeledContent {
+                    HStack(spacing: Spacing.s4) {
+                        TextField("Required", text: $draft.heightCm)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .accessibilityIdentifier("profile.height")
+                        Text("cm")
+                            .foregroundStyle(.secondary)
+                    }
+                } label: {
+                    Label("Height", systemImage: "ruler")
+                }
+
+                LabeledContent {
+                    HStack(spacing: Spacing.s4) {
+                        TextField("Required", text: $draft.weightKg)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .accessibilityIdentifier("profile.weight")
+                        Text("kg")
+                            .foregroundStyle(.secondary)
+                    }
+                } label: {
+                    Label("Weight", systemImage: "scalemass")
+                }
+            } footer: {
+                Text(bodyFooter)
+            }
+
+            Section {
+                LabeledContent {
+                    HStack(spacing: Spacing.s4) {
+                        TextField("From birth year", text: $draft.hrMax)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .accessibilityIdentifier("profile.hrMax")
+                        Text("bpm")
+                            .foregroundStyle(.secondary)
+                    }
+                } label: {
+                    Label("HRmax", systemImage: "heart.fill")
+                }
+            } footer: {
+                Text(hrMaxFooter)
             }
         }
         .navigationTitle("Profile")
@@ -61,6 +99,20 @@ struct ProfileView: View {
             let row = try? await environment.database.writer.read { try $0.profile() }
             draft = ProfileDraft(row: row)
         }
+    }
+
+    private var bodyFooter: String {
+        if attempted, let issue = draft.firstIssue, issue != .hrMax {
+            return issue.message
+        }
+        return "Sex, age, height and weight set calorie estimates and heart-rate zones."
+    }
+
+    private var hrMaxFooter: String {
+        if attempted, let issue = draft.firstIssue, issue == .hrMax {
+            return issue.message
+        }
+        return "Blank uses an estimate from birth year."
     }
 
     private var actionTitle: String {

@@ -20,6 +20,7 @@ struct IcarusApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(environment: environment, liveState: liveState, config: config)
+                .tint(Palette.heartRate)
                 .task {
                     environment.startIngestion()
                     liveState.start()

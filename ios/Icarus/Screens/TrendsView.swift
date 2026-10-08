@@ -1,9 +1,9 @@
-import Charts
 import Metrics
 import Store
 import SwiftUI
 
-/// Seven, 30 or 90 days of resting HR, nightly RMSSD, stress and calories (PLAN.md §14 row 11).
+/// Seven, 30 or 90 days of resting HR, nightly RMSSD, stress and calories, each against the period before it
+/// (PLAN.md §14 row 11).
 struct TrendsView: View {
     let environment: AppEnvironment
 
@@ -27,59 +27,28 @@ struct TrendsView: View {
     }
 
     var body: some View {
-        List {
-            Section {
+        ScrollView {
+            VStack(spacing: Spacing.s16) {
                 Picker("Span", selection: $span) {
                     ForEach(TrendSpan.allCases) { option in
                         Text(option.label).tag(option)
                     }
                 }
                 .pickerStyle(.segmented)
-            }
 
-            Section {
-                trendChart(points: restingPoints) {
-                    LineMark(x: .value("Day", $0.date), y: .value("Resting HR", $0.value))
-                }
-            } header: {
-                Text("Resting HR")
-            } footer: {
-                Text(latestText(restingPoints, format: Format.bpm))
+                lineCard(title: "Resting HR", series: restingSeries, unit: "bpm", tint: Palette.heartRate)
+                lineCard(title: "Nightly RMSSD", series: rmssdSeries, unit: "ms", tint: Palette.hrv)
+                stressCard
+                calorieCard
             }
-
-            Section {
-                trendChart(points: rmssdPoints) {
-                    LineMark(x: .value("Day", $0.date), y: .value("RMSSD", $0.value))
-                }
-            } header: {
-                Text("Nightly RMSSD")
-            } footer: {
-                Text(latestText(rmssdPoints, format: Format.ms))
-            }
-
-            Section {
-                trendChart(points: stressPoints) {
-                    BarMark(x: .value("Day", $0.date), y: .value("Stress", $0.value))
-                }
-            } header: {
-                Text("Stress average")
-            } footer: {
-                Text(latestText(stressPoints, format: { "\(Int($0.rounded()))" }))
-            }
-
-            Section {
-                trendChart(points: kcalPoints) {
-                    BarMark(x: .value("Day", $0.date), y: .value("kcal", $0.value))
-                }
-            } header: {
-                Text("Calories")
-            } footer: {
-                Text("Estimated. " + latestText(kcalPoints, format: Format.kcal))
-            }
+            .pagePadding()
+            .padding(.vertical, Spacing.s8)
         }
+        .dashboardBackground()
         .navigationTitle("Trends")
         .task(id: span) {
-            let days = span.rawValue
+            // Twice the span: the first half is the previous period, for the change chips.
+            let days = span.rawValue * 2
             for await value in environment.snapshots(every: .seconds(60), { db, nowMs in
                 try Dashboard.trends(db, nowMs: nowMs, dayCount: days)
             }) {
@@ -88,62 +57,109 @@ struct TrendsView: View {
         }
     }
 
-    private struct Point: Identifiable {
-        let id: Date
-        let date: Date
-        let value: Double
-    }
+    // MARK: Cards
 
-    private var restingPoints: [Point] {
-        points(\.restingHR)
-    }
-
-    private var rmssdPoints: [Point] {
-        points(\.rmssdNight)
-    }
-
-    private var stressPoints: [Point] {
-        points(\.stressAverage)
-    }
-
-    private var kcalPoints: [Point] {
-        points(\.kcalTotal)
-    }
-
-    private func points(_ value: KeyPath<DaySummary, Double?>) -> [Point] {
-        guard let days = snapshot?.days else { return [] }
-        return days.compactMap { summary in
-            guard let number = summary[keyPath: value] else { return nil }
-            let date = Date(epochMs: Self.dayStart(summary.day, in: snapshot?.context.timeZone))
-            return Point(id: date, date: date, value: number)
+    private func lineCard(title: String, series: TrendSeries, unit: String, tint: Color) -> some View {
+        ChartCard(title: title, footer: latestFooter(series, unit: unit)) {
+            summary(series, unit: unit)
+        } chart: {
+            chartOrEmpty(series, unit: unit) {
+                DayLineChart(points: series.points, tint: tint, average: series.average)
+            }
         }
     }
 
-    private static func dayStart(_ day: LocalDay, in zone: TimeZone?) -> Int64 {
-        LocalTime.localTime(day, hour: 12, in: zone ?? Dashboard.fallbackZone)
+    private var stressCard: some View {
+        ChartCard(title: "Stress average", footer: latestFooter(stressSeries, unit: "")) {
+            summary(stressSeries, unit: "")
+        } chart: {
+            chartOrEmpty(stressSeries, unit: "") {
+                DayBarChart(
+                    points: stressSeries.points,
+                    color: { Palette.stress(StressBand.of(stress: Int($0.rounded()))) },
+                    average: stressSeries.average
+                )
+            }
+        }
+    }
+
+    private var calorieCard: some View {
+        ChartCard(title: "Calories", footer: "Estimated. " + latestFooter(calorieSeries, unit: "kcal")) {
+            summary(calorieSeries, unit: "kcal")
+        } chart: {
+            chartOrEmpty(calorieSeries, unit: "kcal") {
+                DayBarChart(
+                    points: calorieSeries.points,
+                    color: { _ in Palette.caloriesActive },
+                    average: calorieSeries.average
+                )
+            }
+        }
+    }
+
+    private func summary(_ series: TrendSeries, unit: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Spacing.s8) {
+            Text(series.average.map { Format.number($0, unit: unit) } ?? "--")
+                .font(.metricValue)
+                .monospacedDigit()
+            if let change = series.change {
+                DeltaChip(change: change, unit: unit)
+            }
+            Spacer(minLength: Spacing.s8)
+        }
     }
 
     @ViewBuilder
-    private func trendChart<Marks: ChartContent>(
-        points: [Point],
-        @ChartContentBuilder marks: @escaping (Point) -> Marks
+    private func chartOrEmpty<Content: View>(
+        _ series: TrendSeries,
+        unit: String,
+        @ViewBuilder _ chart: () -> Content
     ) -> some View {
-        if points.isEmpty {
+        if series.points.isEmpty {
             Text("No data for this span")
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
         } else {
-            Chart(points) { point in
-                marks(point)
-            }
-            .chartYAxis {
-                AxisMarks(position: .leading)
-            }
-            .frame(height: Spacing.s48 * 3)
+            chart()
+                .frame(height: Spacing.s48 * 3)
+                .accessibilityLabel("Chart, \(span.label)")
+                .accessibilityValue(latestFooter(series, unit: unit))
         }
     }
 
-    private func latestText(_ points: [Point], format: (Double) -> String) -> String {
-        guard let latest = points.last else { return "No data" }
-        return "Latest \(format(latest.value))"
+    private func latestFooter(_ series: TrendSeries, unit: String) -> String {
+        guard let latest = series.latest else { return "No data" }
+        return "Latest \(Format.number(latest, unit: unit))"
+    }
+
+    // MARK: Series
+
+    private var timeZone: TimeZone {
+        snapshot?.context.timeZone ?? Dashboard.fallbackZone
+    }
+
+    private var restingSeries: TrendSeries {
+        series(\.restingHR)
+    }
+
+    private var rmssdSeries: TrendSeries {
+        series(\.rmssdNight)
+    }
+
+    private var stressSeries: TrendSeries {
+        series(\.stressAverage)
+    }
+
+    private var calorieSeries: TrendSeries {
+        series(\.kcalTotal)
+    }
+
+    private func series(_ value: KeyPath<DaySummary, Double?>) -> TrendSeries {
+        TrendSeries.make(
+            days: snapshot?.days ?? [],
+            timeZone: timeZone,
+            value: value,
+            currentCount: span.rawValue
+        )
     }
 }

@@ -22,12 +22,38 @@ enum Format {
         "\(value) min"
     }
 
+    /// A number with an optional unit, rounded. Used by trend averages.
+    static func number(_ value: Double, unit: String) -> String {
+        let text = "\(Int(value.rounded()))"
+        return unit.isEmpty ? text : "\(text) \(unit)"
+    }
+
+    /// Percent with a regular space before the sign, as the zone labels use.
+    static func percent(_ value: Int) -> String {
+        "\(value) %"
+    }
+
     /// Band word for a stress value (PLAN.md 8.3).
     static func stressBand(_ value: Int) -> String {
-        switch StressBand.of(stress: value) {
+        bandName(StressBand.of(stress: value))
+    }
+
+    static func bandName(_ band: StressBand) -> String {
+        switch band {
         case .low: "Low"
         case .moderate: "Moderate"
         case .high: "High"
+        }
+    }
+
+    /// Nearest SF Symbol battery level for a percent.
+    static func batterySymbol(_ percent: Int) -> String {
+        switch percent {
+        case ...12: "battery.0percent"
+        case ...37: "battery.25percent"
+        case ...62: "battery.50percent"
+        case ...87: "battery.75percent"
+        default: "battery.100percent"
         }
     }
 

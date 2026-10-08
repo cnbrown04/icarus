@@ -99,7 +99,7 @@ struct MainTabView: View {
             NavigationStack {
                 TodayView(environment: environment, liveState: liveState)
             }
-            .tabItem { Label("Today", systemImage: "heart") }
+            .tabItem { Label("Today", systemImage: "heart.fill") }
 
             NavigationStack {
                 TrendsView(environment: environment)
@@ -109,7 +109,7 @@ struct MainTabView: View {
             NavigationStack {
                 AlarmsView()
             }
-            .tabItem { Label("Alarms", systemImage: "alarm") }
+            .tabItem { Label("Alarms", systemImage: "alarm.fill") }
 
             NavigationStack {
                 DeviceView(liveState: liveState)
@@ -119,7 +119,7 @@ struct MainTabView: View {
             NavigationStack {
                 SettingsView(environment: environment, liveState: liveState)
             }
-            .tabItem { Label("Settings", systemImage: "gearshape") }
+            .tabItem { Label("Settings", systemImage: "gearshape.fill") }
         }
         .sheet(isPresented: Binding(
             get: { pairingLink != nil },

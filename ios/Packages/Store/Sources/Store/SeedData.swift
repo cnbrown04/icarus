@@ -158,6 +158,10 @@ public enum SeedData {
         if (1020..<1050).contains(localMinute), dayIndex % 2 == 0 {
             base += 45
         }
+        // A 30-minute morning run every day. The screenshot clock is 09:30 local, so Today needs it to show zones 1-3.
+        if (420..<450).contains(localMinute) {
+            base += 30 + 60 * sin(Double.pi * Double(localMinute - 420) / 30)
+        }
         return base
     }
 

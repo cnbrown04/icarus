@@ -1,7 +1,8 @@
 import SwiftUI
 import SyncKit
+import UIKit
 
-/// Pairs the phone with a server, from a typed address and code or from a pairing link (PLAN.md 14 row 6).
+/// Pairs the phone with a server, from a typed address and code, a pasted link or a pairing link (PLAN.md 14 row 6).
 /// Onboarding shows it with Skip. Settings uses it for Pair and Re-pair.
 struct ServerView: View {
     let sync: SyncController
@@ -35,6 +36,12 @@ struct ServerView: View {
                 Text(footerText)
             }
 
+            Section {
+                Button(action: pasteFromClipboard) {
+                    Label("Paste from clipboard", systemImage: "doc.on.clipboard")
+                }
+            }
+
             if let onSkip {
                 Section {
                     Button("Skip for now", action: onSkip)
@@ -62,11 +69,30 @@ struct ServerView: View {
 
     private func applyLink() {
         guard let link else { return }
+        apply(link)
+    }
+
+    private func apply(_ link: PairingLink) {
         if let serverURL = link.serverURL {
             address = serverURL.absoluteString
         }
         if let linkCode = link.code {
             code = linkCode
+        }
+    }
+
+    /// Takes a pairing link, a code or an address from the clipboard, in that order.
+    private func pasteFromClipboard() {
+        guard let text = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty
+        else { return }
+        failure = nil
+        if let url = URL(string: text), let pasted = PairingLink(url: url) {
+            apply(pasted)
+        } else if let normalized = PairingCode.normalized(text) {
+            code = normalized
+        } else {
+            address = text
         }
     }
 

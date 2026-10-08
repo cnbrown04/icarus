@@ -17,24 +17,25 @@ struct PairBandView: View {
     var body: some View {
         List {
             Section {
-                LabeledContent("State", value: liveState.connectionText)
-                if liveState.isStreaming, let bpm = liveState.latestBPM {
-                    LabeledContent("Heart rate") {
-                        Text("\(bpm) bpm")
-                            .monospacedDigit()
-                            .accessibilityIdentifier("pairBand.hr")
-                    }
-                }
+                scanningRow
             }
 
             if liveState.bands.isEmpty {
                 Section {
                     Text("No band found")
-                } footer: {
-                    if hintDue, !liveState.isStreaming {
-                        Text("Turn on HR Broadcast in the WHOOP app.")
-                            .accessibilityIdentifier("pairBand.hint")
+                        .foregroundStyle(.secondary)
+                }
+                if hintDue, !liveState.isStreaming {
+                    Section {
+                        Label {
+                            Text("Turn on HR Broadcast in the WHOOP app.")
+                                .accessibilityIdentifier("pairBand.hint")
+                        } icon: {
+                            Image(systemName: "info.circle.fill")
+                                .foregroundStyle(.blue)
+                        }
                     }
+                    .listRowBackground(Color.blue.opacity(0.12))
                 }
             } else {
                 Section("Found") {
@@ -42,13 +43,20 @@ struct PairBandView: View {
                         Button {
                             liveState.pair(band.id)
                         } label: {
-                            VStack(alignment: .leading, spacing: Spacing.s4) {
-                                Text(band.name ?? "Unnamed band")
-                                    .foregroundStyle(.primary)
-                                Text("Signal \(band.rssi) dBm")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                            HStack(spacing: Spacing.s12) {
+                                VStack(alignment: .leading, spacing: Spacing.s4) {
+                                    Text(band.name ?? "Unnamed band")
+                                        .foregroundStyle(.primary)
+                                    Text("\(band.rssi) dBm")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: Spacing.s8)
+                                Image(systemName: "cellularbars", variableValue: Self.signalLevel(band.rssi))
+                                    .symbolRenderingMode(.hierarchical)
+                                    .foregroundStyle(.blue)
                             }
+                            .contentShape(Rectangle())
                             .accessibilityElement(children: .combine)
                         }
                         .accessibilityIdentifier("pairBand.row")
@@ -67,6 +75,34 @@ struct PairBandView: View {
             try? await Task.sleep(for: Self.hintDelay)
             hintDue = true
         }
+    }
+
+    private var scanningRow: some View {
+        HStack(spacing: Spacing.s16) {
+            if liveState.isStreaming {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(Palette.syncOK)
+            } else {
+                ProgressView()
+            }
+            VStack(alignment: .leading, spacing: Spacing.s4) {
+                Text(liveState.connectionText)
+                    .font(.headline)
+                if liveState.isStreaming, let bpm = liveState.latestBPM {
+                    Text("\(bpm) bpm")
+                        .font(.subheadline)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("pairBand.hr")
+                }
+            }
+        }
+    }
+
+    /// Bars for a signal in dBm, from about -100 (empty) to -40 (full).
+    private static func signalLevel(_ rssi: Int) -> Double {
+        Double(min(max(rssi + 100, 0), 60)) / 60
     }
 
     private var finishTitle: String {

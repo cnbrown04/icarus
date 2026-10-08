@@ -1,43 +1,91 @@
-import Charts
 import Metrics
 import Store
 import SwiftUI
 
-/// Today's resting and active calories, by hour, with the inputs used (PLAN.md §14 row 10).
+/// Today's resting and active calories, by hour, a week of totals, and the inputs used (PLAN.md §14 row 10).
 struct CaloriesDetailView: View {
     let environment: AppEnvironment
 
     @State private var snapshot: Dashboard.CaloriesSnapshot?
 
     var body: some View {
-        List {
-            Section {
-                LabeledContent("Total", value: snapshot?.total.map { Format.kcal($0) } ?? "--")
-                    .monospacedDigit()
-                LabeledContent("Active", value: snapshot?.active.map { Format.kcal($0) } ?? "--")
-                    .monospacedDigit()
-            } footer: {
-                Text("Estimated")
-            }
+        ScrollView {
+            VStack(spacing: Spacing.s16) {
+                DashboardCard(title: "Today", symbol: "flame.fill", tint: .orange) {
+                    HStack(spacing: Spacing.s24) {
+                        RingProgress(fraction: activeShare, summary: "Active share of today's calories") {
+                            VStack(spacing: Spacing.s4) {
+                                Text(totalText)
+                                    .font(.metricValue)
+                                    .monospacedDigit()
+                                    .contentTransition(.numericText())
+                                Text("total")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(width: Spacing.s48 * 3, height: Spacing.s48 * 3)
+                        VStack(alignment: .leading, spacing: Spacing.s12) {
+                            breakdownRow(title: "Active", value: activeText, tint: Palette.caloriesActive)
+                            breakdownRow(title: "Resting", value: restingText, tint: Palette.caloriesResting)
+                        }
+                    }
+                    Text("Estimated")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
-            Section("By hour") {
-                chart
-                    .frame(height: Spacing.s48 * 3)
-            }
+                ChartCard(title: "By hour") {
+                    EmptyView()
+                } chart: {
+                    if hasHourlyData {
+                        HourlyCaloriesChart(hours: snapshot?.hours ?? [])
+                            .frame(height: Spacing.s48 * 3)
+                    } else {
+                        Text("No calories yet today")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
 
-            Section {
-                ForEach(inputRows, id: \.label) { row in
-                    LabeledContent(row.label, value: row.value)
+                ChartCard(title: "Seven days") {
+                    Text(weekAverage)
+                        .font(.metricValue)
                         .monospacedDigit()
+                } chart: {
+                    DayBarChart(
+                        points: weekTotals.points,
+                        color: { _ in Palette.caloriesActive },
+                        average: weekTotals.average
+                    )
+                    .frame(height: Spacing.s48 * 3)
+                    .accessibilityLabel("Calories, seven days")
                 }
-            } header: {
-                Text("Inputs")
-            } footer: {
-                if snapshot?.context.profile == nil {
-                    Text("Set a profile to estimate calories.")
+
+                DashboardCard(title: "Inputs", symbol: "list.bullet", tint: .secondary) {
+                    VStack(alignment: .leading, spacing: Spacing.s8) {
+                        ForEach(Array(inputRows.enumerated()), id: \.offset) { _, row in
+                            HStack {
+                                Text(row.label)
+                                    .foregroundStyle(.secondary)
+                                Spacer(minLength: Spacing.s8)
+                                Text(row.value)
+                                    .monospacedDigit()
+                            }
+                            .font(.subheadline)
+                        }
+                    }
+                    if snapshot?.context.profile == nil {
+                        Text("Set a profile to estimate calories.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
+            .pagePadding()
+            .padding(.vertical, Spacing.s8)
         }
+        .dashboardBackground()
         .navigationTitle("Calories")
         .task {
             for await value in environment.snapshots(every: .seconds(15), { db, nowMs in
@@ -48,26 +96,55 @@ struct CaloriesDetailView: View {
         }
     }
 
-    @ViewBuilder
-    private var chart: some View {
-        if let hours = snapshot?.hours, hours.contains(where: { $0.resting + $0.active > 0 }) {
-            Chart(hours) { hour in
-                BarMark(
-                    x: .value("Hour", hour.id),
-                    y: .value("kcal", hour.resting)
-                )
-                .foregroundStyle(by: .value("Type", "Resting"))
-                BarMark(
-                    x: .value("Hour", hour.id),
-                    y: .value("kcal", hour.active)
-                )
-                .foregroundStyle(by: .value("Type", "Active"))
+    private func breakdownRow(title: String, value: String, tint: Color) -> some View {
+        HStack(spacing: Spacing.s8) {
+            Circle()
+                .fill(tint)
+                .frame(width: Spacing.s8, height: Spacing.s8)
+            VStack(alignment: .leading) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
             }
-            .accessibilityLabel("Calories by hour, today")
-        } else {
-            Text("No calories yet today")
-                .foregroundStyle(.secondary)
         }
+    }
+
+    private var hasHourlyData: Bool {
+        snapshot?.hours.contains(where: { $0.resting + $0.active > 0 }) ?? false
+    }
+
+    private var totalText: String {
+        snapshot?.total.map { Format.number($0, unit: "") } ?? "--"
+    }
+
+    private var activeText: String {
+        snapshot?.active.map { Format.kcal($0) } ?? "--"
+    }
+
+    private var restingText: String {
+        guard let total = snapshot?.total, let active = snapshot?.active else { return "--" }
+        return Format.kcal(total - active)
+    }
+
+    private var activeShare: Double {
+        guard let total = snapshot?.total, total > 0, let active = snapshot?.active else { return 0 }
+        return active / total
+    }
+
+    private var weekTotals: TrendSeries {
+        TrendSeries.make(
+            days: snapshot?.week ?? [],
+            timeZone: snapshot?.context.timeZone ?? Dashboard.fallbackZone,
+            value: \.kcalTotal,
+            currentCount: 7
+        )
+    }
+
+    private var weekAverage: String {
+        weekTotals.average.map { Format.kcal($0) } ?? "--"
     }
 
     private struct InputRow {

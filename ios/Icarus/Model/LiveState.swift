@@ -94,6 +94,22 @@ final class LiveState {
         return bands.first { $0.id == rememberedID }?.name
     }
 
+    /// Signal strength of the remembered band, once it has been seen in a scan.
+    var connectedRSSI: Int? {
+        guard let rememberedID else { return nil }
+        return bands.first { $0.id == rememberedID }?.rssi
+    }
+
+    /// SF Symbol for the link state.
+    var connectionSymbol: String {
+        switch state {
+        case .streaming: "checkmark.circle.fill"
+        case .idle: "circle"
+        case .backoff: "arrow.clockwise"
+        case .scanning, .connecting, .discovering, .subscribing: "arrow.triangle.2.circlepath"
+        }
+    }
+
     var isCollectionPaused: Bool {
         DataAge.isPaused(since: lastDataAt, now: clock.now)
     }

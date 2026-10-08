@@ -57,4 +57,20 @@ struct SeedTests {
         let nowMs = Int64(now.timeIntervalSince1970 * 1000)
         #expect(newest == nowMs - 1000)
     }
+
+    @Test func morningRunFillsHeartRateZonesOneToThree() throws {
+        let database = try SeedData.make30Days(now: now)
+        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
+        // The run is 07:00-07:30 local, two and a half hours before the clock.
+        let rows = try database.writer.read {
+            try $0.minuteMetricRows(from: nowMs - 180 * LocalTime.msPerMinute, to: nowMs - 120 * LocalTime.msPerMinute)
+        }
+        let zones = HeartRateSeries.zoneMinutes(rows, restingHR: SeedData.restingHeartRate, maxHR: 182.8)
+        func minutes(_ zone: HeartRateZone) -> Int {
+            zones.first { $0.zone == zone }?.minutes ?? 0
+        }
+        #expect(minutes(.zone1) > 0)
+        #expect(minutes(.zone2) > 0)
+        #expect(minutes(.zone3) > 0)
+    }
 }

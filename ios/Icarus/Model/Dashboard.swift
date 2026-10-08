@@ -9,6 +9,9 @@ enum Dashboard {
     /// The profile's zone, or the default when no profile exists yet.
     static let fallbackZone = TimeZone(identifier: "America/Chicago")!
 
+    /// Stress bars are 15-minute averages on every screen that shows them.
+    static let stressBucketMs: Int64 = 15 * LocalTime.msPerMinute
+
     /// HRmax for zones and calorie inputs: user-entered, else Tanaka from birth year (PLAN.md 8.1).
     static func maxHR(_ profile: ProfileRow, year: Int) -> Double? {
         if let hrMax = profile.hrMax {
@@ -45,6 +48,21 @@ enum Dashboard {
         }
     }
 
+    /// Seven local days ending today, oldest first.
+    static func weekDays(_ context: Context) -> [LocalDay] {
+        (0..<7).reversed().map { LocalTime.adding(days: -$0, to: context.today) }
+    }
+
+    /// Zones for `rows`. Empty until the profile gives both HRmax and last night's resting HR.
+    static func zoneMinutes(_ rows: [MinuteMetricRow], context: Context) -> [ZoneMinutes] {
+        guard let restingHR = context.restingHR, let maxHR = context.maxHR else { return [] }
+        return HeartRateSeries.zoneMinutes(rows, restingHR: restingHR, maxHR: maxHR)
+    }
+
+    static func stressSamples(_ rows: [MinuteMetricRow]) -> [(ms: Int64, value: Int)] {
+        rows.compactMap { row in row.stress.map { (ms: row.minuteMs, value: $0) } }
+    }
+
     // MARK: Today
 
     struct TodaySnapshot: Sendable {
@@ -60,17 +78,28 @@ enum Dashboard {
         /// The newest minute row, if any minute was computed in the last 10 minutes.
         let latestMinute: MinuteMetricRow?
         let today: DaySummary?
+        /// Stress for the local day so far, in 15-minute buckets.
+        let stressBuckets: [StressBucket]
+        /// Heart-rate zones for the local day so far.
+        let zones: [ZoneMinutes]
+        /// Seven local days, oldest first, ending today.
+        let week: [DaySummary]
     }
 
     static func today(_ db: Database, nowMs: Int64) throws -> TodaySnapshot {
         let context = try Context.load(db, nowMs: nowMs)
         let samples = try db.heartRateRows(from: nowMs - 15 * LocalTime.msPerMinute, to: nowMs)
         let recent = try db.minuteMetricRows(from: nowMs - 10 * LocalTime.msPerMinute, to: nowMs)
+        let dayStart = LocalTime.localTime(context.today, hour: 0, in: context.timeZone)
+        let dayRows = try db.minuteMetricRows(from: dayStart, to: nowMs)
         return TodaySnapshot(
             context: context,
             sparkline: samples.map { TodaySnapshot.Point(id: $0.rowid, date: Date(epochMs: $0.tsMs), bpm: $0.bpm) },
             latestMinute: recent.last,
-            today: try db.daySummaries([context.today], in: context.timeZone).first
+            today: try db.daySummaries([context.today], in: context.timeZone).first,
+            stressBuckets: StressBuckets.make(stressSamples(dayRows), bucketMs: stressBucketMs),
+            zones: zoneMinutes(dayRows, context: context),
+            week: try db.daySummaries(weekDays(context), in: context.timeZone)
         )
     }
 
@@ -128,16 +157,10 @@ enum Dashboard {
         let rows = try db.minuteMetricRows(from: nowMs - range.durationMs, to: nowMs)
         let withHR = rows.filter { $0.hrAvg != nil }
         let count = withHR.reduce(0) { $0 + $1.hrN }
-        let zones: [ZoneMinutes]
-        if let restingHR = context.restingHR, let maxHR = context.maxHR {
-            zones = HeartRateSeries.zoneMinutes(withHR, restingHR: restingHR, maxHR: maxHR)
-        } else {
-            zones = []
-        }
         return HeartRateSnapshot(
             range: range,
             buckets: HeartRateSeries.buckets(withHR, bucketMs: range.bucketMs),
-            zones: zones,
+            zones: zoneMinutes(withHR, context: context),
             minimum: withHR.compactMap(\.hrMin).min(),
             average: count > 0 ? withHR.reduce(0.0) { $0 + ($1.hrAvg ?? 0) * Double($1.hrN) } / Double(count) : nil,
             maximum: withHR.compactMap(\.hrMax).max(),
@@ -148,17 +171,14 @@ enum Dashboard {
     // MARK: Stress
 
     struct StressSnapshot: Sendable {
-        struct Point: Sendable, Identifiable {
-            let id: Int64
-            let date: Date
-            let stress: Int
-        }
-
-        let points: [Point]
+        /// The last 24 hours in 15-minute buckets.
+        let buckets: [StressBucket]
         let latest: MinuteMetricRow?
         /// RMSSD and sqrt(Baevsky) from the newest valid window in the last 24 h.
         let rmssd: Double?
         let baevskySqrt: Double?
+        /// Seven local days, oldest first, ending today.
+        let week: [DaySummary]
         let context: Context
     }
 
@@ -166,12 +186,11 @@ enum Dashboard {
         let context = try Context.load(db, nowMs: nowMs)
         let rows = try db.minuteMetricRows(from: nowMs - 24 * 60 * LocalTime.msPerMinute, to: nowMs)
         return StressSnapshot(
-            points: rows.compactMap { row in
-                row.stress.map { StressSnapshot.Point(id: row.minuteMs, date: Date(epochMs: row.minuteMs), stress: $0) }
-            },
+            buckets: StressBuckets.make(stressSamples(rows), bucketMs: stressBucketMs),
             latest: rows.last,
             rmssd: rows.last(where: { $0.rmssdMs != nil })?.rmssdMs,
             baevskySqrt: rows.last(where: { $0.baevskySqrt != nil })?.baevskySqrt,
+            week: try db.daySummaries(weekDays(context), in: context.timeZone),
             context: context
         )
     }
@@ -188,6 +207,8 @@ enum Dashboard {
         let total: Double?
         let active: Double?
         let hours: [Hour]
+        /// Seven local days, oldest first, ending today.
+        let week: [DaySummary]
         let context: Context
     }
 
@@ -208,6 +229,7 @@ enum Dashboard {
             total: summary?.kcalTotal,
             active: summary?.kcalActive,
             hours: (0..<24).map { CaloriesSnapshot.Hour(id: $0, resting: resting[$0], active: active[$0]) },
+            week: try db.daySummaries(weekDays(context), in: context.timeZone),
             context: context
         )
     }
@@ -220,6 +242,7 @@ enum Dashboard {
         let context: Context
     }
 
+    /// `dayCount` days ending today. Trends passes twice the span, so the earlier half is the previous period.
     static func trends(_ db: Database, nowMs: Int64, dayCount: Int) throws -> TrendsSnapshot {
         let context = try Context.load(db, nowMs: nowMs)
         let days = (0..<dayCount).map { LocalTime.adding(days: -$0, to: context.today) }
