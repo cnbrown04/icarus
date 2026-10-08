@@ -7,6 +7,7 @@ struct LaunchConfig: Equatable, Sendable {
         case welcome
         case profile
         case pairBand
+        case server
         case debug
     }
 
@@ -18,6 +19,8 @@ struct LaunchConfig: Equatable, Sendable {
     var startScreen: StartScreen?
     /// `-IcarusSeedDB seed_30d` replaces the store with the deterministic 30-day seed (PLAN.md §16.3).
     var seedDB: String?
+    /// `-IcarusSyncFixture paired` shows a paired device with canned batches and makes no network calls.
+    var syncFixture: String?
 
     static let current = LaunchConfig(arguments: ProcessInfo.processInfo.arguments)
 
@@ -33,6 +36,7 @@ struct LaunchConfig: Equatable, Sendable {
         fixedNow = values["-IcarusNow"].flatMap(Self.parseDate)
         startScreen = values["-IcarusScreen"].flatMap(StartScreen.init(rawValue:))
         seedDB = values["-IcarusSeedDB"]
+        syncFixture = values["-IcarusSyncFixture"]
         #endif
     }
 

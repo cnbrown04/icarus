@@ -31,13 +31,21 @@ actor Ingestor {
     private let database: AppDatabase
     private let metrics: MetricsWorker
     private let clock: AppClock
+    /// Runs after each successful flush. Sync uses it to queue background uploads during BLE wake-ups.
+    private let onFlushed: (@Sendable () async -> Void)?
     private var preparer = ReadingPreparer()
     private var pending: [Database.Reading] = []
 
-    init(database: AppDatabase, metrics: MetricsWorker, clock: AppClock) {
+    init(
+        database: AppDatabase,
+        metrics: MetricsWorker,
+        clock: AppClock,
+        onFlushed: (@Sendable () async -> Void)? = nil
+    ) {
         self.database = database
         self.metrics = metrics
         self.clock = clock
+        self.onFlushed = onFlushed
     }
 
     /// Consumes inputs in arrival order until the stream finishes, then flushes what is left.
@@ -73,6 +81,7 @@ actor Ingestor {
                 try db.insertReadings(batch)
             }
             _ = try await metrics.recompute(nowMs: clock.nowMs)
+            await onFlushed?()
         } catch {
             pending.insert(contentsOf: batch, at: 0)
             if pending.count > Self.retainedAfterFailure {

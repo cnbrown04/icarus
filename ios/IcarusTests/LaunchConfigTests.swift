@@ -48,3 +48,12 @@ struct LaunchConfigSeedTests {
         #expect(LaunchConfig(arguments: ["Icarus", "-IcarusScreen", "profile"]).startScreen == .profile)
     }
 }
+
+struct LaunchConfigSyncTests {
+    @Test func parsesServerScreenAndSyncFixture() {
+        let config = LaunchConfig(arguments: ["Icarus", "-IcarusScreen", "server", "-IcarusSyncFixture", "paired"])
+        #expect(config.startScreen == .server)
+        #expect(config.syncFixture == "paired")
+        #expect(LaunchConfig(arguments: ["Icarus"]).syncFixture == nil)
+    }
+}

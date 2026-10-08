@@ -1,10 +1,12 @@
 import SwiftUI
+import SyncKit
 
 /// Destinations pushed from Today's cards (PLAN.md §14 rows 8-10).
 enum TodayDestination: Hashable {
     case heartRate
     case stress
     case calories
+    case sync
 }
 
 struct TodayView: View {
@@ -15,6 +17,15 @@ struct TodayView: View {
 
     var body: some View {
         List {
+            if environment.sync.status.phase == .needsRepair {
+                Section {
+                    Text("Re-pair this iPhone")
+                    NavigationLink("Re-pair") {
+                        ServerView(sync: environment.sync)
+                    }
+                }
+            }
+
             Section {
                 NavigationLink(value: TodayDestination.heartRate) {
                     heartRateRow
@@ -47,8 +58,15 @@ struct TodayView: View {
             }
 
             Section {
-                LabeledContent("Last sync", value: liveState.rememberedID == nil ? "Not paired" : "Not synced")
+                NavigationLink(value: TodayDestination.sync) {
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        LabeledContent("Last sync", value: lastSyncText(now: context.date))
+                    }
+                }
             }
+        }
+        .refreshable {
+            await environment.sync.runNow()
         }
         .navigationTitle("Today")
         .navigationDestination(for: TodayDestination.self) { destination in
@@ -56,6 +74,7 @@ struct TodayView: View {
             case .heartRate: HeartRateDetailView(environment: environment)
             case .stress: StressDetailView(environment: environment)
             case .calories: CaloriesDetailView(environment: environment)
+            case .sync: SyncView(environment: environment)
             }
         }
         .task {
@@ -118,6 +137,13 @@ struct TodayView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private func lastSyncText(now: Date) -> String {
+        let status = environment.sync.status
+        if status.phase == .notPaired { return "Not paired" }
+        guard let last = status.lastSuccessAt else { return "Not synced" }
+        return DataAge.text(seconds: now.timeIntervalSince(last))
     }
 
     private var restingText: String {

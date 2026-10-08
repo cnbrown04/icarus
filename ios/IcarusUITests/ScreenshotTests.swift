@@ -109,6 +109,38 @@ final class ScreenshotTests: XCTestCase {
         attachScreenshot(named: "18-debug")
     }
 
+    func testServerScreenshot() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-IcarusUITest", "1",
+            "-IcarusScreen", "server",
+            "-AppleLanguages", "(en)",
+            "-AppleLocale", "en_US",
+        ]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Server"].waitForExistence(timeout: 30))
+        attachScreenshot(named: "06-server")
+    }
+
+    func testSyncScreenshot() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-IcarusUITest", "1",
+            "-IcarusSyncFixture", "paired",
+            "-IcarusNow", "2026-10-07T14:30:00Z",
+            "-AppleLanguages", "(en)",
+            "-AppleLocale", "en_US",
+        ]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 30))
+        app.tabBars.buttons["Settings"].tap()
+        app.buttons["Sync"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Sync"].waitForExistence(timeout: 10))
+        attachScreenshot(named: "16-sync")
+    }
+
     /// Taps a leaf element on Today and waits for the detail screen's title.
     private func openFromToday(_ app: XCUIApplication, tap element: XCUIElement, title: String) {
         XCTAssertTrue(element.waitForExistence(timeout: 30))

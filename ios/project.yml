@@ -27,6 +27,8 @@ packages:
     path: Packages/BandKit
   Store:
     path: Packages/Store
+  SyncKit:
+    path: Packages/SyncKit
   # Store's API exposes GRDB types (Database), so the app imports GRDB directly.
   GRDB:
     url: https://github.com/groue/GRDB.swift
@@ -47,6 +49,7 @@ targets:
       - package: Metrics
       - package: BandKit
       - package: Store
+      - package: SyncKit
       - package: GRDB
     info:
       path: Icarus/Info.plist
@@ -61,6 +64,15 @@ targets:
           - fetch
           - remote-notification
         UILaunchScreen: {}
+        # Pairing links from the website QR code: icarus://pair?code=...&server=...
+        CFBundleURLTypes:
+          - CFBundleURLName: com.cnbrown04.icarus
+            CFBundleURLSchemes:
+              - icarus
+        # Registered in AppEnvironment/BackgroundTasks before launch finishes (PLAN.md 11.2).
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.cnbrown04.icarus.sync
+          - com.cnbrown04.icarus.maintenance
         # Only standard HTTPS, if any. Stops the TestFlight export-compliance prompt per build.
         ITSAppUsesNonExemptEncryption: false
     settings:

@@ -1,4 +1,5 @@
 import SwiftUI
+import SyncKit
 
 /// Chooses between onboarding, the tab bar and the Debug screen.
 struct RootView: View {
@@ -8,12 +9,14 @@ struct RootView: View {
 
     @AppStorage("welcome.completed") private var welcomeCompleted = false
     @State private var step: Step?
+    @State private var pairingLink: PairingLink?
     @Environment(\.scenePhase) private var scenePhase
 
     enum Step: Equatable {
         case welcome
         case profile
         case pairBand
+        case server
         case tabs
         case debug
     }
@@ -25,6 +28,7 @@ struct RootView: View {
         case .welcome: return .welcome
         case .profile: return .profile
         case .pairBand: return .pairBand
+        case .server: return .server
         case .debug: return .debug
         case nil: return !config.isUITest && !welcomeCompleted ? .welcome : .tabs
         }
@@ -33,10 +37,10 @@ struct RootView: View {
     var body: some View {
         content
             .onChange(of: scenePhase) { _, phase in
-                // Leaving the foreground writes pending readings now (PLAN.md 7.2).
-                if phase != .active {
-                    environment.flushIngestion()
-                }
+                environment.scenePhaseChanged(phase)
+            }
+            .onOpenURL { url in
+                openPairingLink(url)
             }
     }
 
@@ -53,10 +57,14 @@ struct RootView: View {
             }
         case .pairBand:
             NavigationStack {
-                PairBandView(liveState: liveState, onFinish: finishOnboarding)
+                PairBandView(liveState: liveState, onFinish: { step = .server })
+            }
+        case .server:
+            NavigationStack {
+                ServerView(sync: environment.sync, onFinish: finishOnboarding, onSkip: finishOnboarding, link: pairingLink)
             }
         case .tabs:
-            MainTabView(environment: environment, liveState: liveState)
+            MainTabView(environment: environment, liveState: liveState, pairingLink: $pairingLink)
         case .debug:
             NavigationStack {
                 DebugView(liveState: liveState)
@@ -64,8 +72,19 @@ struct RootView: View {
         }
     }
 
+    /// The website's QR code opens `icarus://pair`. Before onboarding ends, the Server step takes the link.
+    /// After it, the pairing sheet opens over the tabs.
+    private func openPairingLink(_ url: URL) {
+        guard let link = PairingLink(url: url) else { return }
+        pairingLink = link
+        if !welcomeCompleted {
+            step = .server
+        }
+    }
+
     private func finishOnboarding() {
         welcomeCompleted = true
+        pairingLink = nil
         step = .tabs
     }
 }
@@ -73,6 +92,7 @@ struct RootView: View {
 struct MainTabView: View {
     let environment: AppEnvironment
     let liveState: LiveState
+    @Binding var pairingLink: PairingLink?
 
     var body: some View {
         TabView {
@@ -100,6 +120,14 @@ struct MainTabView: View {
                 SettingsView(environment: environment, liveState: liveState)
             }
             .tabItem { Label("Settings", systemImage: "gearshape") }
+        }
+        .sheet(isPresented: Binding(
+            get: { pairingLink != nil },
+            set: { if !$0 { pairingLink = nil } }
+        )) {
+            NavigationStack {
+                ServerView(sync: environment.sync, link: pairingLink)
+            }
         }
     }
 }
