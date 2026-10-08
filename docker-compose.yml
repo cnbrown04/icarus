@@ -1,0 +1,39 @@
+# Local or single-host deployment: Postgres 17 + icarus-server (PLAN.md §19 Phase 3).
+# Put secrets in a .env file next to this one (never commit it). See docs/deploy.md.
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: icarus
+      POSTGRES_USER: icarus
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U icarus -d icarus"]
+      interval: 5s
+      retries: 10
+
+  server:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://icarus:${POSTGRES_PASSWORD}@db:5432/icarus
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      ICARUS_ENC_KEY: ${ICARUS_ENC_KEY:?set ICARUS_ENC_KEY in .env}
+      ICARUS_INSECURE_COOKIES: ${ICARUS_INSECURE_COOKIES:-0}
+      APNS_KEY_P8: ${APNS_KEY_P8:-}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_TOPIC: ${APNS_TOPIC:-com.cnbrown04.icarus}
+      WHOOP_CLIENT_ID: ${WHOOP_CLIENT_ID:-}
+      WHOOP_CLIENT_SECRET: ${WHOOP_CLIENT_SECRET:-}
+    ports:
+      - "8080:8080"
+
+volumes:
+  pgdata:
