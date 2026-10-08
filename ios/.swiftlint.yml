@@ -1,0 +1,37 @@
+# Mechanical design rules from PLAN.md §15.5. Spacing values come only from the Spacing enum.
+# Phase 0 enforces only the design rules below. SwiftLint's default style rules can be
+# added later; with --strict every default warning would fail CI.
+only_rules:
+  - custom_rules
+
+included:
+  - Icarus
+  - IcarusTests
+  - IcarusUITests
+
+custom_rules:
+  no_corner_radius:
+    name: "No rounded corners"
+    regex: '\.cornerRadius\(|RoundedRectangle|\.clipShape\(\s*\.?RoundedRectangle'
+    message: "Icarus uses square corners only (PLAN.md §14, §15.2). Remove the rounded shape."
+    severity: error
+
+  no_literal_padding:
+    name: "No literal padding values"
+    regex: '\.padding\([^)]*(?<![A-Za-z0-9_.])[0-9]'
+    message: "Use a Spacing.* value for padding (PLAN.md §15.2). Literal values are allowed only in Spacing.swift."
+    severity: error
+    excluded: ".*/Spacing\\.swift"
+
+  no_literal_spacing:
+    name: "No literal spacing values"
+    regex: 'spacing:\s*(?<![A-Za-z0-9_.])[0-9]'
+    message: "Use a Spacing.* value for spacing (PLAN.md §15.2). Literal values are allowed only in Spacing.swift."
+    severity: error
+    excluded: ".*/Spacing\\.swift"
+
+  no_emoji_in_strings:
+    name: "No emoji in string literals"
+    regex: '"[^"\n]*[\x{1F000}-\x{1FAFF}\x{2600}-\x{27BF}\x{2B00}-\x{2BFF}\x{FE0F}][^"\n]*"'
+    message: "No emoji in UI text (PLAN.md §15.1)."
+    severity: error

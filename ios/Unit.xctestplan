@@ -1,0 +1,35 @@
+{
+  "configurations": [
+    {
+      "id": "6C1F3A10-2B7D-4E0A-9C11-0000000000A1",
+      "name": "Configuration 1",
+      "options": {}
+    }
+  ],
+  "defaultOptions": {
+    "codeCoverage": false
+  },
+  "testTargets": [
+    {
+      "parallelizable": true,
+      "target": {
+        "containerPath": "container:Icarus.xcodeproj",
+        "identifier": "57E1B3000BE886BEA70297F8",
+        "name": "IcarusTests"
+      }
+    },
+    {
+      "parallelizable": false,
+      "target": {
+        "containerPath": "container:Icarus.xcodeproj",
+        "identifier": "D44EDD409BFE34D1BAAA9401",
+        "name": "IcarusUITests"
+      },
+      "selectedTests": [
+        "SmokeTests"
+      ],
+      "useTestSelectionWhitelist": true
+    }
+  ],
+  "version": 1
+}

@@ -1,0 +1,103 @@
+# XcodeGen spec. The .xcodeproj is generated in CI (`cd ios && xcodegen generate`), not committed.
+# Paths are relative to this file (ios/).
+name: Icarus
+
+options:
+  bundleIdPrefix: com.cnbrown04
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "26.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGNING_ALLOWED: NO
+    CODE_SIGNING_REQUIRED: NO
+    CODE_SIGN_IDENTITY: ""
+
+packages:
+  BandProtocol:
+    path: Packages/BandProtocol
+  Metrics:
+    path: Packages/Metrics
+  BandKit:
+    path: Packages/BandKit
+
+targets:
+  Icarus:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: Icarus
+      # Recorded or synthetic band session, loaded by LiveState under -IcarusUITest.
+      - path: Fixtures/resting_day.ndjson
+        buildPhase: resources
+    dependencies:
+      - package: BandProtocol
+      - package: Metrics
+      - package: BandKit
+    info:
+      path: Icarus/Info.plist
+      properties:
+        CFBundleDisplayName: Icarus
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSBluetoothAlwaysUsageDescription: "Icarus uses Bluetooth to read heart rate from your band."
+        UIBackgroundModes:
+          - bluetooth-central
+          - processing
+          - fetch
+          - remote-notification
+        UILaunchScreen: {}
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cnbrown04.icarus
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"
+
+  IcarusTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: IcarusTests
+    dependencies:
+      - target: Icarus
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cnbrown04.icarus.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Icarus.app/Icarus"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+  IcarusUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: IcarusUITests
+    dependencies:
+      - target: Icarus
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cnbrown04.icarus.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Icarus
+
+schemes:
+  Icarus:
+    build:
+      targets:
+        Icarus: all
+        IcarusTests: [test]
+        IcarusUITests: [test]
+    test:
+      config: Debug
+      testPlans:
+        - path: Unit.xctestplan
+          defaultPlan: true
+        - path: Screenshots.xctestplan
