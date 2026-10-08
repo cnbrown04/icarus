@@ -5,6 +5,10 @@ import SwiftUI
 
 /// Phone alarms through AlarmKit (iOS 26, PLAN.md 9.1). Scheduled alarms are always armed here, so a band failure
 /// never causes a missed alarm (PLAN.md 6.5). Every API below is unverified until the macOS build confirms it.
+public enum AlarmKitSchedulerError: Error, Equatable {
+    case requiresNewerOS
+}
+
 public struct AlarmKitScheduler: AlarmScheduling {
     public init() {}
 
@@ -25,6 +29,9 @@ public struct AlarmKitScheduler: AlarmScheduling {
     }
 
     public func schedule(_ alarm: ScheduledAlarm) async throws {
+        // AlarmPresentation.Alert(title:) needs iOS 26.1 (Xcode 26.6 SDK). On 26.0 the phone alarm falls back to the
+        // caller's notification path.
+        guard #available(iOS 26.1, *) else { throw AlarmKitSchedulerError.requiresNewerOS }
         // [Unverified] Alarm.Schedule.fixed / .relative, Relative.Time, Recurrence .weekly, and the alarm configuration
         // initialiser. Only the labelled parameters used here are assumed.
         let attributes = AlarmAttributes(
@@ -38,7 +45,7 @@ public struct AlarmKitScheduler: AlarmScheduling {
             schedule: Self.schedule(for: alarm),
             attributes: attributes
         )
-        try await AlarmManager.shared.schedule(id: alarm.id, configuration: configuration)
+        _ = try await AlarmManager.shared.schedule(id: alarm.id, configuration: configuration)
     }
 
     public func cancel(id: UUID) async throws {
