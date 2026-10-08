@@ -305,7 +305,8 @@ struct TodayView: View {
     // MARK: Values
 
     private var sparklinePoints: [HRPoint] {
-        (snapshot?.sparkline ?? []).map { HRPoint(date: $0.date, bpm: Double($0.bpm)) }
+        let raw = (snapshot?.sparkline ?? []).map { HRPoint(date: $0.date, bpm: Double($0.bpm)) }
+        return HRPoint.averaged(raw, bucket: 15)
     }
 
     private var rangeText: String {

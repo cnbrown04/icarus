@@ -16,6 +16,21 @@ struct HRPoint: Identifiable, Equatable, Sendable {
     let bpm: Double
 
     var id: Date { date }
+
+    /// Mean bpm per fixed time bucket. Raw 1 Hz integer samples draw as a noisy band; buckets read as a line.
+    static func averaged(_ points: [HRPoint], bucket seconds: TimeInterval) -> [HRPoint] {
+        guard seconds > 0 else { return points }
+        var groups: [Int64: (sum: Double, count: Int)] = [:]
+        for point in points {
+            let key = Int64((point.date.timeIntervalSince1970 / seconds).rounded(.down))
+            groups[key, default: (0, 0)].sum += point.bpm
+            groups[key, default: (0, 0)].count += 1
+        }
+        return groups.keys.sorted().map { key in
+            let group = groups[key]!
+            return HRPoint(date: Date(timeIntervalSince1970: Double(key) * seconds), bpm: group.sum / Double(group.count))
+        }
+    }
 }
 
 /// Average stress over one bucket, with its band.
