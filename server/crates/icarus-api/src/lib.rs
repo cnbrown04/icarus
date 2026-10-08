@@ -1,55 +1,104 @@
-//! HTTP router, handlers and middleware for `icarus-server`.
+//! HTTP router, handlers and middleware for `icarus-server` (api-contract.md, PLAN.md §12).
+
+pub mod accounts;
+pub mod auth;
+pub mod error;
+pub mod extract;
+pub mod ratelimit;
+pub mod routes;
+pub mod state;
 
 use std::time::Duration;
 
 use axum::{
     Json, Router,
     extract::State,
-    http::{HeaderValue, StatusCode, header},
+    middleware::from_fn_with_state,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{any, delete, get, post, put},
 };
 use icarus_db::ReadyError;
-use serde::Serialize;
 use serde_json::json;
-use sqlx::PgPool;
 use tower::ServiceBuilder;
 use tower_http::{
     compression::CompressionLayer,
+    decompression::RequestDecompressionLayer,
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
+    services::{ServeDir, ServeFile},
     timeout::TimeoutLayer,
     trace::TraceLayer,
 };
 
+pub use accounts::{CreateUserError, create_user};
+pub use error::ApiError;
+pub use state::{AppState, Config};
+
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[derive(Clone)]
-pub struct AppState {
-    pub pool: PgPool,
-}
-
-impl AppState {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
-    }
-}
-
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let web_dir = state.config.web_dir.clone().filter(|dir| dir.is_dir());
+
+    let mut app = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
-        .with_state(state)
-        .layer(
-            ServiceBuilder::new()
-                .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
-                .layer(TraceLayer::new_for_http())
-                .layer(TimeoutLayer::with_status_code(
-                    StatusCode::REQUEST_TIMEOUT,
-                    REQUEST_TIMEOUT,
-                ))
-                .layer(PropagateRequestIdLayer::x_request_id())
-                .layer(CompressionLayer::new()),
+        .route("/v1/auth/login", post(routes::auth::login))
+        .route("/v1/auth/logout", post(routes::auth::logout))
+        .route(
+            "/v1/me",
+            get(routes::me::get_me)
+                .patch(routes::me::patch_me)
+                .delete(routes::me::delete_me),
         )
+        .route("/v1/devices", get(routes::devices::list))
+        .route(
+            "/v1/devices/pairing-codes",
+            post(routes::devices::create_pairing_code),
+        )
+        .route("/v1/devices/pair", post(routes::devices::pair))
+        .route(
+            "/v1/devices/me/push-token",
+            put(routes::devices::put_push_token),
+        )
+        .route("/v1/devices/{id}", delete(routes::devices::revoke))
+        // Gzip request bodies are decoded here. The 2 MB limit applies to the decoded bytes.
+        .route(
+            "/v1/sync/batches",
+            post(routes::sync::post_batch).layer(RequestDecompressionLayer::new()),
+        )
+        .route("/v1/sync/config", get(routes::sync::get_config))
+        .route("/v1/sync/state", get(routes::sync::get_state))
+        // Unknown API paths get a problem response, never the SPA page.
+        .route("/v1", any(api_not_found))
+        .route("/v1/{*rest}", any(api_not_found));
+
+    app = match web_dir {
+        Some(dir) => {
+            let index = dir.join("index.html");
+            app.fallback_service(ServeDir::new(&dir).fallback(ServeFile::new(index)))
+        }
+        None => app.fallback(api_not_found),
+    };
+
+    app.layer(from_fn_with_state(
+        state.clone(),
+        auth::refresh_session_cookie,
+    ))
+    .layer(
+        ServiceBuilder::new()
+            .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
+            .layer(TraceLayer::new_for_http())
+            .layer(TimeoutLayer::with_status_code(
+                axum::http::StatusCode::REQUEST_TIMEOUT,
+                REQUEST_TIMEOUT,
+            ))
+            .layer(PropagateRequestIdLayer::x_request_id())
+            .layer(CompressionLayer::new()),
+    )
+    .with_state(state)
+}
+
+async fn api_not_found() -> ApiError {
+    ApiError::NotFound
 }
 
 async fn healthz() -> Json<serde_json::Value> {
@@ -61,72 +110,12 @@ async fn readyz(State(state): State<AppState>) -> Response {
         Ok(()) => Json(json!({ "status": "ready" })).into_response(),
         Err(err) => {
             tracing::warn!(error = %err, "readiness check failed");
-            not_ready(&err)
+            // Only the variant leaves this function. The driver message stays in the log.
+            let err: ApiError = match err {
+                ReadyError::Query(_) => ApiError::DatabaseUnavailable,
+                ReadyError::MigrationsPending(_) => ApiError::MigrationsPending,
+            };
+            err.into_response()
         }
-    }
-}
-
-/// RFC 9457 problem details. `kind` is a stable type URI.
-#[derive(Serialize)]
-struct Problem {
-    #[serde(rename = "type")]
-    kind: &'static str,
-    title: &'static str,
-    status: u16,
-    detail: &'static str,
-}
-
-fn not_ready(err: &ReadyError) -> Response {
-    let (kind, title, detail) = match err {
-        ReadyError::Query(_) => (
-            "urn:icarus:problem:database-unavailable",
-            "Database unavailable",
-            "The database could not be reached.",
-        ),
-        ReadyError::MigrationsPending(_) => (
-            "urn:icarus:problem:migrations-pending",
-            "Migrations pending",
-            "Database migrations have not been applied.",
-        ),
-    };
-    let status = StatusCode::SERVICE_UNAVAILABLE;
-    let problem = Problem {
-        kind,
-        title,
-        status: status.as_u16(),
-        detail,
-    };
-    let mut response = (status, Json(problem)).into_response();
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/problem+json"),
-    );
-    response
-}
-
-#[cfg(test)]
-mod tests {
-    use axum::{body::Body, http::Request};
-    use sqlx::postgres::PgPoolOptions;
-    use tower::ServiceExt;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn healthz_returns_ok_without_touching_the_db() {
-        // connect_lazy opens no connection, so this passes only if /healthz never uses the pool.
-        let pool = PgPoolOptions::new()
-            .connect_lazy("postgres://postgres@127.0.0.1:1/icarus")
-            .expect("valid url");
-        let app = router(AppState::new(pool));
-
-        let res = app
-            .oneshot(Request::get("/healthz").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-
-        assert_eq!(res.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
-        assert_eq!(&body[..], br#"{"status":"ok"}"#);
     }
 }

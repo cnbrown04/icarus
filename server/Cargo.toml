@@ -16,9 +16,16 @@ icarus-push = { path = "crates/icarus-push" }
 
 # External crates (pinned to the versions verified on crates.io, 2026-10-08)
 anyhow = "1.0.104"
+argon2 = "0.6.0"
 axum = "0.8.9"
+base64 = "0.22.1"
+chrono = { version = "0.4.45", features = ["serde"] }
+getrandom = "0.3"
+http-body-util = "0.1.5"
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+sha2 = "0.10.9"
 sqlx = { version = "0.8.6", features = [
     "runtime-tokio",
     "tls-rustls",
@@ -27,6 +34,7 @@ sqlx = { version = "0.8.6", features = [
     "migrate",
     "uuid",
     "chrono",
+    "json",
 ] }
 thiserror = "2.0.21"
 tokio = { version = "1.53.2", features = ["full"] }
@@ -36,6 +44,9 @@ tower-http = { version = "0.7.1", features = [
     "request-id",
     "timeout",
     "compression-gzip",
+    "decompression-gzip",
+    "fs",
 ] }
+uuid = { version = "1.27.0", features = ["v7", "serde"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
