@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "e2e": "playwright test",
+    "e2e:real": "playwright test --config playwright.integration.config.ts",
     "lyra:check": "node scripts/lyra-lock.mjs check",
     "lyra:lock": "node scripts/lyra-lock.mjs write"
   },
