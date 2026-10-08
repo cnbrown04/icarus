@@ -3,6 +3,7 @@
 //! Serde shapes here are the wire format. Keep them in step with `shared/api-contract.md`.
 
 pub mod alarm;
+pub mod metrics;
 pub mod model;
 pub mod time;
 

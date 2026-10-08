@@ -6,6 +6,8 @@ publish.workspace = true
 
 [dependencies]
 chrono.workspace = true
+chrono-tz = "=0.10.4"
+libm = "=0.2.16"
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
