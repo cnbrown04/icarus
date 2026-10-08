@@ -1,31 +1,65 @@
-const field = 'w-full border border-neutral-500 bg-white px-2 py-2 dark:border-neutral-400 dark:bg-neutral-950'
-const focus = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 dark:focus-visible:outline-neutral-100'
+import { useNavigate } from '@tanstack/react-router'
+import { useQueryClient } from '@tanstack/react-query'
+import { useState, type FormEvent } from 'react'
+import { ErrorLine } from '@/components/error-line'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { describeError } from '@/lib/errors'
+import { useLogin } from '@/lib/queries'
 
 export function LoginPage() {
+  const login = useLogin()
+  const navigate = useNavigate()
+  const client = useQueryClient()
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    login.mutate(
+      { email, password },
+      {
+        onSuccess: () => {
+          void client.invalidateQueries()
+          void navigate({ to: '/' })
+        },
+      },
+    )
+  }
+
   return (
     <main className="mx-auto flex min-h-svh max-w-sm flex-col justify-center gap-6 p-4 md:p-6">
       <h1 className="text-base font-medium">Sign in</h1>
-      <form className="flex flex-col gap-6" onSubmit={(event) => event.preventDefault()}>
-        <div className="flex flex-col items-start gap-2">
-          <label htmlFor="email">Email</label>
-          <input id="email" name="email" type="email" autoComplete="email" className={`${field} ${focus}`} />
+      <form className="flex flex-col gap-6" onSubmit={onSubmit} noValidate>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="email">Email</Label>
+          <Input
+            id="email"
+            name="email"
+            type="email"
+            autoComplete="email"
+            required
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
         </div>
-        <div className="flex flex-col items-start gap-2">
-          <label htmlFor="password">Password</label>
-          <input
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="password">Password</Label>
+          <Input
             id="password"
             name="password"
             type="password"
             autoComplete="current-password"
-            className={`${field} ${focus}`}
+            required
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
           />
         </div>
-        <button
-          type="submit"
-          className={`self-start bg-neutral-900 px-4 py-2 text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300 ${focus}`}
-        >
+        {login.isError && <ErrorLine message={describeError(login.error, 'login')} />}
+        <Button type="submit" className="self-start" disabled={login.isPending}>
           Sign in
-        </button>
+        </Button>
       </form>
     </main>
   )

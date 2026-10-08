@@ -10,6 +10,7 @@ const routes = [
   { path: '/stress', slug: 'stress' },
   { path: '/calories', slug: 'calories' },
   { path: '/history', slug: 'history' },
+  { path: '/history/2026-10-07', slug: 'history-day' },
   { path: '/alarms', slug: 'alarms' },
   { path: '/webhooks', slug: 'webhooks' },
   { path: '/devices', slug: 'devices' },
@@ -51,7 +52,10 @@ for (const route of routes) {
         const results = await new AxeBuilder({ page }).analyze()
         const blocking = results.violations
           .filter((violation) => violation.impact === 'serious' || violation.impact === 'critical')
-          .map((violation) => `${violation.id} (${violation.impact}): ${violation.help}`)
+          .map(
+            (violation) =>
+              `${violation.id} (${violation.impact}): ${violation.help} [${violation.nodes.map((node) => node.target.join(' ')).join(' | ')}]`,
+          )
         expect(blocking).toEqual([])
 
         // Only one screenshot size is kept: 1920x1080, light (Caleb's request, 2026-10-08).

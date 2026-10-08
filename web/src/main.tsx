@@ -12,15 +12,24 @@ if (!rootElement) {
   throw new Error('Missing #root element')
 }
 
+// The screenshot build (VITE_MSW=1) serves fixtures through a service worker. Production never loads it.
+async function enableMocking() {
+  if (import.meta.env.VITE_MSW !== '1') return
+  const { worker } = await import('./mocks/browser')
+  await worker.start({ onUnhandledRequest: 'bypass', quiet: true })
+}
+
 followSystemColorScheme()
 
 const queryClient = createAppQueryClient()
 const router = createAppRouter()
 
-createRoot(rootElement).render(
-  <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
-  </StrictMode>,
-)
+void enableMocking().then(() => {
+  createRoot(rootElement).render(
+    <StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </StrictMode>,
+  )
+})
