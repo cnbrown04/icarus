@@ -12,7 +12,7 @@ import Foundation
 ///
 /// Connection rules live in `ConnectionStateMachine`. This class only turns its effects into
 /// CoreBluetooth calls and turns CoreBluetooth callbacks into machine inputs.
-public final class CoreBluetoothTransport: NSObject, BandTransport, @unchecked Sendable {
+public final class CoreBluetoothTransport: NSObject, BandTransport, CBCentralManagerDelegate, CBPeripheralDelegate, @unchecked Sendable {
     public let events: AsyncStream<BandEvent>
 
     static let restoreIdentifier = "icarus.central"
