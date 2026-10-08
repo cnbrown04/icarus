@@ -68,13 +68,19 @@ struct FormatTests {
 
 struct HRPointAveragingTests {
     @Test func averagesEachBucketAndKeepsOrder() {
-        let points = [60.0, 62, 64, 70, 72].enumerated().map { index, bpm in
+        let values: [Double] = [60, 62, 64, 70, 72]
+        let points: [HRPoint] = values.enumerated().map { index, bpm in
             HRPoint(date: Date(timeIntervalSince1970: 1_000 + Double(index) * 6), bpm: bpm)
         }
         // 15 s buckets start at multiples of 15: 990 holds 1000; 1005 holds 1006, 1012, 1018; 1020 holds 1024.
         let averaged = HRPoint.averaged(points, bucket: 15)
-        #expect(averaged.map(\.bpm) == [60, (62.0 + 64 + 70) / 3, 72])
-        #expect(averaged.map(\.date.timeIntervalSince1970) == [990, 1005, 1020])
+        let middle: Double = (62.0 + 64.0 + 70.0) / 3.0
+        let expectedBPM: [Double] = [60.0, middle, 72.0]
+        let expectedStarts: [Double] = [990.0, 1005.0, 1020.0]
+        let bpm: [Double] = averaged.map(\.bpm)
+        let starts: [Double] = averaged.map { $0.date.timeIntervalSince1970 }
+        #expect(bpm == expectedBPM)
+        #expect(starts == expectedStarts)
     }
 
     @Test func emptyInputStaysEmpty() {
