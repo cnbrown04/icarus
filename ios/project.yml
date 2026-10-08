@@ -90,6 +90,7 @@ targets:
     dependencies:
       - target: Icarus
       - package: Store
+      - package: Metrics
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cnbrown04.icarus.tests
