@@ -131,10 +131,16 @@ jobs:
         run: |
           SUBJECT=$(git log -1 --format=%s "$GITHUB_SHA")
           PHASE=$(echo "$SUBJECT" | sed -nE 's/^phase-([0-9]+).*/phase-\1/p')
-          echo "SHOT_DIR=screenshots/${PHASE:-latest}" >> "$GITHUB_ENV"
-          echo "Screenshot folder: screenshots/${PHASE:-latest}"
+          # Only phase commits (subject "phase-N: ...") get a committed set; artifacts always exist.
+          if [ -n "$PHASE" ]; then
+            echo "SHOT_DIR=screenshots/$PHASE" >> "$GITHUB_ENV"
+            echo "Screenshot folder: screenshots/$PHASE"
+          else
+            echo "No phase prefix in the commit subject; screenshots stay in the artifact only"
+          fi
 
       - name: Commit screenshots to repo
+        if: env.SHOT_DIR != ''
         env:
           BRANCH: ${{ github.ref_name }}
         run: |
