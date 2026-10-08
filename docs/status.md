@@ -1,7 +1,12 @@
 # Build status
 
 Branch: `claude/phase-0-scaffolding`. Last updated 2026-10-08 (UTC).
-Screenshots from CI are committed per phase under `screenshots/phase-N/{ios,web}`.
+Screenshots from CI are committed per phase under `screenshots/phase-N/{ios,web}`. The latest iOS set (after the UI
+overhaul and polish) is `screenshots/phase-8/ios`; the latest web set is `screenshots/phase-8/web`.
+
+CI at 2026-10-08 08:30 UTC: iOS build, unit and UI tests (Xcode 26.6, iPhone 17 Pro Max), Swift packages on Linux
+(6 packages), server (138 tests on Postgres 17), web (unit, Playwright, real-server end-to-end), Docker image and
+secrets scan are green.
 
 ## Phases
 
@@ -39,5 +44,5 @@ Screenshots from CI are committed per phase under `screenshots/phase-N/{ios,web}
 - Whether `0x2A37` streams with HR Broadcast off, and whether it carries R-R on your firmware (§5.5).
 - iOS bonding of the custom service, haptic preset ids beyond 2, response seq echo.
 - `NSData.compressed(using: .zlib)` producing raw DEFLATE for gzip uploads.
-- AlarmKit and remote-notification APIs until the macOS build passes with them.
+- AlarmKit and remote-notification behaviour on a real device (they compile on Xcode 26.6; AlarmKit scheduling needs iOS 26.1, older versions fall back to notifications).
 - WHOOP profile, revoke and collection paths.
