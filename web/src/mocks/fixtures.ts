@@ -12,7 +12,13 @@ import type {
   Me,
   MinuteMetric,
   SyncBatch,
-} from '@/lib/types'
+  WhoopStatus,
+  WhoopSummary,
+} from '../lib/types'
+
+// The one clock for fixtures, MSW handlers, Vitest (setup.ts) and Playwright (page.clock.setFixedTime).
+// Every "now" in the mocks comes from here, so screenshots and tests do not move with the real date.
+export const MOCK_NOW = Date.parse('2026-10-07T19:30:00Z')
 
 export const FIXTURE_TZ = 'America/Chicago'
 // Fixtures are generated at a fixed UTC-5 offset (Central daylight time). Good for October 2026 only; the
@@ -25,7 +31,7 @@ const RECORDING_START = Date.UTC(2026, 7, 20, 5)
 
 export const USER: Me = {
   id: '0196a7c2-3f1e-7d4a-9b1e-5c2f8a6d1e01',
-  email: 'caleb@example.com',
+  email: 'owner@example.com',
   tz: FIXTURE_TZ,
   formula_sex: 'male',
   birth_year: 1995,
@@ -206,7 +212,7 @@ export function devicesFor(now: number): Device[] {
   return [
   {
     id: PHONE_ID,
-    name: "Caleb's iPhone",
+    name: 'iPhone 17 Pro Max',
     model: 'iPhone 17 Pro Max',
     os_version: '26.0',
     app_version: '0.4.0',
@@ -311,25 +317,160 @@ export const HOOKS: Hook[] = [
   },
 ]
 
-export function deliveriesFor(hookId: string, now: number): HookDelivery[] {
-  const dispatch = (index: number): Dispatch => ({
-    id: `0196a7c2-3f1e-7d4a-9b1e-5c2f8a6e00${index}0`,
+export const FRONT_DOOR_ID = HOOKS[0].id
+
+export const DELIVERY_PAGE_SIZE = 10
+const DELIVERY_COUNT = 26
+
+// One delivery per index, cycling through the outcomes the log has to show (PLAN.md §9.3).
+function deliveryAt(hookId: string, index: number, now: number): HookDelivery {
+  const receivedAt = new Date(now - (index + 1) * 40 * MINUTE).toISOString()
+  const dispatch = (overrides: Partial<Dispatch>): Dispatch => ({
+    id: mockId(100 + index),
     alarm_id: ALARMS[2].id,
     delivery_id: null,
-    created_at: new Date(now - index * 3_600_000).toISOString(),
+    created_at: receivedAt,
     attempts: 1,
-    phone_status: 'ok',
-    band_status: null,
-    acked_at: new Date(now - index * 3_600_000 + 2000).toISOString(),
+    phone_status: 'shown',
+    band_status: 'ok',
+    acked_at: receivedAt,
     status: 'acked',
     message: 'Front door opened',
     rhythm: 'long',
+    ...overrides,
   })
+  const id = `${hookId}-${index}`
+  switch (index % 6) {
+    case 0:
+      return { id, received_at: receivedAt, status: 'accepted', signature_valid: true, dispatch: dispatch({}) }
+    case 1:
+      return {
+        id,
+        received_at: receivedAt,
+        status: 'accepted',
+        signature_valid: true,
+        dispatch: dispatch({ band_status: 'not_connected' }),
+      }
+    case 2:
+      return { id, received_at: receivedAt, status: 'rate_limited', signature_valid: true, dispatch: null }
+    case 3:
+      return {
+        id,
+        received_at: receivedAt,
+        status: 'accepted',
+        signature_valid: true,
+        dispatch: dispatch({ phone_status: null, band_status: null, acked_at: null, status: 'unacked', attempts: 3 }),
+      }
+    case 4:
+      return { id, received_at: receivedAt, status: 'rejected', signature_valid: false, dispatch: null }
+    default:
+      return { id, received_at: receivedAt, status: 'duplicate', signature_valid: true, dispatch: dispatch({}) }
+  }
+}
+
+// Cursor pages over the fixture log. The cursor is the index of the next delivery; Load more follows next_cursor.
+export function deliveryPage(hookId: string, cursor: string | null, now: number) {
+  const start = cursor === null ? 0 : Number(cursor)
+  const end = Math.min(start + DELIVERY_PAGE_SIZE, DELIVERY_COUNT)
+  const deliveries = Array.from({ length: end - start }, (_, offset) => deliveryAt(hookId, start + offset, now))
+  return { deliveries, next_cursor: end < DELIVERY_COUNT ? String(end) : null }
+}
+
+// Mock ids are UUID-shaped and counted, so the same sequence of actions gives the same ids on every run.
+export function mockId(seq: number): string {
+  return `0196a7c2-3f1e-7d4a-9b1e-${seq.toString(16).padStart(12, '0')}`
+}
+
+const HOUR = 60 * MINUTE
+
+export function dispatchesFor(now: number): Dispatch[] {
   return [
-    { id: `${hookId}-d1`, received_at: new Date(now - 3_600_000).toISOString(), status: 'accepted', signature_valid: true, dispatch: dispatch(1) },
-    { id: `${hookId}-d2`, received_at: new Date(now - 7_200_000).toISOString(), status: 'rate_limited', signature_valid: true, dispatch: null },
-    { id: `${hookId}-d3`, received_at: new Date(now - 9_000_000).toISOString(), status: 'rejected', signature_valid: false, dispatch: null },
+    {
+      id: mockId(1),
+      alarm_id: ALARMS[0].id,
+      delivery_id: null,
+      created_at: new Date(Date.parse('2026-10-07T11:30:00Z')).toISOString(),
+      attempts: 1,
+      phone_status: 'shown',
+      band_status: 'ok',
+      acked_at: '2026-10-07T11:30:04Z',
+      status: 'acked',
+      message: null,
+      rhythm: 'double',
+    },
+    {
+      id: mockId(2),
+      alarm_id: ALARMS[2].id,
+      delivery_id: null,
+      created_at: new Date(now - 22 * HOUR).toISOString(),
+      attempts: 1,
+      phone_status: 'shown',
+      band_status: null,
+      acked_at: new Date(now - 22 * HOUR + 2_000).toISOString(),
+      status: 'acked',
+      message: 'Front door opened',
+      rhythm: 'long',
+    },
+    {
+      id: mockId(3),
+      alarm_id: ALARMS[0].id,
+      delivery_id: null,
+      created_at: '2026-10-06T11:30:00Z',
+      attempts: 1,
+      phone_status: 'shown',
+      band_status: 'not_connected',
+      acked_at: '2026-10-06T11:30:03Z',
+      status: 'acked',
+      message: null,
+      rhythm: 'double',
+    },
+    {
+      id: mockId(4),
+      alarm_id: ALARMS[2].id,
+      delivery_id: null,
+      created_at: '2026-10-05T16:02:00Z',
+      attempts: 3,
+      phone_status: null,
+      band_status: null,
+      acked_at: null,
+      status: 'unacked',
+      message: 'Front door opened',
+      rhythm: 'long',
+    },
+    {
+      id: mockId(5),
+      alarm_id: ALARMS[0].id,
+      delivery_id: null,
+      created_at: '2026-10-04T09:00:00Z',
+      attempts: 1,
+      phone_status: 'shown',
+      band_status: 'disabled',
+      acked_at: '2026-10-04T09:00:02Z',
+      status: 'acked',
+      message: null,
+      rhythm: 'double',
+    },
   ]
+}
+
+export const WHOOP_SCOPES = ['read:recovery', 'read:cycles', 'read:sleep']
+
+export function whoopStatusFor(connected: boolean, now: number): WhoopStatus {
+  return {
+    connected,
+    scopes: connected ? WHOOP_SCOPES : [],
+    connected_at: connected ? '2026-09-14T18:02:00Z' : null,
+    last_webhook_at: connected ? new Date(now - 2 * HOUR).toISOString() : null,
+  }
+}
+
+export const WHOOP_SUMMARY: WhoopSummary = {
+  recovery_score: 62,
+  hrv_rmssd_milli: 48,
+  resting_heart_rate: 54,
+  strain: 11.4,
+  kilojoule: 6120,
+  sleep_performance: 88,
 }
 
 export function syncBatches(now: number): SyncBatch[] {

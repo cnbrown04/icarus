@@ -3,26 +3,16 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  lazyRouteComponent,
   Outlet,
+  type RouteComponent,
   type RouterHistory,
 } from '@tanstack/react-router'
-import type { ReactNode } from 'react'
 import { AppLayout } from '@/components/app-layout'
 import { Toaster } from '@/components/ui/sonner'
 import { ApiError } from '@/lib/api'
-import { AlarmsPage } from '@/pages/alarms-page'
-import { CaloriesPage } from '@/pages/calories-page'
-import { DevicesPage } from '@/pages/devices-page'
-import { HeartRatePage } from '@/pages/heart-rate-page'
-import { HistoryDayPage } from '@/pages/history-day-page'
-import { HistoryPage } from '@/pages/history-page'
 import { LoginPage } from '@/pages/login-page'
 import { NotFoundPage } from '@/pages/not-found-page'
-import { SettingsPage } from '@/pages/settings-page'
-import { StressPage } from '@/pages/stress-page'
-import { SyncPage } from '@/pages/sync-page'
-import { TodayPage } from '@/pages/today-page'
-import { WebhooksPage } from '@/pages/webhooks-page'
 
 declare module '@tanstack/react-router' {
   interface StaticDataRouteOption {
@@ -55,7 +45,8 @@ const appRoute = createRoute({
   component: AppLayout,
 })
 
-const appPage = <TPath extends string>(path: TPath, title: string, component: () => ReactNode) =>
+// Pages load on first visit, so the entry bundle carries only the shell (PLAN.md §13.1, bundle budget 500 kB).
+const appPage = <TPath extends string>(path: TPath, title: string, component: RouteComponent) =>
   createRoute({
     getParentRoute: () => appRoute,
     path,
@@ -66,18 +57,29 @@ const appPage = <TPath extends string>(path: TPath, title: string, component: ()
 const routeTree = rootRoute.addChildren([
   loginRoute,
   appRoute.addChildren([
-    appPage('/', 'Today', TodayPage),
-    appPage('/heart-rate', 'Heart rate', HeartRatePage),
-    appPage('/stress', 'Stress', StressPage),
-    appPage('/calories', 'Calories', CaloriesPage),
-    appPage('/history', 'History', HistoryPage),
+    appPage('/', 'Today', lazyRouteComponent(() => import('@/pages/today-page'), 'TodayPage')),
+    appPage('/heart-rate', 'Heart rate', lazyRouteComponent(() => import('@/pages/heart-rate-page'), 'HeartRatePage')),
+    appPage('/stress', 'Stress', lazyRouteComponent(() => import('@/pages/stress-page'), 'StressPage')),
+    appPage('/calories', 'Calories', lazyRouteComponent(() => import('@/pages/calories-page'), 'CaloriesPage')),
+    appPage('/history', 'History', lazyRouteComponent(() => import('@/pages/history-page'), 'HistoryPage')),
     // The title is the date; see AppLayout.
-    createRoute({ getParentRoute: () => appRoute, path: '/history/$day', component: HistoryDayPage }),
-    appPage('/alarms', 'Alarms', AlarmsPage),
-    appPage('/webhooks', 'Webhooks', WebhooksPage),
-    appPage('/devices', 'Devices', DevicesPage),
-    appPage('/sync', 'Sync', SyncPage),
-    appPage('/settings', 'Settings', SettingsPage),
+    createRoute({
+      getParentRoute: () => appRoute,
+      path: '/history/$day',
+      component: lazyRouteComponent(() => import('@/pages/history-day-page'), 'HistoryDayPage'),
+    }),
+    appPage('/alarms', 'Alarms', lazyRouteComponent(() => import('@/pages/alarms-page'), 'AlarmsPage')),
+    appPage('/webhooks', 'Webhooks', lazyRouteComponent(() => import('@/pages/webhooks-page'), 'WebhooksPage')),
+    createRoute({
+      getParentRoute: () => appRoute,
+      path: '/webhooks/$hookId',
+      component: lazyRouteComponent(() => import('@/pages/webhook-deliveries-page'), 'WebhookDeliveriesPage'),
+      staticData: { title: 'Webhook deliveries' },
+    }),
+    appPage('/devices', 'Devices', lazyRouteComponent(() => import('@/pages/devices-page'), 'DevicesPage')),
+    appPage('/sync', 'Sync', lazyRouteComponent(() => import('@/pages/sync-page'), 'SyncPage')),
+    appPage('/settings', 'Settings', lazyRouteComponent(() => import('@/pages/settings-page'), 'SettingsPage')),
+    appPage('/integrations/whoop', 'WHOOP', lazyRouteComponent(() => import('@/pages/whoop-page'), 'WhoopPage')),
     appPage('$', 'Not found', NotFoundPage),
   ]),
 ])

@@ -17,7 +17,7 @@ describe('login page', () => {
     renderAt('/login')
     await screen.findByRole('heading', { level: 1, name: 'Sign in' })
 
-    fill('caleb@example.com', 'wrong')
+    fill('owner@example.com', 'wrong')
 
     expect((await screen.findByRole('alert')).textContent).toBe('Email or password is incorrect.')
     expect(screen.getByRole('heading', { level: 1, name: 'Sign in' })).toBeTruthy()
@@ -35,7 +35,7 @@ describe('login page', () => {
     renderAt('/login')
     await screen.findByRole('heading', { level: 1, name: 'Sign in' })
 
-    fill('caleb@example.com', 'anything')
+    fill('owner@example.com', 'anything')
 
     expect((await screen.findByRole('alert')).textContent).toBe('Too many attempts. Wait a minute and try again.')
   })
@@ -44,7 +44,7 @@ describe('login page', () => {
     const { router } = renderAt('/login')
     await screen.findByRole('heading', { level: 1, name: 'Sign in' })
 
-    fill('caleb@example.com', 'correct-password')
+    fill('owner@example.com', 'correct-password')
 
     await waitFor(() => expect(router.state.location.pathname).toBe('/'))
   })

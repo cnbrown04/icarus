@@ -10,8 +10,16 @@ describe('app shell', () => {
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Alarms' })).toBeTruthy()
     expect(screen.getByRole('navigation', { name: 'Primary' })).toBeTruthy()
-    expect(await screen.findByText('Wake up')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'New alarm' })).toBeNull()
+    expect((await screen.findAllByRole('cell', { name: 'Wake up' })).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: 'New alarm' })).toBeTruthy()
+  })
+
+  it('lists WHOOP below Settings in the sidebar', async () => {
+    renderAt('/settings')
+
+    const nav = await screen.findByRole('navigation', { name: 'Primary' })
+    const labels = Array.from(nav.querySelectorAll('a'), (link) => link.textContent?.trim())
+    expect(labels.slice(-2)).toEqual(['Settings', 'WHOOP'])
   })
 
   it('shows the not-found page for an unknown address', async () => {

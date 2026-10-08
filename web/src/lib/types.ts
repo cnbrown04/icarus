@@ -204,6 +204,57 @@ export type HookDeliveriesResponse = {
   next_cursor: string | null
 }
 
+export type AlarmInput = {
+  id?: Uuid
+  kind: Alarm['kind']
+  label: string
+  schedule: Schedule | null
+  rhythm: Rhythm
+  channels: AlarmChannel[]
+  enabled: boolean
+}
+
+export type AlarmTest = {
+  dispatch_id: Uuid
+}
+
+export type AlarmDispatchesResponse = {
+  dispatches: Dispatch[]
+}
+
+export type HookCreate = {
+  label: string
+  alarm_id: Uuid | null
+  auth_mode: Hook['auth_mode']
+  rate_limit_per_min: number
+}
+
+export type HookUpdate = Partial<Pick<Hook, 'label' | 'alarm_id' | 'enabled' | 'rate_limit_per_min'>>
+
+// The secret is returned once, on create and on rotate. The list never carries it.
+export type CreatedHook = Hook & { secret: string }
+
+export type RotatedSecret = {
+  secret: string
+}
+
+export type WhoopStatus = {
+  connected: boolean
+  scopes: string[]
+  connected_at: string | null
+  last_webhook_at: string | null
+}
+
+// Live-fetched from WHOOP on each request; the server stores none of it (PLAN.md §6.3).
+export type WhoopSummary = {
+  recovery_score: number | null
+  hrv_rmssd_milli: number | null
+  resting_heart_rate: number | null
+  strain: number | null
+  kilojoule: number | null
+  sleep_performance: number | null
+}
+
 // RFC 9457 problem document. `current` is present on 409 conflicts.
 export type Problem = {
   type: string

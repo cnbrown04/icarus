@@ -1,20 +1,31 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
 import { toRfc3339 } from './time'
 import type {
   Alarm,
+  AlarmDispatchesResponse,
+  AlarmInput,
   AlarmsResponse,
+  AlarmTest,
+  CreatedHook,
   DailyResponse,
   DevicesResponse,
+  HookCreate,
+  HookDeliveriesResponse,
+  HookUpdate,
   HooksResponse,
   HrResolution,
   HrResponse,
+  Hook,
   LiveHr,
   Me,
   MeUpdate,
   MinutesResponse,
   PairingCode,
+  RotatedSecret,
   SyncState,
+  WhoopStatus,
+  WhoopSummary,
 } from './types'
 
 // Live values refresh on this cadence; the age label reads the timestamp, not the poll.
@@ -29,7 +40,11 @@ export const queryKeys = {
   devices: ['devices'] as const,
   syncState: ['sync', 'state'] as const,
   alarms: ['alarms'] as const,
+  alarmDispatches: ['alarm-dispatches'] as const,
   hooks: ['hooks'] as const,
+  deliveries: (hookId: string) => ['hooks', hookId, 'deliveries'] as const,
+  whoop: ['integrations', 'whoop'] as const,
+  whoopSummary: (day: string) => ['integrations', 'whoop', 'summary', day] as const,
 }
 
 type Range = { from: Date; to: Date }
@@ -155,5 +170,113 @@ export function useDeleteAccount() {
   return useMutation({
     mutationFn: (confirm: string) => api.delete('/v1/me', { confirm }),
     onSuccess: () => client.clear(),
+  })
+}
+
+// Alarm and webhook writes send If-Match with the version the editor loaded (contract: Conventions).
+export function useCreateAlarm() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (input: AlarmInput) => api.post<Alarm>('/v1/alarms', input),
+    onSettled: () => client.invalidateQueries({ queryKey: queryKeys.alarms }),
+  })
+}
+
+export function useUpdateAlarm() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, changes, version }: { id: string; changes: Partial<Omit<AlarmInput, 'id'>>; version: number }) =>
+      api.patch<Alarm>(`/v1/alarms/${id}`, changes, version),
+    onSettled: () => client.invalidateQueries({ queryKey: queryKeys.alarms }),
+  })
+}
+
+export function useDeleteAlarm() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, version }: { id: string; version: number }) => api.delete(`/v1/alarms/${id}`, undefined, version),
+    onSettled: () => client.invalidateQueries({ queryKey: queryKeys.alarms }),
+  })
+}
+
+export function useTestAlarm() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.post<AlarmTest>(`/v1/alarms/${id}/test`),
+    onSettled: () => client.invalidateQueries({ queryKey: queryKeys.alarmDispatches }),
+  })
+}
+
+export function useDispatches() {
+  return useQuery({
+    queryKey: queryKeys.alarmDispatches,
+    queryFn: () => api.get<AlarmDispatchesResponse>('/v1/alarm-dispatches', { limit: 50 }),
+    select: (data) => data.dispatches,
+  })
+}
+
+export function useCreateHook() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (input: HookCreate) => api.post<CreatedHook>('/v1/hooks', input),
+    onSettled: () => client.invalidateQueries({ queryKey: queryKeys.hooks }),
+  })
+}
+
+export function useUpdateHook() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, changes, version }: { id: string; changes: HookUpdate; version: number }) =>
+      api.patch<Hook>(`/v1/hooks/${id}`, changes, version),
+    onSettled: () => client.invalidateQueries({ queryKey: queryKeys.hooks }),
+  })
+}
+
+export function useDeleteHook() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/v1/hooks/${id}`),
+    onSettled: () => client.invalidateQueries({ queryKey: queryKeys.hooks }),
+  })
+}
+
+export function useRotateHook() {
+  return useMutation({
+    mutationFn: (id: string) => api.post<RotatedSecret>(`/v1/hooks/${id}/rotate-secret`),
+  })
+}
+
+export function useHookDeliveries(hookId: string) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.deliveries(hookId),
+    queryFn: ({ pageParam }) =>
+      api.get<HookDeliveriesResponse>(`/v1/hooks/${encodeURIComponent(hookId)}/deliveries`, { cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
+  })
+}
+
+// Live-fetched WHOOP values are refetched on every visit; nothing is cached across sessions.
+export function useWhoopStatus() {
+  return useQuery({
+    queryKey: queryKeys.whoop,
+    queryFn: () => api.get<WhoopStatus>('/v1/integrations/whoop'),
+  })
+}
+
+export function useWhoopSummary(day: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.whoopSummary(day),
+    queryFn: () => api.get<WhoopSummary>('/v1/integrations/whoop/summary', { day }),
+    enabled,
+    staleTime: 0,
+  })
+}
+
+export function useDisconnectWhoop() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.delete('/v1/integrations/whoop'),
+    onSettled: () => client.invalidateQueries({ queryKey: queryKeys.whoop }),
   })
 }

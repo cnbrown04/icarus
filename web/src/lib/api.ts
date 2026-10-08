@@ -102,5 +102,5 @@ export const api = {
   post: <T>(path: string, body?: unknown, options?: Omit<RequestOptions, 'body'>) =>
     request<T>('POST', path, { ...options, body }),
   patch: <T>(path: string, body: unknown, ifMatch?: number) => request<T>('PATCH', path, { body, ifMatch }),
-  delete: <T = void>(path: string, body?: unknown) => request<T>('DELETE', path, { body }),
+  delete: <T = void>(path: string, body?: unknown, ifMatch?: number) => request<T>('DELETE', path, { body, ifMatch }),
 }

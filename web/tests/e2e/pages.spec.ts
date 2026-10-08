@@ -1,7 +1,5 @@
-import { mkdirSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
+import { blockingViolations, FIXED_NOW, screenshotDir } from './support'
 
 const routes = [
   { path: '/login', slug: 'login' },
@@ -13,9 +11,12 @@ const routes = [
   { path: '/history/2026-10-07', slug: 'history-day' },
   { path: '/alarms', slug: 'alarms' },
   { path: '/webhooks', slug: 'webhooks' },
+  // The front door endpoint in the fixtures (mocks/fixtures.ts HOOKS[0]).
+  { path: '/webhooks/0196a7c2-3f1e-7d4a-9b1e-5c2f8a6d1e40', slug: 'webhook-deliveries' },
   { path: '/devices', slug: 'devices' },
   { path: '/sync', slug: 'sync' },
   { path: '/settings', slug: 'settings' },
+  { path: '/integrations/whoop', slug: 'whoop' },
   { path: '/not-a-page', slug: 'not-found' },
 ] as const
 
@@ -26,13 +27,11 @@ const viewports = [
 
 const schemes = ['light', 'dark'] as const
 
-const screenshotDir = fileURLToPath(new URL('../../test-results/screenshots/', import.meta.url))
-mkdirSync(screenshotDir, { recursive: true })
-
 for (const route of routes) {
   for (const viewport of viewports) {
     for (const scheme of schemes) {
       test(`${route.path} at ${viewport.width}px, ${scheme}`, async ({ page }) => {
+        await page.clock.setFixedTime(FIXED_NOW)
         await page.setViewportSize(viewport)
         await page.emulateMedia({ colorScheme: scheme })
 
@@ -49,18 +48,11 @@ for (const route of routes) {
         )
         expect(horizontalOverflow).toBeLessThanOrEqual(0)
 
-        const results = await new AxeBuilder({ page }).analyze()
-        const blocking = results.violations
-          .filter((violation) => violation.impact === 'serious' || violation.impact === 'critical')
-          .map(
-            (violation) =>
-              `${violation.id} (${violation.impact}): ${violation.help} [${violation.nodes.map((node) => node.target.join(' ')).join(' | ')}]`,
-          )
-        expect(blocking).toEqual([])
+        expect(await blockingViolations(page)).toEqual([])
 
-        // Only one screenshot size is kept: 1920x1080, light (Caleb's request, 2026-10-08).
+        // Only one screenshot size is kept: 1920x1080, light.
         if (viewport.width === 1920 && scheme === 'light') {
-          await page.screenshot({ path: `${screenshotDir}${route.slug}.png` })
+          await page.screenshot({ path: `${screenshotDir}${route.slug}.png`, animations: 'disabled' })
         }
       })
     }

@@ -8,6 +8,7 @@ import {
   FireIcon,
   GearIcon,
   HeartIcon,
+  HeartbeatIcon,
   SignOutIcon,
   WaveformIcon,
   WebhooksLogoIcon,
@@ -42,6 +43,7 @@ const navItems: { to: string; label: string; icon: Icon }[] = [
   { to: '/devices', label: 'Devices', icon: DeviceMobileIcon },
   { to: '/sync', label: 'Sync', icon: ArrowsClockwiseIcon },
   { to: '/settings', label: 'Settings', icon: GearIcon },
+  { to: '/integrations/whoop', label: 'WHOOP', icon: HeartbeatIcon },
 ]
 
 function AppSidebar() {

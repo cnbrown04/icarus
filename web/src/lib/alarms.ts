@@ -1,4 +1,4 @@
-import type { Alarm, Rhythm } from './types'
+import type { Alarm, Dispatch, Rhythm } from './types'
 
 const WEEKDAY_SHORT = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const
 
@@ -34,4 +34,26 @@ export function describeRhythm(rhythm: Rhythm): string {
 export function describeChannels(channels: Alarm['channels']): string {
   if (channels.length === 0) return '—'
   return channels.map((channel) => (channel === 'phone' ? 'Phone' : 'Band')).join(', ')
+}
+
+export function describeKind(kind: Alarm['kind']): string {
+  return { scheduled: 'Scheduled', webhook: 'Webhook', relay: 'Relay' }[kind]
+}
+
+// Phone and band outcomes are shown as reported. "Sent" for the band means the command was accepted,
+// not that the band is known to have buzzed (PLAN.md §9.3, delivery honesty).
+export function describeDeliveryStatus(status: string | null): string {
+  if (status === null) return '—'
+  const labels: Record<string, string> = {
+    shown: 'Shown',
+    ok: 'Sent',
+    not_connected: 'Not connected',
+    disabled: 'Disabled',
+    failed: 'Failed',
+  }
+  return labels[status] ?? status.replace(/_/g, ' ')
+}
+
+export function describeDispatchStatus(status: Dispatch['status']): string {
+  return { pending: 'Pending', sent: 'Sent', acked: 'Acknowledged', unacked: 'Not acknowledged', failed: 'Failed' }[status]
 }

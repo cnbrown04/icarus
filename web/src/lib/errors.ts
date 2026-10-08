@@ -27,3 +27,8 @@ export function describeError(error: unknown, context: 'login' | 'generic' = 'ge
       return error.status >= 500 ? 'The server had a problem. Try again.' : 'Something went wrong. Try again.'
   }
 }
+
+// A 409 means the entity changed since it was loaded. Its body carries the current entity (contract: Conventions).
+export function isConflict(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 409
+}

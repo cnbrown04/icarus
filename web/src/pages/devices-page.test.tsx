@@ -27,14 +27,14 @@ describe('devices page', () => {
       }),
     )
     renderAt('/devices')
-    fireEvent.click(await screen.findByRole('button', { name: "Revoke Caleb's iPhone" }))
+    fireEvent.click(await screen.findByRole('button', { name: "Revoke iPhone 17 Pro Max" }))
 
-    expect(await screen.findByRole('heading', { name: "Revoke Caleb's iPhone?" })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: "Revoke iPhone 17 Pro Max?" })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
-    await waitFor(() => expect(screen.queryByRole('heading', { name: "Revoke Caleb's iPhone?" })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('heading', { name: "Revoke iPhone 17 Pro Max?" })).toBeNull())
     expect(revoked).toEqual([])
 
-    fireEvent.click(await screen.findByRole('button', { name: "Revoke Caleb's iPhone" }))
+    fireEvent.click(await screen.findByRole('button', { name: "Revoke iPhone 17 Pro Max" }))
     fireEvent.click(await screen.findByRole('button', { name: 'Revoke' }))
     await waitFor(() => expect(revoked).toEqual([PHONE_ID]))
   })

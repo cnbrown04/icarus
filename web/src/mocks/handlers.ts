@@ -5,22 +5,32 @@ import {
   bucketPoints,
   dailySummary,
   devicesFor,
-  deliveriesFor,
+  deliveryPage,
+  dispatchesFor,
+  FRONT_DOOR_ID,
   HOOKS,
+  mockId,
+  MOCK_NOW,
   minuteMetric,
   PHONE_ID,
   rawPoints,
   syncBatches,
   USER,
+  whoopStatusFor,
+  WHOOP_SUMMARY,
 } from './fixtures'
-import type { Alarm, Hook, Me, MeUpdate } from '@/lib/types'
+import type { Alarm, AlarmInput, CreatedHook, Dispatch, Hook, HookCreate, HookUpdate, Me, MeUpdate } from '@/lib/types'
 
 // In-memory state so writes made during a test or a screenshot session are visible to later reads.
+// `seq` numbers every id the mocks create, so the same actions always produce the same ids.
 type State = {
   me: Me
   alarms: Alarm[]
   hooks: Hook[]
+  dispatches: Dispatch[]
   revoked: Set<string>
+  whoopConnected: boolean
+  seq: number
 }
 
 export function createState(): State {
@@ -28,12 +38,19 @@ export function createState(): State {
     me: { ...USER },
     alarms: structuredClone(ALARMS),
     hooks: structuredClone(HOOKS),
+    dispatches: dispatchesFor(MOCK_NOW),
     revoked: new Set(),
+    whoopConnected: true,
+    seq: 1000,
   }
 }
 
 const MINUTE_MS = 60_000
 const HOUR_MS = 3_600_000
+const HOOK_ORIGIN = 'https://icarus.example.com'
+// Fixture secrets. They are not real credentials.
+const CREATED_SECRET = 'c2VjcmV0LWZpeHR1cmUtMzItYnl0ZXMtYmFzZTY0dXJs'
+const ROTATED_SECRET = 'cm90YXRlZC1maXh0dXJlLXNlY3JldC0zMi1ieXRlcw'
 
 // Day summaries for past days never change, so they are computed once.
 const dailyCache = new Map<string, ReturnType<typeof dailySummary>>()
@@ -69,6 +86,9 @@ function fakeQrSvg(code: string): string {
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
 
 export function createHandlers(state: State = createState()): HttpHandler[] {
+  const nextSeq = () => ++state.seq
+  const iso = (ms: number) => new Date(ms).toISOString()
+
   return [
     http.post('/v1/auth/login', async ({ request }) => {
       const body = (await request.json()) as { email?: string; password?: string }
@@ -105,28 +125,25 @@ export function createHandlers(state: State = createState()): HttpHandler[] {
 
     http.post('/v1/devices/pairing-codes', ({ request }) => {
       if (!csrfOk(request)) return problem(403, 'forbidden', 'Forbidden')
-      const code = Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) => CODE_ALPHABET[byte % CODE_ALPHABET.length]).join('')
+      const code = Array.from({ length: 8 }, (_, index) => CODE_ALPHABET[(state.seq * 7 + index * 13) % CODE_ALPHABET.length]).join('')
       return HttpResponse.json({
         code,
         qr_svg: fakeQrSvg(code),
-        expires_at: new Date(Date.now() + 10 * MINUTE_MS).toISOString(),
+        expires_at: iso(MOCK_NOW + 10 * MINUTE_MS),
       })
     }),
 
     http.get('/v1/devices', () => {
-      const now = Date.now()
-      const devices = devicesFor(now).map((device) =>
-        state.revoked.has(device.id) && device.revoked_at === null
-          ? { ...device, revoked_at: new Date(now).toISOString() }
-          : device,
+      const devices = devicesFor(MOCK_NOW).map((device) =>
+        state.revoked.has(device.id) && device.revoked_at === null ? { ...device, revoked_at: iso(MOCK_NOW) } : device,
       )
-      return HttpResponse.json({ devices, bands: bandsFor(now) })
+      return HttpResponse.json({ devices, bands: bandsFor(MOCK_NOW) })
     }),
 
     http.delete('/v1/devices/:id', ({ params, request }) => {
       if (!csrfOk(request)) return problem(403, 'forbidden', 'Forbidden')
       const id = String(params.id)
-      if (!devicesFor(Date.now()).some((device) => device.id === id)) {
+      if (!devicesFor(MOCK_NOW).some((device) => device.id === id)) {
         return problem(404, 'not-found', 'Not found')
       }
       state.revoked.add(id)
@@ -134,11 +151,10 @@ export function createHandlers(state: State = createState()): HttpHandler[] {
     }),
 
     http.get('/v1/metrics/live', () => {
-      const now = Date.now()
       // The live sample is the current minute's average, reported 20 s old so it is not yet stale.
-      const row = minuteMetric(Math.floor(now / MINUTE_MS) * MINUTE_MS)
+      const row = minuteMetric(Math.floor(MOCK_NOW / MINUTE_MS) * MINUTE_MS)
       if (!row || row.hr_avg === null) return HttpResponse.json({ bpm: null, ts: null })
-      return HttpResponse.json({ bpm: Math.round(row.hr_avg), ts: new Date(now - 20_000).toISOString() })
+      return HttpResponse.json({ bpm: Math.round(row.hr_avg), ts: iso(MOCK_NOW - 20_000) })
     }),
 
     http.get('/v1/metrics/hr', ({ request }) => {
@@ -181,27 +197,25 @@ export function createHandlers(state: State = createState()): HttpHandler[] {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDay) || !/^\d{4}-\d{2}-\d{2}$/.test(toDay)) {
         return problem(400, 'validation', 'Bad request', 'from and to must be YYYY-MM-DD.')
       }
-      const now = Date.now()
       const days: ReturnType<typeof dailySummary>[] = []
       for (let day = fromDay; day <= toDay; day = nextDay(day)) {
         const dayEnd = Date.parse(`${day}T05:00:00Z`) + 24 * HOUR_MS
         const cached = dailyCache.get(day)
-        if (cached && dayEnd <= now) {
+        if (cached && dayEnd <= MOCK_NOW) {
           days.push(cached)
           continue
         }
-        const summary = dailySummary(day, now)
-        if (dayEnd <= now) dailyCache.set(day, summary)
+        const summary = dailySummary(day, MOCK_NOW)
+        if (dayEnd <= MOCK_NOW) dailyCache.set(day, summary)
         days.push(summary)
       }
       return HttpResponse.json({ days })
     }),
 
     http.get('/v1/sync/state', () => {
-      const now = Date.now()
-      const batches = syncBatches(now)
+      const batches = syncBatches(MOCK_NOW)
       return HttpResponse.json({
-        server_time: new Date(now).toISOString(),
+        server_time: iso(MOCK_NOW),
         last_batch_at: batches[0]?.received_at ?? null,
         batches: batches.map((batch) => ({ ...batch, device_id: PHONE_ID })),
       })
@@ -211,12 +225,12 @@ export function createHandlers(state: State = createState()): HttpHandler[] {
 
     http.post('/v1/alarms', async ({ request }) => {
       if (!csrfOk(request)) return problem(403, 'forbidden', 'Forbidden')
-      const body = (await request.json()) as Omit<Alarm, 'version' | 'updated_at' | 'deleted_at'> & { id?: string }
+      const body = (await request.json()) as AlarmInput
       const alarm: Alarm = {
         ...body,
-        id: body.id ?? crypto.randomUUID(),
+        id: body.id ?? mockId(nextSeq()),
         version: 1,
-        updated_at: new Date().toISOString(),
+        updated_at: iso(MOCK_NOW),
         deleted_at: null,
       }
       state.alarms.push(alarm)
@@ -225,83 +239,139 @@ export function createHandlers(state: State = createState()): HttpHandler[] {
 
     http.patch('/v1/alarms/:id', async ({ params, request }) => {
       if (!csrfOk(request)) return problem(403, 'forbidden', 'Forbidden')
-      const alarm = state.alarms.find((item) => item.id === params.id)
+      const alarm = state.alarms.find((item) => item.id === params.id && !item.deleted_at)
       if (!alarm) return problem(404, 'not-found', 'Not found')
       const ifMatch = request.headers.get('If-Match')
-      if (ifMatch !== null && Number(ifMatch) !== alarm.version) {
+      if (ifMatch === null) return problem(428, 'validation', 'Precondition required', 'If-Match is required.')
+      if (Number(ifMatch) !== alarm.version) {
         return problem(409, 'conflict', 'Conflict', 'The alarm changed.', { current: alarm })
       }
-      Object.assign(alarm, await request.json(), { version: alarm.version + 1, updated_at: new Date().toISOString() })
+      Object.assign(alarm, await request.json(), { version: alarm.version + 1, updated_at: iso(MOCK_NOW) })
       return HttpResponse.json(alarm)
     }),
 
     http.delete('/v1/alarms/:id', ({ params, request }) => {
       if (!csrfOk(request)) return problem(403, 'forbidden', 'Forbidden')
-      const alarm = state.alarms.find((item) => item.id === params.id)
+      const alarm = state.alarms.find((item) => item.id === params.id && !item.deleted_at)
       if (!alarm) return problem(404, 'not-found', 'Not found')
-      alarm.deleted_at = new Date().toISOString()
+      const ifMatch = request.headers.get('If-Match')
+      if (ifMatch !== null && Number(ifMatch) !== alarm.version) {
+        return problem(409, 'conflict', 'Conflict', 'The alarm changed.', { current: alarm })
+      }
+      alarm.deleted_at = iso(MOCK_NOW)
       alarm.version += 1
       return new HttpResponse(null, { status: 204 })
     }),
 
     http.post('/v1/alarms/:id/test', ({ params, request }) => {
       if (!csrfOk(request)) return problem(403, 'forbidden', 'Forbidden')
-      return HttpResponse.json({ dispatch_id: `test-${String(params.id)}` }, { status: 202 })
+      const alarm = state.alarms.find((item) => item.id === params.id && !item.deleted_at)
+      if (!alarm) return problem(404, 'not-found', 'Not found')
+      const dispatchId = mockId(nextSeq())
+      state.dispatches.unshift({
+        id: dispatchId,
+        alarm_id: alarm.id,
+        delivery_id: null,
+        created_at: iso(MOCK_NOW),
+        attempts: 1,
+        phone_status: null,
+        band_status: null,
+        acked_at: null,
+        status: 'sent',
+        message: null,
+        rhythm: alarm.rhythm,
+      })
+      return HttpResponse.json({ dispatch_id: dispatchId }, { status: 202 })
     }),
 
-    http.get('/v1/alarm-dispatches', () => HttpResponse.json({ dispatches: [] })),
+    http.get('/v1/alarm-dispatches', ({ request }) => {
+      const limit = Number(new URL(request.url).searchParams.get('limit') ?? '50')
+      const dispatches = [...state.dispatches].sort((a, b) => b.created_at.localeCompare(a.created_at))
+      return HttpResponse.json({ dispatches: dispatches.slice(0, limit) })
+    }),
 
     http.get('/v1/hooks', () => HttpResponse.json({ hooks: state.hooks })),
 
     http.post('/v1/hooks', async ({ request }) => {
       if (!csrfOk(request)) return problem(403, 'forbidden', 'Forbidden')
-      const body = (await request.json()) as Pick<Hook, 'label' | 'alarm_id' | 'auth_mode'> & { rate_limit_per_min?: number }
-      const slug = crypto.randomUUID().slice(0, 6)
+      const body = (await request.json()) as HookCreate
+      const seq = nextSeq()
+      const slug = `h${seq.toString(36).padStart(5, '0')}`
+      const url = `${HOOK_ORIGIN}/v1/hooks/${slug}`
       const hook: Hook = {
-        id: crypto.randomUUID(),
+        id: mockId(seq),
         slug,
         label: body.label,
         alarm_id: body.alarm_id,
         auth_mode: body.auth_mode,
         rate_limit_per_min: body.rate_limit_per_min ?? 10,
         enabled: true,
-        url: `https://icarus.example.com/v1/hooks/${slug}`,
-        created_at: new Date().toISOString(),
+        // Contract: a secret URL carries its secret in `url` at creation. The list never does.
+        url: body.auth_mode === 'secret_url' ? `${url}/${CREATED_SECRET}` : url,
+        created_at: iso(MOCK_NOW),
         last_triggered_at: null,
         version: 1,
       }
-      state.hooks.push(hook)
-      return HttpResponse.json({ ...hook, secret: 'c2VjcmV0LWZpeHR1cmUtMzItYnl0ZXMtYmFzZTY0dXJs' }, { status: 201 })
+      state.hooks.push({ ...hook, url })
+      const created: CreatedHook = { ...hook, secret: CREATED_SECRET }
+      return HttpResponse.json(created, { status: 201 })
     }),
 
     http.patch('/v1/hooks/:id', async ({ params, request }) => {
       if (!csrfOk(request)) return problem(403, 'forbidden', 'Forbidden')
       const hook = state.hooks.find((item) => item.id === params.id)
       if (!hook) return problem(404, 'not-found', 'Not found')
-      Object.assign(hook, await request.json(), { version: hook.version + 1 })
+      const ifMatch = request.headers.get('If-Match')
+      if (ifMatch !== null && Number(ifMatch) !== hook.version) {
+        return problem(409, 'conflict', 'Conflict', 'The webhook changed.', { current: hook })
+      }
+      Object.assign(hook, (await request.json()) as HookUpdate, { version: hook.version + 1 })
       return HttpResponse.json(hook)
     }),
 
     http.delete('/v1/hooks/:id', ({ params, request }) => {
       if (!csrfOk(request)) return problem(403, 'forbidden', 'Forbidden')
+      if (!state.hooks.some((item) => item.id === params.id)) return problem(404, 'not-found', 'Not found')
       state.hooks = state.hooks.filter((item) => item.id !== params.id)
       return new HttpResponse(null, { status: 204 })
     }),
 
-    http.post('/v1/hooks/:id/rotate-secret', ({ request }) => {
+    http.post('/v1/hooks/:id/rotate-secret', ({ params, request }) => {
       if (!csrfOk(request)) return problem(403, 'forbidden', 'Forbidden')
-      return HttpResponse.json({ secret: 'cm90YXRlZC1maXh0dXJlLXNlY3JldC0zMi1ieXRlcw' })
+      const hook = state.hooks.find((item) => item.id === params.id)
+      if (!hook) return problem(404, 'not-found', 'Not found')
+      return HttpResponse.json({ secret: ROTATED_SECRET })
     }),
 
-    http.get('/v1/hooks/:id/deliveries', ({ params }) =>
-      HttpResponse.json({ deliveries: deliveriesFor(String(params.id), Date.now()), next_cursor: null }),
-    ),
+    http.get('/v1/hooks/:id/deliveries', ({ params, request }) => {
+      const hook = state.hooks.find((item) => item.id === params.id)
+      if (!hook) return problem(404, 'not-found', 'Not found')
+      const cursor = new URL(request.url).searchParams.get('cursor')
+      // Only the front door endpoint has a log in the fixtures; the others are empty.
+      if (hook.id !== FRONT_DOOR_ID) return HttpResponse.json({ deliveries: [], next_cursor: null })
+      return HttpResponse.json(deliveryPage(hook.id, cursor, MOCK_NOW))
+    }),
+
+    http.get('/v1/integrations/whoop', () => HttpResponse.json(whoopStatusFor(state.whoopConnected, MOCK_NOW))),
+
+    http.get('/v1/integrations/whoop/summary', ({ request }) => {
+      if (!state.whoopConnected) return problem(404, 'not-found', 'Not found', 'WHOOP is not connected.')
+      const day = new URL(request.url).searchParams.get('day') ?? ''
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return problem(400, 'validation', 'Bad request', 'day must be YYYY-MM-DD.')
+      return HttpResponse.json(WHOOP_SUMMARY)
+    }),
+
+    http.delete('/v1/integrations/whoop', ({ request }) => {
+      if (!csrfOk(request)) return problem(403, 'forbidden', 'Forbidden')
+      state.whoopConnected = false
+      return new HttpResponse(null, { status: 204 })
+    }),
 
     http.get('/v1/export', () =>
       new HttpResponse(
         [
           JSON.stringify({ kind: 'me', email: state.me.email, tz: state.me.tz }),
-          JSON.stringify({ kind: 'device', name: "Caleb's iPhone" }),
+          JSON.stringify({ kind: 'device', name: 'iPhone 17 Pro Max' }),
         ].join('\n') + '\n',
         { headers: { 'Content-Type': 'application/x-ndjson' } },
       ),
@@ -312,4 +382,3 @@ export function createHandlers(state: State = createState()): HttpHandler[] {
 function nextDay(day: string): string {
   return new Date(Date.parse(`${day}T12:00:00Z`) + 24 * HOUR_MS).toISOString().slice(0, 10)
 }
-
