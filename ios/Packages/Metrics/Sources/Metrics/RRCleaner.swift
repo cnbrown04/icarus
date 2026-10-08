@@ -18,7 +18,7 @@ public enum RRCleaner {
 
         for rr in rrMs {
             var accepted = validRangeMs.contains(rr)
-            if accepted, let reference = median(of: recent) {
+            if accepted, let reference = Statistics.median(recent) {
                 accepted = abs(rr - reference) <= maxDeviation * reference
             }
             flags.append(accepted)
@@ -32,13 +32,9 @@ public enum RRCleaner {
         return flags
     }
 
-    static func median(of values: [Double]) -> Double? {
-        guard !values.isEmpty else { return nil }
-        let sorted = values.sorted()
-        let mid = sorted.count / 2
-        if sorted.count % 2 == 1 {
-            return sorted[mid]
-        }
-        return (sorted[mid - 1] + sorted[mid]) / 2
+    /// The intervals that pass `acceptedFlags`, in the same order.
+    public static func accepted(_ intervals: [RRSample]) -> [RRSample] {
+        let flags = acceptedFlags(intervals.map(\.rrMs))
+        return zip(intervals, flags).compactMap { $1 ? $0 : nil }
     }
 }

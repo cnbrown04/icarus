@@ -44,4 +44,10 @@ struct RRCleanerTests {
         // Median of [800, 810, 790] = 800. 1000 is rejected; 805 is then checked against 800 and passes.
         #expect(RRCleaner.acceptedFlags([800, 810, 790, 1000, 805]) == [true, true, true, false, true])
     }
+
+    @Test func acceptedKeepsOrderAndDropsRejected() {
+        // 2500 is out of range and is dropped. 805 is within 20% of the median 800 and is kept.
+        let intervals = [RRSample(tsMs: 0, rrMs: 800), RRSample(tsMs: 1_000, rrMs: 2500), RRSample(tsMs: 2_000, rrMs: 805)]
+        #expect(RRCleaner.accepted(intervals) == [RRSample(tsMs: 0, rrMs: 800), RRSample(tsMs: 2_000, rrMs: 805)])
+    }
 }

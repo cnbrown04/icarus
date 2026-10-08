@@ -58,18 +58,9 @@ struct GoldenMetricsTests {
     }
 
     private func loadGolden() throws -> GoldenFile {
-        // Test file: <repo>/ios/Packages/Metrics/Tests/MetricsTests/GoldenMetricsTests.swift
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent() // MetricsTests
-            .deletingLastPathComponent() // Tests
-            .deletingLastPathComponent() // Metrics
-            .deletingLastPathComponent() // Packages
-            .deletingLastPathComponent() // ios
-            .deletingLastPathComponent() // repo root
-        let url = repoRoot.appendingPathComponent("shared/golden/metrics_v1.json")
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return try decoder.decode(GoldenFile.self, from: Data(contentsOf: url))
+        return try decoder.decode(GoldenFile.self, from: GoldenFixture.data())
     }
 
     private func close(_ actual: Double?, _ expected: Double?, tolerance: Double) -> Bool {

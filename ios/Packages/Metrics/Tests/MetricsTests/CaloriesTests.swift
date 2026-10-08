@@ -66,4 +66,11 @@ struct CaloriesTests {
         #expect(abs(minute.kcal - 1730.0 / 1440.0) < 1e-12)
         #expect(minute.activeKcal == 0)
     }
+
+    @Test func flexOverloadMatchesRestingHRPath() {
+        // RHR 60 and HRmax 190 give HR_flex 99, the same value passed directly.
+        let direct = Calories.minuteEnergy(heartRate: 120, profile: maleProfile, heartRateFlex: 99)
+        let viaRestingHR = Calories.minuteEnergy(heartRate: 120, profile: maleProfile, restingHR: 60, maxHR: 190)
+        #expect(direct == viaRestingHR)
+    }
 }

@@ -72,11 +72,23 @@ public enum Calories {
         restingHR: Double,
         maxHR: Double
     ) -> MinuteEnergy {
+        minuteEnergy(
+            heartRate: heartRate,
+            profile: profile,
+            heartRateFlex: heartRateFlex(restingHR: restingHR, maxHR: maxHR)
+        )
+    }
+
+    /// Per-minute kcal rule with HR_flex already resolved.
+    public static func minuteEnergy(
+        heartRate: Double?,
+        profile: UserProfile,
+        heartRateFlex flex: Double
+    ) -> MinuteEnergy {
         let bmrMinute = mifflinBMRPerMinute(profile)
         guard let heartRate else {
             return MinuteEnergy(kcal: bmrMinute, activeKcal: 0, estimated: true)
         }
-        let flex = heartRateFlex(restingHR: restingHR, maxHR: maxHR)
         let kcal: Double
         if heartRate >= flex {
             kcal = max(bmrMinute, keytelKcalPerMinute(profile, heartRate: heartRate))
