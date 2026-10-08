@@ -127,7 +127,7 @@ struct TodayView: View {
                 Text("\(bpm)")
                     .font(.heroValue)
                     .monospacedDigit()
-                    .contentTransition(.numericText())
+                    .liveNumberTransition()
                     .stateAnimation(bpm)
                     .accessibilityIdentifier("today.hrValue")
                 Text("bpm")
@@ -160,7 +160,6 @@ struct TodayView: View {
                     changeUnit: "bpm"
                 ) {
                     MiniSparkline(points: restingWeek.points, tint: Palette.sleep)
-                        .frame(height: Spacing.s48)
                 }
             }
             .buttonStyle(.plain)
@@ -176,7 +175,6 @@ struct TodayView: View {
                     changeUnit: "ms"
                 ) {
                     MiniSparkline(points: hrvWeek.points, tint: Palette.hrv)
-                        .frame(height: Spacing.s48)
                 }
             }
             .buttonStyle(.plain)
@@ -187,11 +185,17 @@ struct TodayView: View {
                     symbol: "gauge.with.dots.needle.67percent",
                     tint: Palette.stressModerate,
                     value: stressValue,
-                    caption: stressCaption,
                     valueIdentifier: "today.stressValue"
                 ) {
-                    StressGauge(value: latestStress)
-                        .frame(width: Spacing.s48 * 2, height: Spacing.s48 * 2)
+                    HStack(spacing: Spacing.s8) {
+                        StressGauge(value: latestStress)
+                            .frame(width: MetricTileLayout.visualHeight, height: MetricTileLayout.visualHeight)
+                        if let band = stressCaption {
+                            Text(band)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
             .buttonStyle(.plain)
@@ -206,10 +210,16 @@ struct TodayView: View {
                     caption: "Estimated",
                     valueIdentifier: "today.caloriesValue"
                 ) {
-                    RingProgress(fraction: activeShare, summary: "Active share of calories") {
-                        EmptyView()
+                    HStack(spacing: Spacing.s12) {
+                        RingProgress(fraction: activeShare, summary: "Active share of calories", lineWidth: Spacing.s8) {
+                            EmptyView()
+                        }
+                        .frame(width: MetricTileLayout.visualHeight, height: MetricTileLayout.visualHeight)
+                        Text(activeText)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
                     }
-                    .frame(width: Spacing.s48 * 2, height: Spacing.s48 * 2)
                 }
             }
             .buttonStyle(.plain)
@@ -361,6 +371,11 @@ struct TodayView: View {
     private var activeShare: Double {
         guard let total = snapshot?.today?.kcalTotal, total > 0, let active = snapshot?.today?.kcalActive else { return 0 }
         return active / total
+    }
+
+    private var activeText: String {
+        guard let active = snapshot?.today?.kcalActive else { return "Active --" }
+        return "Active \(Int(active.rounded())) kcal"
     }
 
     private func lastSyncText(now: Date) -> String {

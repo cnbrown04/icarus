@@ -14,6 +14,7 @@ struct StatusPill: View {
             .padding(.horizontal, Spacing.s12)
             .padding(.vertical, Spacing.s4)
             .background(tint.opacity(0.15), in: Capsule())
+            .fixedSize()
     }
 }
 

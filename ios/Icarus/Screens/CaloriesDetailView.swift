@@ -18,7 +18,7 @@ struct CaloriesDetailView: View {
                                 Text(totalText)
                                     .font(.metricValue)
                                     .monospacedDigit()
-                                    .contentTransition(.numericText())
+                                    .liveNumberTransition()
                                 Text("total")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)

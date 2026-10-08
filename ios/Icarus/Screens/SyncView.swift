@@ -13,14 +13,18 @@ struct SyncView: View {
     var body: some View {
         Form {
             Section {
-                TimelineView(.periodic(from: .now, by: 30)) { context in
-                    LabeledContent("Status") {
+                HStack(spacing: Spacing.s8) {
+                    Text("Status")
+                    Spacer(minLength: Spacing.s8)
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
                         StatusPill(
                             text: stateText(now: context.date),
                             symbol: stateSymbol,
                             tint: Palette.sync(environment.sync.status.phase)
                         )
                     }
+                }
+                TimelineView(.periodic(from: .now, by: 30)) { context in
                     LabeledContent("Last success", value: lastSuccessText(now: context.date))
                 }
                 LabeledContent("Pending rows") {

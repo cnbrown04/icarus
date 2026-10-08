@@ -7,9 +7,14 @@ struct MiniSparkline: View {
     var tint: Color
 
     var body: some View {
+        let range = ChartDomain.sparkline(points.map(\.value))
         Chart(points) { point in
-            AreaMark(x: .value("Day", point.date), y: .value("Value", point.value))
-                .interpolationMethod(.catmullRom)
+            AreaMark(
+                x: .value("Day", point.date),
+                yStart: .value("Lower bound", range.lowerBound),
+                yEnd: .value("Value", point.value)
+            )
+            .interpolationMethod(.catmullRom)
                 .foregroundStyle(
                     LinearGradient(
                         colors: [tint.opacity(0.3), tint.opacity(0)],
@@ -23,6 +28,6 @@ struct MiniSparkline: View {
         }
         .chartXAxis(.hidden)
         .chartYAxis(.hidden)
-        .chartYScale(domain: .automatic(includesZero: false))
+        .chartYScale(domain: range)
     }
 }

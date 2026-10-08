@@ -20,7 +20,7 @@ struct StressDetailView: View {
                             Text(currentValue)
                                 .font(.metricValue)
                                 .monospacedDigit()
-                                .contentTransition(.numericText())
+                                .liveNumberTransition()
                             if let band = currentBand {
                                 Text(band)
                                     .font(.subheadline)

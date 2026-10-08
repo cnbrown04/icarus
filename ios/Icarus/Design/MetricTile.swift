@@ -1,7 +1,13 @@
 import SwiftUI
 
-/// One number with its label, an optional caption, a change chip and an optional mini chart (IOS_UI_SPEC, Design).
-/// Tiles in a row share a height. Pass `EmptyView()` as the chart when there is none.
+/// One number with its label, an optional caption, a change chip and a visual slot (IOS_UI_SPEC, Design).
+/// Every tile has the same rows: header, value, one secondary line, then a visual slot of fixed height, so tiles in a
+/// grid line up. Pass `EmptyView()` as the visual when there is none.
+enum MetricTileLayout {
+    /// Height of a tile's visual slot: a sparkline, a gauge or a ring.
+    static let visualHeight: CGFloat = Spacing.s48 + Spacing.s8
+}
+
 struct MetricTile<Chart: View>: View {
     let title: String
     let symbol: String
@@ -32,7 +38,7 @@ struct MetricTile<Chart: View>: View {
                 Text(value)
                     .font(.metricValue)
                     .monospacedDigit()
-                    .contentTransition(.numericText())
+                    .liveNumberTransition()
                     .optionalIdentifier(valueIdentifier)
                 if let unit {
                     Text(unit)
@@ -42,16 +48,20 @@ struct MetricTile<Chart: View>: View {
             }
             .lineLimit(1)
             .minimumScaleFactor(0.6)
-            if let caption {
-                Text(caption)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: Spacing.s4) {
+                if let caption {
+                    Text(caption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let change {
+                    DeltaChip(change: change, unit: changeUnit)
+                }
             }
-            if let change {
-                DeltaChip(change: change, unit: changeUnit)
-            }
+            .frame(minHeight: Spacing.s24, alignment: .leading)
             Spacer(minLength: Spacing.s8)
             chart()
+                .frame(height: MetricTileLayout.visualHeight, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(Spacing.s16)

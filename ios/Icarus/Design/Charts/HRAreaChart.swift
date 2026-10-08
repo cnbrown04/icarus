@@ -24,12 +24,21 @@ struct HRAreaChart: View {
         )
     }
 
+    private var yRange: ClosedRange<Double> {
+        ChartDomain.line(points.map(\.bpm))
+    }
+
     var body: some View {
+        let range = yRange
         Chart {
             ForEach(points) { point in
-                AreaMark(x: .value("Time", point.date), y: .value("Heart rate", point.bpm))
-                    .interpolationMethod(.catmullRom)
-                    .foregroundStyle(fill)
+                AreaMark(
+                    x: .value("Time", point.date),
+                    yStart: .value("Lower bound", range.lowerBound),
+                    yEnd: .value("Heart rate", point.bpm)
+                )
+                .interpolationMethod(.catmullRom)
+                .foregroundStyle(fill)
                 LineMark(x: .value("Time", point.date), y: .value("Heart rate", point.bpm))
                     .interpolationMethod(.catmullRom)
                     .foregroundStyle(Palette.heartRate)
@@ -63,9 +72,9 @@ struct HRAreaChart: View {
                     .foregroundStyle(Palette.heartRate)
             }
         }
-        .chartYScale(domain: .automatic(includesZero: false))
+        .chartYScale(domain: range)
         .chartYAxis {
-            AxisMarks(position: .leading)
+            AxisMarks(position: .leading, values: .automatic(desiredCount: 3))
         }
         .chartXSelection(value: $selection)
     }

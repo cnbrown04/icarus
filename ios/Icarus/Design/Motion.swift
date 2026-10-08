@@ -5,6 +5,21 @@ extension View {
     func stateAnimation<Value: Equatable>(_ value: Value) -> some View {
         modifier(StateAnimationModifier(value: value))
     }
+
+    /// Digits roll when a live number changes. Off under -IcarusUITest, so screenshots never catch a half-rolled value.
+    func liveNumberTransition() -> some View {
+        modifier(LiveNumberTransitionModifier())
+    }
+}
+
+private struct LiveNumberTransitionModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if LaunchConfig.current.isUITest {
+            content
+        } else {
+            content.contentTransition(.numericText())
+        }
+    }
 }
 
 private struct StateAnimationModifier<Value: Equatable>: ViewModifier {

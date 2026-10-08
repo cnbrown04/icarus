@@ -46,11 +46,20 @@ struct DeviceView: View {
                 } label: {
                     Label("Signal", systemImage: "cellularbars")
                 }
-                LabeledContent {
-                    Text(batteryText)
-                        .monospacedDigit()
-                } label: {
-                    Label("Battery", systemImage: batterySymbol)
+                if let battery = liveState.batteryPercent {
+                    LabeledContent {
+                        Text(Format.percent(battery))
+                            .monospacedDigit()
+                    } label: {
+                        Label("Battery", systemImage: Format.batterySymbol(battery))
+                    }
+                } else if liveState.tierBState == .disabled {
+                    LabeledContent {
+                        Text("Needs band channel")
+                            .foregroundStyle(.secondary)
+                    } label: {
+                        Label("Battery", systemImage: "battery.0percent")
+                    }
                 }
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
                     LabeledContent {
@@ -185,14 +194,6 @@ struct DeviceView: View {
 
     private var signalText: String {
         liveState.connectedRSSI.map { "\($0) dBm" } ?? "--"
-    }
-
-    private var batteryText: String {
-        liveState.batteryPercent.map { Format.percent($0) } ?? "--"
-    }
-
-    private var batterySymbol: String {
-        liveState.batteryPercent.map { Format.batterySymbol($0) } ?? "battery.0percent"
     }
 
     @ViewBuilder

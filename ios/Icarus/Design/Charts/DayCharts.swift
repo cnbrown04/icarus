@@ -23,9 +23,9 @@ struct DayLineChart: View {
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
             }
         }
-        .chartYScale(domain: .automatic(includesZero: false))
+        .chartYScale(domain: ChartDomain.line(points.map(\.value)))
         .chartYAxis {
-            AxisMarks(position: .leading)
+            AxisMarks(position: .leading, values: .automatic(desiredCount: 3))
         }
     }
 }
