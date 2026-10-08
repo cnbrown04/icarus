@@ -11,16 +11,17 @@ on:
   workflow_dispatch:
     inputs:
       quick:
-        description: "Run only iPhone 17 Pro, light"
+        description: "Same as full (one device); kept for compatibility"
         type: boolean
         default: false
 
 permissions:
   contents: read
 
+# One group per commit: each phase push keeps its own screenshot run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: false
 
 env:
   DEVELOPER_DIR: /Applications/Xcode_26.6.app
@@ -41,15 +42,10 @@ jobs:
         run: |
           set -euo pipefail
           full='[
-            {"device": "iPhone 17 Pro", "slug": "iphone17pro", "appearance": "light"},
-            {"device": "iPhone 17 Pro", "slug": "iphone17pro", "appearance": "dark"},
-            {"device": "iPhone 17 Pro Max", "slug": "iphone17promax", "appearance": "light"},
-            {"device": "iPhone 17 Pro Max", "slug": "iphone17promax", "appearance": "dark"},
-            {"device": "iPhone 17e", "slug": "iphone17e", "appearance": "light"},
-            {"device": "iPhone 17e", "slug": "iphone17e", "appearance": "dark"}
+            {"device": "iPhone 17 Pro Max", "slug": "iphone17promax", "appearance": "light"}
           ]'
           if [ "$QUICK" = "true" ]; then
-            matrix=$(jq -c '{include: [.[] | select(.slug == "iphone17pro" and .appearance == "light")]}' <<< "$full")
+            matrix=$(jq -c '{include: [.[] | select(.slug == "iphone17promax")]}' <<< "$full")
           else
             matrix=$(jq -c '{include: .}' <<< "$full")
           fi
@@ -257,6 +253,13 @@ jobs:
           } > "$PUBLISH/index.md"
           ls "$PUBLISH"
 
+      - name: Pick screenshot folder
+        run: |
+          SUBJECT=$(git log -1 --format=%s "$GITHUB_SHA")
+          PHASE=$(echo "$SUBJECT" | sed -nE 's/^phase-([0-9]+).*/phase-\1/p')
+          echo "SHOT_DIR=screenshots/${PHASE:-latest}" >> "$GITHUB_ENV"
+          echo "Screenshot folder: screenshots/${PHASE:-latest}"
+
       - name: Commit screenshots to repo
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         env:
@@ -266,7 +269,7 @@ jobs:
           # Run a copy: the checkout below may change ci/ before bash finishes reading the script.
           cp ci/commit_screenshots.sh "$RUNNER_TEMP/commit_screenshots.sh"
           bash "$RUNNER_TEMP/commit_screenshots.sh" "$BRANCH" "$RUNNER_TEMP/publish-ios" \
-            screenshots/ios "screenshots: ios $SHA7 [skip ci]"
+            "$SHOT_DIR/ios" "screenshots: ios $SHA7 [skip ci]"
 
       - name: Comment run link on pull request
         if: github.event_name == 'pull_request'

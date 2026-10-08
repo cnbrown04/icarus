@@ -19,7 +19,7 @@ const routes = [
 ] as const
 
 const viewports = [
-  { width: 1440, height: 900 },
+  { width: 1920, height: 1080 },
   { width: 390, height: 844 },
 ] as const
 
@@ -54,10 +54,10 @@ for (const route of routes) {
           .map((violation) => `${violation.id} (${violation.impact}): ${violation.help}`)
         expect(blocking).toEqual([])
 
-        await page.screenshot({
-          path: `${screenshotDir}${route.slug}-${viewport.width}-${scheme}.png`,
-          fullPage: true,
-        })
+        // Only one screenshot size is kept: 1920x1080, light (Caleb's request, 2026-10-08).
+        if (viewport.width === 1920 && scheme === 'light') {
+          await page.screenshot({ path: `${screenshotDir}${route.slug}.png` })
+        }
       })
     }
   }

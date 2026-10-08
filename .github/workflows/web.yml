@@ -15,9 +15,10 @@ on:
 permissions:
   contents: read
 
+# One group per commit: each phase push keeps its own screenshot run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   web:
@@ -126,6 +127,13 @@ jobs:
           } > "$PUBLISH/index.md"
           ls "$PUBLISH"
 
+      - name: Pick screenshot folder
+        run: |
+          SUBJECT=$(git log -1 --format=%s "$GITHUB_SHA")
+          PHASE=$(echo "$SUBJECT" | sed -nE 's/^phase-([0-9]+).*/phase-\1/p')
+          echo "SHOT_DIR=screenshots/${PHASE:-latest}" >> "$GITHUB_ENV"
+          echo "Screenshot folder: screenshots/${PHASE:-latest}"
+
       - name: Commit screenshots to repo
         env:
           BRANCH: ${{ github.ref_name }}
@@ -134,4 +142,4 @@ jobs:
           # Run a copy: the checkout below may change ci/ before bash finishes reading the script.
           cp ci/commit_screenshots.sh "$RUNNER_TEMP/commit_screenshots.sh"
           bash "$RUNNER_TEMP/commit_screenshots.sh" "$BRANCH" "$RUNNER_TEMP/publish-web" \
-            screenshots/web "screenshots: web $SHA7 [skip ci]"
+            "$SHOT_DIR/web" "screenshots: web $SHA7 [skip ci]"
