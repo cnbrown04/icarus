@@ -350,6 +350,7 @@ Sources: NOOP [S12], jmooves [S11] (which pads the inner payload to a multiple o
 - We took seven complete frames published by bWanShiTong [S8]: HR-broadcast on/off, start activity, set alarm ×2, reboot.
 - We recomputed both checksums locally (Python `zlib.crc32` plus a CRC-8/poly-0x07 routine).
 - **All seven match** the envelope that NOOP, jmooves and my-whoop describe.
+- Phase 0 update (2026-10-08): the same README publishes 80 complete frames (commands, realtime, events, metadata, history). All 80 pass both checksums with standard zlib CRC-32 over the inner bytes, and all are in `shared/golden/frames.json`.
 
 That ties four independent write-ups to one format. bWanShiTong's "custom CRC-32 parameters" (xor-out `0xF43F44AC`) are the same CRC computed over the whole frame instead of the inner bytes. These frames become golden test vectors in `BandProtocol`.
 

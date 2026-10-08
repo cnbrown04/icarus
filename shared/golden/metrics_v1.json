@@ -1,0 +1,149 @@
+{
+  "format": "icarus-golden-metrics",
+  "format_version": 1,
+  "algo_version": {
+    "hr": 1,
+    "hrv": 1,
+    "stress": 1,
+    "kcal": 1
+  },
+  "tolerance": 1e-06,
+  "rr_cases": [
+    {
+      "name": "hrv_three_intervals",
+      "rr_ms": [
+        790,
+        800,
+        810
+      ],
+      "expected": {
+        "rr_accepted": [
+          true,
+          true,
+          true
+        ],
+        "rmssd": 10.0,
+        "sdnn": 10.0,
+        "ln_rmssd": 2.302585092994046
+      }
+    },
+    {
+      "name": "hrv_outlier_and_range_rejects",
+      "rr_ms": [
+        800,
+        810,
+        1000,
+        805,
+        2500,
+        300,
+        790,
+        795
+      ],
+      "expected": {
+        "rr_accepted": [
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          true
+        ],
+        "rmssd": 9.682458365518542,
+        "sdnn": 7.905694150420948,
+        "ln_rmssd": 2.27031583242526
+      }
+    },
+    {
+      "name": "hrv_single_interval_is_null",
+      "rr_ms": [
+        800
+      ],
+      "expected": {
+        "rr_accepted": [
+          true
+        ],
+        "rmssd": null,
+        "sdnn": null,
+        "ln_rmssd": null
+      }
+    }
+  ],
+  "kcal_cases": [
+    {
+      "name": "kcal_male_40y_above_and_below_flex",
+      "profile": {
+        "sex": "male",
+        "age_years": 40,
+        "height_cm": 180,
+        "weight_kg": 80
+      },
+      "resting_hr": 60,
+      "max_hr": 190,
+      "hr_bpm": [
+        120,
+        80,
+        null,
+        150
+      ],
+      "expected": {
+        "hr_flex": 99.0,
+        "bmr_kcal_min": 1.2013888888888888,
+        "kcal_min": [
+          10.655616634799236,
+          1.2013888888888888,
+          1.2013888888888888,
+          15.179278202676866
+        ],
+        "active_kcal_min": [
+          9.454227745910346,
+          0.0,
+          0.0,
+          13.977889313787976
+        ],
+        "estimated": [
+          false,
+          false,
+          true,
+          false
+        ]
+      }
+    },
+    {
+      "name": "kcal_female_30y_floor_90",
+      "profile": {
+        "sex": "female",
+        "age_years": 30,
+        "height_cm": 165,
+        "weight_kg": 60
+      },
+      "resting_hr": 50,
+      "max_hr": 150,
+      "hr_bpm": [
+        95,
+        89,
+        140
+      ],
+      "expected": {
+        "hr_flex": 90,
+        "bmr_kcal_min": 0.9168402777777778,
+        "kcal_min": [
+          3.9970841300191204,
+          0.9168402777777778,
+          8.806835564053536
+        ],
+        "active_kcal_min": [
+          3.0802438522413427,
+          0.0,
+          7.889995286275758
+        ],
+        "estimated": [
+          false,
+          false,
+          false
+        ]
+      }
+    }
+  ]
+}
