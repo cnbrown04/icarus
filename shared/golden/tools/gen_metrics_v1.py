@@ -9,7 +9,7 @@ import sys
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-GOLDEN = "/home/user/icarus/shared/golden/metrics_v1.json"
+GOLDEN = str(__import__("pathlib").Path(__file__).resolve().parent.parent / "metrics_v1.json")
 MIN = 60_000
 WIN = 300_000
 CHI = "America/Chicago"
@@ -587,6 +587,15 @@ def main():
     body = original.rstrip()
     assert body.endswith("}")
     body = body[:-1].rstrip()
+    keys = ["minute_cases", "rhr_cases", "hrmax_cases", "hrr_cases", "window_cases",
+            "baevsky_cases", "stress_cases", "minute_metric_cases"]
+    if all(k in existing for k in keys):
+        # Already generated: check that the file still matches the reference.
+        differs = [k for k in keys if json.loads(json.dumps(new[k])) != existing[k]]
+        if differs:
+            sys.exit(f"golden file differs from the reference in: {', '.join(differs)}")
+        print("metrics_v1.json matches the reference")
+        return
     parts = []
     for key in ["minute_cases", "rhr_cases", "hrmax_cases", "hrr_cases", "window_cases",
                 "baevsky_cases", "stress_cases", "minute_metric_cases"]:
