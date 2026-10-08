@@ -6,6 +6,7 @@ use crate::{
     error::ApiError,
     ratelimit::{RateLimiter, TokenBuckets},
     secrets::Secrets,
+    whoop::{WhoopClient, WhoopConfig},
 };
 
 /// Runtime settings. `main` fills these from the environment.
@@ -21,6 +22,8 @@ pub struct Config {
     /// Webhook secrets and hook URLs need this key (`ICARUS_ENC_KEY`). Without it, those routes
     /// answer 503 `internal`.
     pub secrets: Option<Secrets>,
+    /// WHOOP integration. `None` leaves every WHOOP route answering 404 (PLAN.md §5.2).
+    pub whoop: Option<WhoopConfig>,
 }
 
 impl Default for Config {
@@ -31,6 +34,7 @@ impl Default for Config {
             public_base_url: "http://localhost:8080".to_owned(),
             web_dir: None,
             secrets: None,
+            whoop: None,
         }
     }
 }
@@ -42,6 +46,7 @@ pub struct AppState {
     pub login_limiter: Arc<RateLimiter>,
     pub pairing_limiter: Arc<RateLimiter>,
     pub hook_buckets: Arc<TokenBuckets>,
+    pub whoop: Option<Arc<WhoopClient>>,
 }
 
 impl AppState {
@@ -52,12 +57,21 @@ impl AppState {
     pub fn with_config(pool: PgPool, config: Config) -> Self {
         Self {
             pool,
-            config: Arc::new(config),
             // PLAN.md §12.2: 5 login attempts per minute per IP.
             login_limiter: Arc::new(RateLimiter::new(5, Duration::from_secs(60))),
             pairing_limiter: Arc::new(RateLimiter::new(30, Duration::from_secs(60))),
             hook_buckets: Arc::new(TokenBuckets::default()),
+            whoop: config
+                .whoop
+                .clone()
+                .map(|whoop| Arc::new(WhoopClient::new(whoop))),
+            config: Arc::new(config),
         }
+    }
+
+    /// The WHOOP client, or 404 when the integration is off.
+    pub fn whoop(&self) -> Result<&WhoopClient, ApiError> {
+        self.whoop.as_deref().ok_or(ApiError::NotFound)
     }
 
     pub fn secrets(&self) -> Result<&Secrets, ApiError> {

@@ -10,6 +10,7 @@ pub mod ingress;
 pub mod me;
 pub mod metrics;
 pub mod sync;
+pub mod whoop;
 
 use std::str::FromStr;
 

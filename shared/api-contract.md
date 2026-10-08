@@ -162,3 +162,7 @@ Profile fields may be `null`.
 - Ingress timeout (2 s) returns an empty 408. Missing `ICARUS_ENC_KEY` returns 503 `internal`.
 - Batch row-limit overflow returns 413 `payload-too-large`. `Idempotency-Key` must equal `batch_id`.
 - `PATCH /v1/hooks/{id}` requires `If-Match` like every PATCH.
+- WHOOP routes use the web session only. The callback needs no cookie (the stored state names the user).
+- WHOOP: not connected, or an expired/revoked WHOOP sign-in, returns 404 `not-found` with a detail (never 401, which would sign the web app out). Upstream failure returns 502 `internal`; local or WHOOP rate limit returns 429 `rate-limited`.
+- WHOOP summary defaults `day` to today in `users.tz` and is sent with `Cache-Control: no-store`.
+- WHOOP webhook rows are stored only for a connected WHOOP user and pruned 7 days after processing. No replay window is applied (WHOOP retries for about an hour).

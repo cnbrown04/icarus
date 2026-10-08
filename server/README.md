@@ -26,6 +26,9 @@ Environment (see `shared/api-contract.md`):
 | `APNS_KEY_ID` | unset | Key id from the Apple developer account. |
 | `APNS_TEAM_ID` | unset | Team id. |
 | `APNS_TOPIC` | unset | The app's bundle id. |
+| `WHOOP_CLIENT_ID` | unset | WHOOP is off (every `/v1/integrations/whoop` route answers 404) unless this and `WHOOP_CLIENT_SECRET` are both set. |
+| `WHOOP_CLIENT_SECRET` | unset | WHOOP app secret. Also the key for WHOOP webhook signatures. Never sent to a client. |
+| `WHOOP_API_BASE` | `https://api.prod.whoop.com` | Scheme and host of the WHOOP API. Tests point it at a local mock; leave it unset otherwise. |
 
 APNs needs all four `APNS_*` values. Without them the server logs `APNs disabled` at startup, still queues
 alarm dispatches, and records `phone_status = apns_disabled`. Sandbox or production is chosen per device token.
@@ -36,6 +39,13 @@ deleted. The alarm dispatcher listens on Postgres `NOTIFY` and sweeps every 15 s
 
 Webhook signatures: `X-Icarus-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, t "." body)>`. The HMAC key is the
 UTF-8 bytes of the secret string shown once when the hook is created.
+
+WHOOP (optional): connect with `GET /v1/integrations/whoop/connect` from the web. Only OAuth tokens (sealed with
+`ICARUS_ENC_KEY`) and webhook trace ids are stored. Summaries are fetched live per request and not written down.
+Every call to WHOOP passes a local budget of 100 per minute and 10,000 per day; over budget answers 429. Tokens refresh
+under a row lock before any call when they expire in under 5 minutes. A background job every 6 h refreshes all
+connections, marks webhook rows processed, and prunes expired OAuth states and processed rows older than 7 days.
+The redirect URI is `PUBLIC_BASE_URL` + `/v1/integrations/whoop/callback`; register that exact URL with WHOOP.
 
 Partitions for `hr_samples` and `rr_intervals` are created at startup and daily. Daily summaries are recomputed
 after each sync batch commits and again daily for the last three local days.

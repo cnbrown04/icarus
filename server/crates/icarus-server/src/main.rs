@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{Context, bail};
-use icarus_api::{AppState, Config, CreateUserError, Secrets, create_user, router};
+use icarus_api::{AppState, Config, CreateUserError, Secrets, WhoopConfig, create_user, router};
 use icarus_push::{AnySender, ApnsSender, ApnsSettings, DispatchConfig, LogOnlySender};
 use sqlx::PgPool;
 use tokio::{net::TcpListener, signal};
@@ -66,6 +66,30 @@ fn secrets_from_env() -> anyhow::Result<Option<Secrets>> {
     }
 }
 
+/// WHOOP is on only when both `WHOOP_CLIENT_ID` and `WHOOP_CLIENT_SECRET` are set (PLAN.md §5.2).
+/// `WHOOP_API_BASE` overrides the API host, for tests only.
+fn whoop_from_env() -> anyhow::Result<Option<WhoopConfig>> {
+    let id = env_nonempty("WHOOP_CLIENT_ID");
+    let secret = env_nonempty("WHOOP_CLIENT_SECRET");
+    let (Some(id), Some(secret)) = (id.clone(), secret.clone()) else {
+        if id.is_some() || secret.is_some() {
+            tracing::warn!(
+                "WHOOP needs both WHOOP_CLIENT_ID and WHOOP_CLIENT_SECRET; the integration is off"
+            );
+        }
+        return Ok(None);
+    };
+    let mut config = WhoopConfig::new(id, secret);
+    if let Some(base) = env_nonempty("WHOOP_API_BASE") {
+        config = config.with_api_base(&base).map_err(anyhow::Error::msg)?;
+    }
+    Ok(Some(config))
+}
+
+fn env_nonempty(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|v| !v.trim().is_empty())
+}
+
 /// APNs needs all four `APNS_*` values. Anything missing means log-only (PLAN.md §12.5).
 fn sender_from_env() -> anyhow::Result<AnySender> {
     let key = std::env::var("APNS_KEY_P8")
@@ -127,8 +151,11 @@ async fn serve(pool: PgPool) -> anyhow::Result<()> {
             std::env::var("ICARUS_WEB_DIR").unwrap_or_else(|_| "../web/dist".to_owned()),
         )),
         secrets: secrets_from_env()?,
+        whoop: whoop_from_env()?,
     };
+    let whoop_enabled = config.whoop.is_some();
     let sender = sender_from_env()?;
+    let state = AppState::with_config(pool.clone(), config);
 
     // Partitions for this month and next, before traffic arrives. The daily job keeps them current.
     if let Err(err) = icarus_jobs::run_maintenance(&pool).await {
@@ -144,6 +171,12 @@ async fn serve(pool: PgPool) -> anyhow::Result<()> {
         }
     });
 
+    if whoop_enabled {
+        // Refreshes WHOOP tokens and prunes WHOOP bookkeeping every 6 h (PLAN.md §12.6).
+        icarus_api::whoop::spawn_reconcile(state.clone());
+        tracing::info!("WHOOP integration enabled");
+    }
+
     let listener = TcpListener::bind(addr)
         .await
         .with_context(|| format!("binding {addr}"))?;
@@ -151,8 +184,7 @@ async fn serve(pool: PgPool) -> anyhow::Result<()> {
 
     axum::serve(
         listener,
-        router(AppState::with_config(pool, config))
-            .into_make_service_with_connect_info::<SocketAddr>(),
+        router(state).into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown_signal())
     .await

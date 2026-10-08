@@ -14,6 +14,8 @@ pub enum ApiError {
     Unauthorized(String),
     Forbidden(String),
     NotFound,
+    /// Not found, with a reason the client can show (WHOOP not connected).
+    NotFoundDetail(&'static str),
     Validation(String),
     /// PATCH without `If-Match`. Uses the `validation` slug with status 428.
     PreconditionRequired,
@@ -24,11 +26,14 @@ pub enum ApiError {
     },
     PayloadTooLarge(String),
     RateLimited,
+    RateLimitedDetail(&'static str),
     PairingCodeInvalid,
     /// Webhook signature or secret did not verify (api-contract.md "Errors").
     SignatureInvalid(String),
     /// A feature needs configuration that is not set, such as `ICARUS_ENC_KEY`. Uses the `internal` slug.
     NotConfigured(String),
+    /// An upstream service (WHOOP) failed or did not answer. Uses the `internal` slug with 502.
+    Upstream(&'static str),
     MigrationsPending,
     DatabaseUnavailable,
     Internal,
@@ -58,6 +63,7 @@ impl ApiError {
                 "Not found",
                 "No such resource.",
             ),
+            ApiError::NotFoundDetail(d) => (StatusCode::NOT_FOUND, "not-found", "Not found", d),
             ApiError::Validation(d) => {
                 (StatusCode::BAD_REQUEST, "validation", "Invalid request", d)
             }
@@ -82,6 +88,12 @@ impl ApiError {
                 "Too many requests",
                 "Try again in a minute.",
             ),
+            ApiError::RateLimitedDetail(d) => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate-limited",
+                "Too many requests",
+                d,
+            ),
             ApiError::PairingCodeInvalid => (
                 StatusCode::BAD_REQUEST,
                 "pairing-code-invalid",
@@ -100,6 +112,7 @@ impl ApiError {
                 "Not configured",
                 d,
             ),
+            ApiError::Upstream(d) => (StatusCode::BAD_GATEWAY, "internal", "Upstream error", d),
             ApiError::MigrationsPending => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "migrations-pending",

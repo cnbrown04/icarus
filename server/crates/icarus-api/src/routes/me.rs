@@ -236,6 +236,11 @@ pub async fn delete_me(
             "confirm must be your account email.".into(),
         ));
     }
+    // WHOOP trace ids are keyed by the WHOOP user, not by ours, so they are removed here.
+    sqlx::query("DELETE FROM whoop_webhook_events WHERE whoop_user_id IN (SELECT whoop_user_id FROM whoop_connections WHERE user_id = $1)")
+        .bind(user_id)
+        .execute(&state.pool)
+        .await?;
     sqlx::query("DELETE FROM users WHERE id = $1")
         .bind(user_id)
         .execute(&state.pool)

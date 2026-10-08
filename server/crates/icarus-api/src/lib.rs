@@ -8,6 +8,7 @@ pub mod ratelimit;
 pub mod routes;
 pub mod secrets;
 pub mod state;
+pub mod whoop;
 
 use std::time::Duration;
 
@@ -34,6 +35,7 @@ pub use accounts::{CreateUserError, create_user};
 pub use error::ApiError;
 pub use secrets::Secrets;
 pub use state::{AppState, Config};
+pub use whoop::WhoopConfig;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -107,6 +109,7 @@ pub fn router(state: AppState) -> Router {
             post(routes::ingress::post_secret),
         )
         .route("/v1/export", get(routes::export::export))
+        .merge(routes::whoop::router(&state))
         // Unknown API paths get a problem response, never the SPA page.
         .route("/v1", any(api_not_found))
         .route("/v1/{*rest}", any(api_not_found));
