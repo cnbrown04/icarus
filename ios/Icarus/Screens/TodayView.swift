@@ -1,25 +1,76 @@
 import SwiftUI
 
+/// Destinations pushed from Today's cards (PLAN.md §14 rows 8-10).
+enum TodayDestination: Hashable {
+    case heartRate
+    case stress
+    case calories
+}
+
 struct TodayView: View {
+    let environment: AppEnvironment
     let liveState: LiveState
 
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.s24) {
-                heartRateSection
+    @State private var snapshot: Dashboard.TodaySnapshot?
 
-                MetricRow(title: "Stress", value: "Calibrating")
-                MetricRow(title: "Calories", value: "1840 kcal", caption: "Estimated")
-                MetricRow(title: "Resting HR", value: "--")
-                MetricRow(title: "Last sync", value: "Not paired")
+    var body: some View {
+        List {
+            Section {
+                NavigationLink(value: TodayDestination.heartRate) {
+                    heartRateRow
+                }
+                if let snapshot, !snapshot.sparkline.isEmpty {
+                    HeartRateSparkline(points: snapshot.sparkline)
+                        .frame(height: Spacing.s48 * 2)
+                }
+            } footer: {
+                Text("Last 15 min")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .pagePadding()
+
+            Section {
+                NavigationLink(value: TodayDestination.stress) {
+                    stressRow
+                }
+
+                NavigationLink(value: TodayDestination.calories) {
+                    caloriesRow
+                }
+
+                LabeledContent("Resting HR") {
+                    Text(restingText)
+                        .monospacedDigit()
+                }
+            } footer: {
+                if environment.storageFailed {
+                    Text("Data is not saved on this launch.")
+                }
+            }
+
+            Section {
+                LabeledContent("Last sync", value: liveState.rememberedID == nil ? "Not paired" : "Not synced")
+            }
         }
         .navigationTitle("Today")
+        .navigationDestination(for: TodayDestination.self) { destination in
+            switch destination {
+            case .heartRate: HeartRateDetailView(environment: environment)
+            case .stress: StressDetailView(environment: environment)
+            case .calories: CaloriesDetailView(environment: environment)
+            }
+        }
+        .task {
+            let clock = environment.clock
+            do {
+                for try await value in environment.database.observe({ try Dashboard.today($0, nowMs: clock.nowMs) }) {
+                    snapshot = value
+                }
+            } catch {
+                snapshot = nil
+            }
+        }
     }
 
-    private var heartRateSection: some View {
+    private var heartRateRow: some View {
         VStack(alignment: .leading, spacing: Spacing.s8) {
             HStack(spacing: Spacing.s8) {
                 Circle()
@@ -29,55 +80,69 @@ struct TodayView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-
             HStack(alignment: .firstTextBaseline, spacing: Spacing.s4) {
-                heartRateValue
-                Text("bpm")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
+                if let bpm = liveState.latestBPM {
+                    Text("\(bpm)")
+                        .font(.system(.largeTitle, design: .default).weight(.semibold))
+                        .monospacedDigit()
+                        .accessibilityIdentifier("today.hrValue")
+                    Text("bpm")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("--")
+                        .font(.system(.largeTitle, design: .default).weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
             }
-
-            HeartRateSparkline(samples: liveState.samples)
-                .frame(height: Spacing.s48 * 2)
-
-            Text("Last 15 min")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
-    @ViewBuilder
-    private var heartRateValue: some View {
-        if let bpm = liveState.latestBPM {
-            Text("\(bpm)")
-                .font(.system(.largeTitle, design: .monospaced).weight(.semibold))
-                .accessibilityIdentifier("today.hrValue")
-        } else {
-            Text("--")
-                .font(.system(.largeTitle, design: .monospaced).weight(.semibold))
-                .foregroundStyle(.secondary)
+    private var stressRow: some View {
+        LabeledContent("Stress") {
+            Text(stressText)
+                .monospacedDigit()
+                .accessibilityIdentifier("today.stressValue")
         }
     }
-}
 
-/// One metric: label, value, and an optional caption (used once per estimate).
-private struct MetricRow: View {
-    let title: String
-    let value: String
-    var caption: String?
-
-    var body: some View {
+    private var caloriesRow: some View {
         VStack(alignment: .leading, spacing: Spacing.s4) {
-            Text(title)
+            LabeledContent("Calories") {
+                Text(caloriesText)
+                    .monospacedDigit()
+                    .accessibilityIdentifier("today.caloriesValue")
+            }
+            Text(caloriesCaption)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(value)
-                .font(.body.weight(.semibold).monospacedDigit())
-            if let caption {
-                Text(caption)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
+    }
+
+    private var restingText: String {
+        guard let value = snapshot?.context.restingHR else { return "--" }
+        return Format.bpm(value)
+    }
+
+    private var stressText: String {
+        guard let latest = snapshot?.latestMinute else { return "No data" }
+        if let stress = latest.stress {
+            return "\(stress) · \(Format.stressBand(stress))"
+        }
+        return Format.stressState(latest.state)
+    }
+
+    private var caloriesText: String {
+        guard let total = snapshot?.today?.kcalTotal else { return "--" }
+        return Format.kcal(total)
+    }
+
+    private var caloriesCaption: String {
+        guard snapshot?.context.profile != nil else {
+            return "Set a profile to estimate calories"
+        }
+        guard let active = snapshot?.today?.kcalActive else { return "Estimated" }
+        return "\(Format.kcal(active)) active, Estimated"
     }
 }

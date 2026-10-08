@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
+    let environment: AppEnvironment
     let liveState: LiveState
 
     @State private var versionTaps = 0
@@ -12,10 +13,9 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Profile") {
-                LabeledContent("Formula sex", value: "Not set")
-                LabeledContent("Birth year", value: "Not set")
-                LabeledContent("Height", value: "Not set")
-                LabeledContent("Weight", value: "Not set")
+                NavigationLink("Profile") {
+                    ProfileView(environment: environment, mode: .settings)
+                }
             }
 
             Section {

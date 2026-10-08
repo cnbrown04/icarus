@@ -36,3 +36,15 @@ struct LaunchConfigTests {
         #expect(!LaunchConfig(arguments: ["Icarus"]).isSynthetic)
     }
 }
+
+struct LaunchConfigSeedTests {
+    @Test func parsesSeedDatabaseName() {
+        let config = LaunchConfig(arguments: ["Icarus", "-IcarusSeedDB", "seed_30d"])
+        #expect(config.seedDB == "seed_30d")
+        #expect(LaunchConfig(arguments: ["Icarus"]).seedDB == nil)
+    }
+
+    @Test func parsesProfileScreen() {
+        #expect(LaunchConfig(arguments: ["Icarus", "-IcarusScreen", "profile"]).startScreen == .profile)
+    }
+}

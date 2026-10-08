@@ -1,17 +1,17 @@
 import Charts
 import SwiftUI
 
+/// The last 15 minutes of raw samples (PLAN.md §14 row 7). Axes are hidden; the value is shown above it.
 struct HeartRateSparkline: View {
-    let samples: [LiveState.Sample]
+    let points: [Dashboard.TodaySnapshot.Point]
 
     var body: some View {
-        Chart(samples) { sample in
+        Chart(points) { point in
             LineMark(
-                x: .value("Time", sample.date),
-                y: .value("Heart rate", sample.bpm)
+                x: .value("Time", point.date),
+                y: .value("Heart rate", point.bpm)
             )
         }
-        .chartYScale(domain: 50 ... 80)
         .chartXAxis(.hidden)
         .accessibilityLabel("Heart rate, last 15 minutes")
     }

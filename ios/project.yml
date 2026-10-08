@@ -25,6 +25,12 @@ packages:
     path: Packages/Metrics
   BandKit:
     path: Packages/BandKit
+  Store:
+    path: Packages/Store
+  # Store's API exposes GRDB types (Database), so the app imports GRDB directly.
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    from: 7.11.1
 
 targets:
   Icarus:
@@ -40,6 +46,8 @@ targets:
       - package: BandProtocol
       - package: Metrics
       - package: BandKit
+      - package: Store
+      - package: GRDB
     info:
       path: Icarus/Info.plist
       properties:
@@ -69,6 +77,7 @@ targets:
       - path: IcarusTests
     dependencies:
       - target: Icarus
+      - package: Store
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cnbrown04.icarus.tests

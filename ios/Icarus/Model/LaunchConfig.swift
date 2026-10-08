@@ -5,6 +5,7 @@ import Foundation
 struct LaunchConfig: Equatable, Sendable {
     enum StartScreen: String, Sendable {
         case welcome
+        case profile
         case pairBand
         case debug
     }
@@ -15,6 +16,8 @@ struct LaunchConfig: Equatable, Sendable {
     var fixtureName: String?
     var fixedNow: Date?
     var startScreen: StartScreen?
+    /// `-IcarusSeedDB seed_30d` replaces the store with the deterministic 30-day seed (PLAN.md §16.3).
+    var seedDB: String?
 
     static let current = LaunchConfig(arguments: ProcessInfo.processInfo.arguments)
 
@@ -29,7 +32,7 @@ struct LaunchConfig: Equatable, Sendable {
         fixtureName = values["-IcarusFixture"]
         fixedNow = values["-IcarusNow"].flatMap(Self.parseDate)
         startScreen = values["-IcarusScreen"].flatMap(StartScreen.init(rawValue:))
-        // -IcarusSeedDB is accepted and ignored until Phase 2 (Store).
+        seedDB = values["-IcarusSeedDB"]
         #endif
     }
 
