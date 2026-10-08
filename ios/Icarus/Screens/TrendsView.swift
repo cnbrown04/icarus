@@ -1,4 +1,6 @@
 import Charts
+import Metrics
+import Store
 import SwiftUI
 
 /// Seven, 30 or 90 days of resting HR, nightly RMSSD, stress and calories (PLAN.md §14 row 11).
