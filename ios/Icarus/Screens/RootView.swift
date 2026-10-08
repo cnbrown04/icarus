@@ -107,7 +107,7 @@ struct MainTabView: View {
             .tabItem { Label("Trends", systemImage: "chart.line.uptrend.xyaxis") }
 
             NavigationStack {
-                AlarmsView()
+                AlarmsView(environment: environment, liveState: liveState)
             }
             .tabItem { Label("Alarms", systemImage: "alarm.fill") }
 

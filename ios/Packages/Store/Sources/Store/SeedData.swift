@@ -35,6 +35,9 @@ public enum SeedData {
         try database.writer.write { db in
             try db.saveProfile(profile, atMs: nowMs)
             try db.upsertBand(peripheralUUID: bandPeripheralUUID, name: bandName, seenAtMs: start)
+            for alarm in alarms(updatedAtMs: nowMs) {
+                try alarm.save(db)
+            }
             // One prepared statement for all rows. Per-row `insert` is several times slower in debug builds.
             let statement = try db.makeStatement(sql: """
             INSERT INTO minute_metric (minute_ms, hr_avg, hr_min, hr_max, hr_n, rmssd_ms, sdnn_ms, baevsky_sqrt,
@@ -82,6 +85,43 @@ public enum SeedData {
 
     /// Resting heart rate the seed uses for the HR_flex floor.
     static let restingHeartRate = 55.0
+
+    /// Three alarms as the server would send them: a weekday wake-up on the band, a weekend alarm on the phone,
+    /// and a disabled reminder. Fixed ids, so UI tests can find them. Version 1 and not dirty: already synced.
+    static func alarms(updatedAtMs: Int64) -> [AlarmRow] {
+        [
+            AlarmRow(
+                id: "0192f6c1-7a3e-7c4d-9b1e-0000000000a1",
+                label: "Wake up",
+                schedule: #"{"time":"06:30","weekdays":[1,2,3,4,5]}"#,
+                rhythm: #""long""#,
+                channels: #"["phone","band"]"#,
+                enabled: true,
+                version: 1,
+                updatedAt: updatedAtMs
+            ),
+            AlarmRow(
+                id: "0192f6c1-7a3e-7c4d-9b1e-0000000000a2",
+                label: "Weekend",
+                schedule: #"{"time":"09:00","weekdays":[6,7]}"#,
+                rhythm: #""double""#,
+                channels: #"["phone"]"#,
+                enabled: true,
+                version: 1,
+                updatedAt: updatedAtMs
+            ),
+            AlarmRow(
+                id: "0192f6c1-7a3e-7c4d-9b1e-0000000000a3",
+                label: "Stretch",
+                schedule: #"{"time":"15:00","weekdays":[1,3,5]}"#,
+                rhythm: #""single""#,
+                channels: #"["phone","band"]"#,
+                enabled: false,
+                version: 1,
+                updatedAt: updatedAtMs
+            ),
+        ]
+    }
 
     private static func minuteRow(
         index: Int,

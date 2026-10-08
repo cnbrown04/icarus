@@ -34,6 +34,12 @@ actor ScriptedTransport: HTTPTransport {
     private var batchSteps: [ScriptedStep] = []
     private var configResponse: HTTPResponse?
     private var pairResponse: HTTPResponse?
+    private var routed: [String: [ScriptedStep]] = [:]
+
+    /// Queues answers for one path, used in order. Paths with no queue fall back to the defaults below.
+    func route(_ path: String, _ steps: [ScriptedStep]) {
+        routed[path, default: []] += steps
+    }
 
     func queueBatch(_ step: ScriptedStep) {
         batchSteps.append(step)
@@ -57,6 +63,15 @@ actor ScriptedTransport: HTTPTransport {
 
     func perform(_ request: HTTPRequest) async throws -> HTTPResponse {
         requests.append(request)
+        let path = request.url.path
+        if var queue = routed[path], !queue.isEmpty {
+            let step = queue.removeFirst()
+            routed[path] = queue
+            switch step {
+            case let .response(response): return response
+            case .failure: throw URLError(.notConnectedToInternet)
+            }
+        }
         switch request.url.path {
         case "/v1/sync/batches":
             guard !batchSteps.isEmpty else { return receipt() }

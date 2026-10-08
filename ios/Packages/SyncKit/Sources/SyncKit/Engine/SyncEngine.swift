@@ -23,6 +23,8 @@ public actor SyncEngine {
     private var running: Task<SyncRunResult, Never>?
     private var failures = 0
     private var retryAt: Date?
+    /// Alarm conflicts found since the Alarms screen last asked (PLAN.md 11.5).
+    private var alarmConflicts = 0
 
     public init(
         database: AppDatabase,
@@ -163,6 +165,7 @@ public actor SyncEngine {
                     return .needsRepair
                 }
             }
+            try await pushAlarms(client)
             try await pullConfig(client)
             try finishSuccess()
             return .synced
@@ -392,6 +395,77 @@ public actor SyncEngine {
             }
         }
         return outcome
+    }
+
+    // MARK: Alarms and push (PLAN.md 9.3, 11.5, 12.5)
+
+    /// What one `pushAlarmEdits` call achieved. `pending` counts edits still waiting for the server.
+    public struct AlarmPushResult: Equatable, Sendable {
+        public let pushed: Int
+        public let conflicts: Int
+        public let pending: Int
+    }
+
+    /// Sends local alarm edits now, for the editor's Save. Edits that cannot be sent (offline, not paired) stay dirty
+    /// and go out on the next run.
+    public func pushAlarmEdits() async -> AlarmPushResult {
+        guard let client = authorizedClient() else {
+            return AlarmPushResult(pushed: 0, conflicts: 0, pending: await dirtyAlarmCount())
+        }
+        do {
+            let outcome = try await AlarmPusher(database: database, client: client, clock: clock).run()
+            alarmConflicts += outcome.conflicts
+            return AlarmPushResult(
+                pushed: outcome.pushed,
+                conflicts: outcome.conflicts,
+                pending: await dirtyAlarmCount()
+            )
+        } catch {
+            return AlarmPushResult(pushed: 0, conflicts: 0, pending: await dirtyAlarmCount())
+        }
+    }
+
+    /// Conflicts found since the last call, then reset to zero.
+    public func takeAlarmConflicts() -> Int {
+        let count = alarmConflicts
+        alarmConflicts = 0
+        return count
+    }
+
+    /// Registers the device's APNs token for this environment (`PUT /v1/devices/me/push-token`). Throws when not paired.
+    public func sendPushToken(_ hex: String, environment: PushEnvironment) async throws {
+        guard let client = authorizedClient() else { throw APIError.network("Not paired") }
+        let body = try JSONEncoder().encode(PushTokenBody(apnsToken: hex, environment: environment.rawValue))
+        _ = try await client.send("PUT", "/v1/devices/me/push-token", body: body)
+    }
+
+    /// Dispatches the server has not seen acked (`GET /v1/alarms/pending`). Throws when not paired.
+    public func pendingDispatches() async throws -> [PendingDispatch] {
+        guard let client = authorizedClient() else { throw APIError.network("Not paired") }
+        return try await client.json(PendingResponse.self, "GET", "/v1/alarms/pending").dispatches
+    }
+
+    /// Reports what the phone and the band did for a dispatch (`POST /v1/alarm-dispatches/{id}/ack`).
+    public func ackDispatch(id: String, phone: PhoneAck, band: BandAck, detail: String? = nil) async throws {
+        guard let client = authorizedClient() else { throw APIError.network("Not paired") }
+        let body = try JSONEncoder().encode(AckBody(phone: phone.rawValue, band: band.rawValue, detail: detail))
+        _ = try await client.send("POST", "/v1/alarm-dispatches/\(id)/ack", body: body)
+    }
+
+    /// Dirty alarms go out before the config pull, so a pull cannot overwrite an edit that is still waiting.
+    private func pushAlarms(_ client: APIClient) async throws {
+        let outcome = try await AlarmPusher(database: database, client: client, clock: clock).run()
+        alarmConflicts += outcome.conflicts
+    }
+
+    /// A client for the paired server, or nil when the device is not paired or its token is gone.
+    private func authorizedClient() -> APIClient? {
+        guard let connection = outbox.loadState().connection, let token = try? tokens.load() else { return nil }
+        return APIClient(baseURL: connection.serverURL, token: token, transport: transport, now: clock.now)
+    }
+
+    private func dirtyAlarmCount() async -> Int {
+        (try? await database.writer.read { try $0.dirtyAlarms().count }) ?? 0
     }
 
     // MARK: Config (PLAN.md 11.4)

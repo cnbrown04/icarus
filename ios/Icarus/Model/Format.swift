@@ -1,3 +1,4 @@
+import Foundation
 import Metrics
 
 /// Display strings. Numbers come first and units follow after a regular space (PLAN.md 15.1 rule 5-6).
@@ -26,6 +27,13 @@ enum Format {
     static func number(_ value: Double, unit: String) -> String {
         let text = "\(Int(value.rounded()))"
         return unit.isEmpty ? text : "\(text) \(unit)"
+    }
+
+    /// Seconds with one decimal and a regular space before the unit, for rhythm lengths (PLAN.md 15.1).
+    static func seconds(_ value: Double) -> String {
+        let tenths = (value * 10).rounded() / 10
+        let text = tenths.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(tenths))" : String(format: "%.1f", tenths)
+        return "\(text) s"
     }
 
     /// Percent with a regular space before the sign, as the zone labels use.

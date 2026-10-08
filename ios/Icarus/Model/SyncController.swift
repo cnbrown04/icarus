@@ -41,8 +41,16 @@ enum PairingFailure: Error, Equatable {
 @MainActor
 @Observable
 final class SyncController {
+    /// The PLAN.md 11.5 toast text, shown when the server rejected a local alarm edit with 409.
+    static let alarmConflictMessage = "Alarm changed on the web; your edit wasn't saved"
+
     private(set) var status = SyncStatus(phase: .notPaired)
     private(set) var isRunning = false
+    /// True after a 409 on an alarm edit, until the toast is dismissed.
+    private(set) var alarmConflictNotice = false
+    /// The device's APNs token, once iOS has issued one (PLAN.md 12.5). Sent to the server when paired.
+    private(set) var pushToken: String?
+    @ObservationIgnored private var sentPushToken: String?
     /// False while the app is in the background. Background uploads are queued only then (PLAN.md 11.2).
     var isForeground = true
 
@@ -63,8 +71,41 @@ final class SyncController {
         guard !isRunning else { return }
         isRunning = true
         _ = await engine.run()
+        if await engine.takeAlarmConflicts() > 0 {
+            alarmConflictNotice = true
+        }
         isRunning = false
+        await sendPushTokenIfNeeded()
         await refresh()
+    }
+
+    /// Sends the alarm edits now, for the editor's Save and the alarm actions.
+    func pushAlarmEdits() async {
+        let result = await engine.pushAlarmEdits()
+        if result.conflicts > 0 {
+            alarmConflictNotice = true
+        }
+        await refresh()
+    }
+
+    func dismissAlarmConflictNotice() {
+        alarmConflictNotice = false
+    }
+
+    /// Records the token iOS issued. It is sent when the device is paired, and again when the token changes.
+    func receivePushToken(_ hex: String) async {
+        pushToken = hex
+        await sendPushTokenIfNeeded()
+    }
+
+    private func sendPushTokenIfNeeded() async {
+        guard let token = pushToken, token != sentPushToken, status.phase != .notPaired else { return }
+        do {
+            try await engine.sendPushToken(token, environment: .current)
+            sentPushToken = token
+        } catch {
+            // Not paired yet, or offline. The next sync run tries again.
+        }
     }
 
     func pair(server: URL, code: String) async throws {
@@ -88,6 +129,17 @@ final class SyncController {
         guard !isForeground, let uploader else { return }
         _ = await engine.enqueueBackgroundUpload(uploader)
         await refresh()
+    }
+}
+
+extension PushEnvironment {
+    /// Debug builds run from Xcode and get sandbox tokens. TestFlight and App Store builds get production tokens.
+    static var current: PushEnvironment {
+        #if DEBUG
+        .sandbox
+        #else
+        .production
+        #endif
     }
 }
 

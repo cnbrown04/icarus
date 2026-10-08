@@ -1,10 +1,15 @@
+import AlarmKitBridge
+import BandKit
+import BandProtocol
 import SwiftUI
 
 /// The band: a hero card with its state, then signal, battery and the age of the last reading (IOS_UI_SPEC, Screen 15).
+/// The Experimental section holds the band channel (Tier B). Turning it on needs the explainer's "Turn on" first.
 struct DeviceView: View {
     let liveState: LiveState
 
-    @State private var bandChannelEnabled = false
+    @State private var bandChannelEnabled = BandChannel.isEnabled
+    @State private var showsExplainer = false
     @State private var confirmsForget = false
 
     private var bandName: String {
@@ -71,15 +76,41 @@ struct DeviceView: View {
             }
 
             Section {
-                Toggle(isOn: $bandChannelEnabled) {
+                Toggle(isOn: bandChannelBinding) {
                     Label("Band channel", systemImage: "waveform")
                 }
-                .disabled(true)
+                .accessibilityIdentifier("device.bandChannel")
+                LabeledContent {
+                    tierBPill
+                } label: {
+                    Text("Channel status")
+                }
+                LabeledContent {
+                    lastBandEventText
+                } label: {
+                    Label("Last band event", systemImage: "hand.tap")
+                }
+                Button("Test buzz") {
+                    playTestBuzz()
+                }
+                .disabled(liveState.tierBState != .ready)
+                .accessibilityIdentifier("device.testBuzz")
             } header: {
                 Text("Experimental")
             } footer: {
-                Text("Available in a later phase")
+                Text("Band alarms depend on the band clock. The phone alarm is always armed too.")
             }
+        }
+        .sheet(isPresented: $showsExplainer) {
+            BandChannelExplainerView(
+                onTurnOn: {
+                    showsExplainer = false
+                    setBandChannel(true)
+                },
+                onCancel: {
+                    showsExplainer = false
+                }
+            )
         }
         .confirmationDialog("Forget '\(bandName)'?", isPresented: $confirmsForget, titleVisibility: .visible) {
             Button("Forget band", role: .destructive) {
@@ -88,6 +119,68 @@ struct DeviceView: View {
             Button("Cancel", role: .cancel) {}
         }
         .navigationTitle("Device")
+    }
+
+    /// Off switches the channel at once. On only opens the explainer, and the switch moves when "Turn on" is tapped.
+    private var bandChannelBinding: Binding<Bool> {
+        Binding(
+            get: { bandChannelEnabled },
+            set: { newValue in
+                if newValue {
+                    showsExplainer = true
+                } else {
+                    setBandChannel(false)
+                }
+            }
+        )
+    }
+
+    private func setBandChannel(_ enabled: Bool) {
+        BandChannel.set(enabled)
+        bandChannelEnabled = enabled
+        Task { await liveState.setTierBEnabled(enabled) }
+    }
+
+    private func playTestBuzz() {
+        guard let double = try? RhythmSpec.builtIn(.double).rhythm() else { return }
+        Task { await liveState.runRhythm(double) }
+    }
+
+    private var tierBPill: StatusPill {
+        switch liveState.tierBState {
+        case .disabled:
+            StatusPill(text: "Off", symbol: "pause.circle", tint: Palette.neutral)
+        case .awaitingLink:
+            StatusPill(text: "Waiting for band", symbol: "antenna.radiowaves.left.and.right", tint: Palette.warn)
+        case .handshaking:
+            StatusPill(text: "Connecting", symbol: "arrow.triangle.2.circlepath", tint: Palette.warn)
+        case .ready:
+            StatusPill(text: "Ready", symbol: "checkmark.seal.fill", tint: Palette.syncOK)
+        case .unavailable:
+            StatusPill(text: "Unavailable", symbol: "exclamationmark.triangle.fill", tint: Palette.error)
+        }
+    }
+
+    @ViewBuilder
+    private var lastBandEventText: some View {
+        if let kind = liveState.lastBandEvent, let at = liveState.lastBandEventAt {
+            HStack(spacing: Spacing.s4) {
+                Text(Self.eventName(kind))
+                Text(at, style: .time)
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            Text("None")
+        }
+    }
+
+    private static func eventName(_ kind: BandEventKind) -> String {
+        switch kind {
+        case .wristOn: "Wrist on"
+        case .wristOff: "Wrist off"
+        case .doubleTap: "Double tap"
+        default: "Other event"
+        }
     }
 
     private var signalText: String {

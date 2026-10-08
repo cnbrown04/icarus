@@ -1,4 +1,5 @@
 import BandKit
+import BandProtocol
 import Metrics
 import SwiftUI
 import SyncKit

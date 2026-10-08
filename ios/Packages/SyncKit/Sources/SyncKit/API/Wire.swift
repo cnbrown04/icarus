@@ -126,6 +126,13 @@ enum JSONValue: Codable, Equatable, Sendable {
     }
 }
 
+extension JSONValue {
+    /// Parses stored JSON text, such as an alarm's rhythm. Nil when the text is not JSON.
+    static func parse(_ text: String) -> JSONValue? {
+        try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
+    }
+}
+
 /// RFC 3339 UTC times with `Z` (api-contract.md, Conventions). Fractional seconds are accepted on input.
 enum RFC3339 {
     static func string(_ date: Date) -> String {

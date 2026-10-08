@@ -20,6 +20,12 @@ final class LiveState {
     private(set) var latestBPM: Int?
     private(set) var batteryPercent: Int?
     private(set) var tierBState: TierBState = .disabled
+    /// The last EVENT from the band, such as wrist on or a double tap, and when it arrived here (PLAN.md 5.3.4).
+    private(set) var lastBandEvent: BandEventKind?
+    private(set) var lastBandEventAt: Date?
+    /// Set by `AlarmCoordinator`. Called on the main actor when Tier B changes, or when a band event arrives.
+    @ObservationIgnored var onTierBChange: (@MainActor (TierBState) -> Void)?
+    @ObservationIgnored var onBandEvent: (@MainActor (BandEventKind) -> Void)?
     private(set) var lastDataAt: Date?
     /// Bands seen while scanning, plus the connected band, in the order first seen.
     private(set) var bands: [DiscoveredBand] = []
@@ -67,7 +73,10 @@ final class LiveState {
             return LiveState(transport: SyntheticTransport(seed: 1), sourceName: "Synthetic", clock: clock, ingest: ingest)
         }
         return LiveState(
-            transport: CoreBluetoothTransport(store: UserDefaultsBandIdentityStore()),
+            transport: CoreBluetoothTransport(
+                store: UserDefaultsBandIdentityStore(),
+                tierBEnabled: BandChannel.isEnabled
+            ),
             sourceName: "Bluetooth",
             clock: clock,
             ingest: ingest
@@ -139,6 +148,26 @@ final class LiveState {
         Task { await transport.forget() }
     }
 
+    // MARK: Band channel (PLAN.md 7.2, 9.2, 9.5). Each call does nothing unless Tier B is on and ready.
+
+    /// Turns the Experimental band channel on or off. Off stops all custom-service traffic (BandKit guarantees it).
+    func setTierBEnabled(_ enabled: Bool) async {
+        await transport.setTierBEnabled(enabled)
+    }
+
+    func runRhythm(_ rhythm: Rhythm) async {
+        await transport.runRhythm(rhythm)
+    }
+
+    func stopHaptics() async {
+        await transport.stopHaptics()
+    }
+
+    /// Arms the band alarm for the next due occurrence, in UTC. Nil sends nothing (PLAN.md 5.3.4).
+    func armBandAlarm(_ at: Date?) async {
+        await transport.armBandAlarm(at: at)
+    }
+
     private func apply(_ event: BandEvent) {
         switch event {
         case let .state(newState):
@@ -169,9 +198,11 @@ final class LiveState {
             batteryPercent = percent
         case let .tierB(newState):
             tierBState = newState
-        case .bandEvent:
-            // Wrist and double-tap events are shown by the Phase 6 band screens.
-            break
+            onTierBChange?(newState)
+        case let .bandEvent(kind):
+            lastBandEvent = kind
+            lastBandEventAt = clock.now
+            onBandEvent?(kind)
         }
     }
 

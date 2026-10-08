@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [BandProtocol, Metrics, BandKit, Store, SyncKit]
+        package: [BandProtocol, Metrics, BandKit, Store, SyncKit, AlarmKitBridge]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

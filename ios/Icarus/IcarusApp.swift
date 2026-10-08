@@ -11,8 +11,11 @@ struct IcarusApp: App {
         let config = LaunchConfig.current
         self.config = config
         let environment = AppEnvironment.make(config)
+        let liveState = LiveState.makeForLaunch(config, ingest: environment.ingestSink)
         _environment = State(initialValue: environment)
-        _liveState = State(initialValue: LiveState.makeForLaunch(config, ingest: environment.ingestSink))
+        _liveState = State(initialValue: liveState)
+        environment.alarms.connect(band: liveState)
+        PushRouter.shared.attach(sync: environment.sync, band: liveState)
         // Must run before launch finishes (PLAN.md 11.2).
         BackgroundTasks.register(environment)
     }
@@ -25,6 +28,7 @@ struct IcarusApp: App {
                     environment.startIngestion()
                     liveState.start()
                     environment.startSync()
+                    environment.alarms.start()
                 }
         }
     }

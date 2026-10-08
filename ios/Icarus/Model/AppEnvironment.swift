@@ -1,3 +1,4 @@
+import AlarmKitBridge
 import Foundation
 import GRDB
 import Metrics
@@ -13,6 +14,7 @@ final class AppEnvironment {
     /// True when the store could not open its file and runs in memory for this launch. Nothing is kept.
     let storageFailed: Bool
     let sync: SyncController
+    let alarms: AlarmCoordinator
 
     private let metrics: MetricsWorker
     private let ingestor: Ingestor
@@ -31,7 +33,8 @@ final class AppEnvironment {
         storageFailed: Bool,
         ingestsLiveData: Bool,
         sync: SyncController,
-        isSyncFixture: Bool
+        isSyncFixture: Bool,
+        livesAlarms: Bool
     ) {
         self.database = database
         self.clock = clock
@@ -39,6 +42,14 @@ final class AppEnvironment {
         self.ingestsLiveData = ingestsLiveData
         self.sync = sync
         self.isSyncFixture = isSyncFixture
+        // UI tests and seeded launches never touch AlarmKit or the notification centre, so no prompt can appear.
+        self.alarms = AlarmCoordinator(
+            database: database,
+            scheduler: livesAlarms ? AlarmKitScheduler() : InMemoryAlarmScheduler(),
+            notifier: livesAlarms ? AlarmNotifier() : nil,
+            sync: sync,
+            clock: clock
+        )
         let metrics = MetricsWorker(database: database)
         self.metrics = metrics
         self.ingestor = Ingestor(database: database, metrics: metrics, clock: clock, onFlushed: {
@@ -54,33 +65,34 @@ final class AppEnvironment {
         if config.seedDB == "seed_30d", let seeded = try? SeedData.make30Days(now: clock.now) {
             return AppEnvironment(
                 database: seeded, clock: clock, storageFailed: false, ingestsLiveData: false,
-                sync: makeSync(database: seeded, mode: .memory), isSyncFixture: false
+                sync: makeSync(database: seeded, mode: .memory), isSyncFixture: false, livesAlarms: false
             )
         }
         if config.syncFixture == "paired" {
             let database = inMemory()
             return AppEnvironment(
                 database: database, clock: clock, storageFailed: false, ingestsLiveData: false,
-                sync: makeSync(database: database, mode: .fixture(now: clock.now)), isSyncFixture: true
+                sync: makeSync(database: database, mode: .fixture(now: clock.now)), isSyncFixture: true,
+                livesAlarms: false
             )
         }
         if config.isUITest {
             let database = inMemory()
             return AppEnvironment(
                 database: database, clock: clock, storageFailed: false, ingestsLiveData: true,
-                sync: makeSync(database: database, mode: .memory), isSyncFixture: false
+                sync: makeSync(database: database, mode: .memory), isSyncFixture: false, livesAlarms: false
             )
         }
         if let url = storeURL(), let file = try? AppDatabase.file(at: url) {
             return AppEnvironment(
                 database: file, clock: clock, storageFailed: false, ingestsLiveData: true,
-                sync: makeSync(database: file, mode: .durable), isSyncFixture: false
+                sync: makeSync(database: file, mode: .durable), isSyncFixture: false, livesAlarms: true
             )
         }
         let database = inMemory()
         return AppEnvironment(
             database: database, clock: clock, storageFailed: true, ingestsLiveData: true,
-            sync: makeSync(database: database, mode: .memory), isSyncFixture: false
+            sync: makeSync(database: database, mode: .memory), isSyncFixture: false, livesAlarms: false
         )
     }
 
@@ -137,6 +149,9 @@ final class AppEnvironment {
         }
         if phase == .active, syncStarted {
             Task { await sync.runNow() }
+        }
+        if phase == .active {
+            Task { await alarms.rearmAll() }
         }
     }
 

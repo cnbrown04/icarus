@@ -72,6 +72,22 @@ public struct APIClient: Sendable {
         return response
     }
 
+    /// Sends one request and returns the response whatever its status. Throws only when no response arrived.
+    /// Alarm writes need this: a 409 body carries the server's copy (api-contract.md, Conventions).
+    public func exchange(
+        _ method: String,
+        _ path: String,
+        headers: [String: String] = [:],
+        body: Data? = nil
+    ) async throws -> HTTPResponse {
+        let request = try makeRequest(method, path, query: [], headers: headers, body: body)
+        do {
+            return try await transport.perform(request)
+        } catch {
+            throw APIError.network("Request failed")
+        }
+    }
+
     /// Sends a request and decodes its 2xx body.
     public func json<T: Decodable & Sendable>(
         _ type: T.Type,

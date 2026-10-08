@@ -44,7 +44,17 @@ final class ScreenshotTests: XCTestCase {
         for tab in tabs {
             app.tabBars.buttons[tab.label].tap()
             XCTAssertTrue(app.navigationBars[tab.label].waitForExistence(timeout: 10))
+            if tab.label == "Alarms" {
+                // The seed has three alarms (Store SeedData), so the list must show them before the capture.
+                XCTAssertTrue(element(app, "alarms.time").waitForExistence(timeout: 10))
+            }
+            if tab.label == "Device" {
+                scrollToExperimental(app)
+            }
             attachScreenshot(named: tab.attachmentName)
+            if tab.label == "Alarms" {
+                attachAlarmEditorScreens(app)
+            }
         }
     }
 
@@ -139,6 +149,38 @@ final class ScreenshotTests: XCTestCase {
         app.buttons["Sync"].firstMatch.tap()
         XCTAssertTrue(app.navigationBars["Sync"].waitForExistence(timeout: 10))
         attachScreenshot(named: "16-sync")
+    }
+
+    /// Opens the first alarm in the editor, then its rhythm editor, and returns to the list.
+    private func attachAlarmEditorScreens(_ app: XCUIApplication) {
+        element(app, "alarms.time").tap()
+        XCTAssertTrue(app.buttons["alarmEditor.save"].waitForExistence(timeout: 10))
+        attachScreenshot(named: "13-alarm-editor")
+
+        element(app, "alarmEditor.rhythm").tap()
+        XCTAssertTrue(app.navigationBars["Rhythm"].waitForExistence(timeout: 10))
+        attachScreenshot(named: "14-rhythm-editor")
+
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["alarmEditor.save"].waitForExistence(timeout: 10))
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.navigationBars["Alarms"].waitForExistence(timeout: 10))
+    }
+
+    /// Scrolls the Device form until its Experimental section header is on screen.
+    private func scrollToExperimental(_ app: XCUIApplication) {
+        let header = app.staticTexts["Experimental"]
+        XCTAssertTrue(header.waitForExistence(timeout: 10))
+        var swipes = 0
+        while !header.isHittable, swipes < 6 {
+            app.swipeUp()
+            swipes += 1
+        }
+    }
+
+    /// Any element with this identifier. Identifiers sit on leaf views, which may be typed as text or buttons.
+    private func element(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
     /// Taps a leaf element on Today and waits for the detail screen's title.

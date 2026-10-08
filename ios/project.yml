@@ -29,6 +29,8 @@ packages:
     path: Packages/Store
   SyncKit:
     path: Packages/SyncKit
+  AlarmKitBridge:
+    path: Packages/AlarmKitBridge
   # Store's API exposes GRDB types (Database), so the app imports GRDB directly.
   GRDB:
     url: https://github.com/groue/GRDB.swift
@@ -50,7 +52,13 @@ targets:
       - package: BandKit
       - package: Store
       - package: SyncKit
+      - package: AlarmKitBridge
       - package: GRDB
+    entitlements:
+      # Push alerts and silent pushes (PLAN.md 12.5). Generated at this path by XcodeGen.
+      path: Entitlements/Icarus.entitlements
+      properties:
+        aps-environment: development
     info:
       path: Icarus/Info.plist
       properties:
@@ -58,6 +66,7 @@ targets:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSBluetoothAlwaysUsageDescription: "Icarus uses Bluetooth to read heart rate from your band."
+        NSAlarmKitUsageDescription: "Icarus uses alarms to wake you at the times you set."
         UIBackgroundModes:
           - bluetooth-central
           - processing
@@ -91,6 +100,7 @@ targets:
       - target: Icarus
       - package: Store
       - package: Metrics
+      - package: AlarmKitBridge
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cnbrown04.icarus.tests
