@@ -130,6 +130,21 @@ func jsonObject(_ data: Data?) throws -> [String: Any] {
     return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
 }
 
+/// Parsed request body for assertions. The engine gzips batch upload bodies on Darwin
+/// (`BodyEncoding`), so recorded upload requests must be inflated before JSON-parsing.
+func jsonRequestBody(_ request: HTTPRequest) throws -> [String: Any] {
+    var data = request.body ?? Data()
+    if request.headers["Content-Encoding"] == "gzip" {
+        #if canImport(Darwin)
+        // Invert `BodyEncoding`: strip the 10-byte gzip header and the 8-byte CRC-32/ISIZE
+        // trailer; what remains is the raw DEFLATE stream `NSData.decompressed(using: .zlib)` expects.
+        let framed = data.dropFirst(10).dropLast(8)
+        data = try (framed as NSData).decompressed(using: .zlib) as Data
+        #endif
+    }
+    return try jsonObject(data)
+}
+
 /// A paired outbox, so engine tests start from a connected device without a pairing round trip.
 func pairedOutbox(serverURL: URL = testServer) throws -> Outbox {
     let outbox = temporaryOutbox()

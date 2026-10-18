@@ -10,7 +10,7 @@ struct SyncEngineTests {
     }
 
     private func hrRowsInBatch(_ request: HTTPRequest) throws -> Int {
-        let body = try jsonObject(request.body)
+        let body = try jsonRequestBody(request)
         return ((body["hr"] as? [String: Any])?["ts_ms"] as? [Int])?.count ?? 0
     }
 
