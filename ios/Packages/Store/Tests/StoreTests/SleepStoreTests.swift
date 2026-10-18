@@ -12,6 +12,8 @@ struct SleepStoreTests {
 
     /// 2026-10-15T23:00:00Z, inside the night window.
     private let nightStart: Int64 = 1_792_105_200
+    /// The same instant in ms (PLAN.md 10.1 stores ts_ms; the record itself is second-granular).
+    private var nightStartMs: Int64 { nightStart * 1000 }
 
     private func sample(_ tsMs: Int64, bpm: Int? = 55, contact: Bool = true, rr: [Double] = [1_000, 1_010]) -> Database.HistoricalSample {
         Database.HistoricalSample(
@@ -27,7 +29,16 @@ struct SleepStoreTests {
             spo2Ir: 12_000,
             skinTempRaw: 3_900,
             respRateRaw: 660,
-            signalQuality: 240
+            signalQuality: 240,
+            gravityX: 0.012,
+            gravityY: -0.031,
+            gravityZ: 0.999,
+            gravity2X: 0.002,
+            gravity2Y: -0.004,
+            gravity2Z: 1.005,
+            ambientDrive: 7,
+            ledDrive1: 1_204,
+            ledDrive2: 1_310
         )
     }
 
@@ -35,7 +46,7 @@ struct SleepStoreTests {
     /// 30-minute split threshold.
     private func nightSamples() -> [Database.HistoricalSample] {
         stride(from: 0, to: 8 * 60 * 60, by: 120).map { offset in
-            sample(nightStart + offset)
+            sample(nightStartMs + offset * 1000)
         }
     }
 
@@ -54,12 +65,12 @@ struct SleepStoreTests {
     @Test func samplesAreDedupedByBandAndTimestamp() throws {
         let database = try seededDatabase()
         let inserted = try database.writer.write { db in
-            try db.insertHistoricalSamples([sample(nightStart)])
+            try db.insertHistoricalSamples([sample(nightStartMs)])
         }
         #expect(inserted == 1)
 
         let replayed = try database.writer.write { db in
-            try db.insertHistoricalSamples([sample(nightStart), sample(nightStart + 120_000)])
+            try db.insertHistoricalSamples([sample(nightStartMs), sample(nightStartMs + 120_000)])
         }
         #expect(replayed == 1) // the first sample deduped, the new one inserted
 
@@ -67,14 +78,14 @@ struct SleepStoreTests {
             try HistoricalRecordRow.fetchAll(db, sql: "SELECT * FROM historical_record ORDER BY ts_ms")
         }
         #expect(rows.count == 2)
-        #expect(rows[0].tsMs == nightStart)
-        #expect(rows[1].tsMs == nightStart + 120_000)
+        #expect(rows[0].tsMs == nightStartMs)
+        #expect(rows[1].tsMs == nightStartMs + 120_000)
     }
 
     @Test func sampleFieldsRoundTrip() throws {
         let database = try seededDatabase()
         _ = try database.writer.write { db in
-            try db.insertHistoricalSamples([sample(nightStart, bpm: nil, contact: false, rr: [])])
+            try db.insertHistoricalSamples([sample(nightStartMs, bpm: nil, contact: false, rr: [])])
         }
         let row = try #require(database.writer.read { db in
             try HistoricalRecordRow.fetchOne(db, sql: "SELECT * FROM historical_record")
@@ -90,12 +101,21 @@ struct SleepStoreTests {
         #expect(row.skinTempRaw == 3_900)
         #expect(row.respRateRaw == 660)
         #expect(row.signalQuality == 240)
+        #expect(row.gravityX == 0.012)
+        #expect(row.gravityY == -0.031)
+        #expect(row.gravityZ == 0.999)
+        #expect(row.gravity2X == 0.002)
+        #expect(row.gravity2Y == -0.004)
+        #expect(row.gravity2Z == 1.005)
+        #expect(row.ambientDrive == 7)
+        #expect(row.ledDrive1 == 1_204)
+        #expect(row.ledDrive2 == 1_310)
     }
 
     @Test func rrJSONDecodesTheStoredIntervals() throws {
         let database = try seededDatabase()
         _ = try database.writer.write { db in
-            try db.insertHistoricalSamples([sample(nightStart, rr: [995, 1_004.5])])
+            try db.insertHistoricalSamples([sample(nightStartMs, rr: [995, 1_004.5])])
         }
         let row = try #require(database.writer.read { db in
             try HistoricalRecordRow.fetchOne(db, sql: "SELECT * FROM historical_record")
@@ -108,8 +128,8 @@ struct SleepStoreTests {
         let database = try seededDatabase()
         try insertNight(database)
         let bandID = try storedBandID(of: database)
-        let from = nightStart - 3_600_000
-        let to = nightStart + 9 * 3_600_000
+        let from = nightStartMs - 3_600_000
+        let to = nightStartMs + 9 * 3_600_000
 
         let written = try database.writer.write { db in
             try db.deriveSleepSessions(from: from, to: to, bandID: bandID, in: Self.utc, computedAtMs: testNowMs)
@@ -121,8 +141,8 @@ struct SleepStoreTests {
         }
         #expect(sessions.count == 1)
         let session = sessions[0]
-        #expect(session.startMs == nightStart)
-        #expect(session.endMs == nightStart + 8 * 60 * 60 - 120_000)
+        #expect(session.startMs == nightStartMs)
+        #expect(session.endMs == nightStartMs + (8 * 60 * 60 - 120) * 1000)
         #expect(session.durationS == 8 * 60 * 60 - 120)
         #expect(session.restingHr == 55)
         #expect(session.contactFraction == 1)
@@ -138,8 +158,8 @@ struct SleepStoreTests {
         let database = try seededDatabase()
         try insertNight(database)
         let bandID = try storedBandID(of: database)
-        let from = nightStart - 3_600_000
-        let to = nightStart + 9 * 3_600_000
+        let from = nightStartMs - 3_600_000
+        let to = nightStartMs + 9 * 3_600_000
 
         _ = try database.writer.write { db in
             try db.deriveSleepSessions(from: from, to: to, bandID: bandID, in: Self.utc, computedAtMs: testNowMs)
@@ -176,13 +196,13 @@ struct SleepStoreTests {
         })
 
         _ = try database.writer.write { db in
-            try db.deriveSleepSessions(from: nightStart - 3_600_000, to: nightStart + 9 * 3_600_000, bandID: secondBand, in: Self.utc, computedAtMs: testNowMs)
+            try db.deriveSleepSessions(from: nightStartMs - 3_600_000, to: nightStartMs + 9 * 3_600_000, bandID: secondBand, in: Self.utc, computedAtMs: testNowMs)
         }
         let secondBandSessions = try database.writer.read { db in
-            try db.sleepSessionRows(bandID: secondBand, from: nightStart - 3_600_000, to: nightStart + 9 * 3_600_000)
+            try db.sleepSessionRows(bandID: secondBand, from: nightStartMs - 3_600_000, to: nightStartMs + 9 * 3_600_000)
         }
         let firstBandSessions = try database.writer.read { db in
-            try db.sleepSessionRows(bandID: firstBand, from: nightStart - 3_600_000, to: nightStart + 9 * 3_600_000)
+            try db.sleepSessionRows(bandID: firstBand, from: nightStartMs - 3_600_000, to: nightStartMs + 9 * 3_600_000)
         }
         #expect(secondBandSessions.count == 1)
         #expect(secondBandSessions[0].restingHr == 60) // derived from the second band's rows only

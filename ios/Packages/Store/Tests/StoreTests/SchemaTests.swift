@@ -7,9 +7,12 @@ struct SchemaTests {
     private static let tables = [
         "profile", "band", "hr_sample", "rr_interval", "minute_metric", "band_event",
         "alarm", "alarm_delivery", "sync_cursor", "sync_batch_log", "raw_frame",
+        "historical_record", "sleep_session",
     ]
+    /// v2 added the sleep tables, v3 the nine nullable `historical_record` sensor columns.
+    private static let migrations = ["v1", "v2", "v3"]
 
-    @Test func migratesEmptyDatabaseToV1Tables() throws {
+    @Test func migratesEmptyDatabaseToAllTables() throws {
         let database = try AppDatabase.inMemory()
         let names = try database.writer.read { db in
             try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
@@ -17,12 +20,12 @@ struct SchemaTests {
         #expect(Set(names) == Set(Self.tables + ["grdb_migrations"]))
     }
 
-    @Test func recordsV1Migration() throws {
+    @Test func recordsEveryMigration() throws {
         let database = try AppDatabase.inMemory()
         let applied = try database.writer.read { db in
             try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier")
         }
-        #expect(applied == ["v1"])
+        #expect(applied == Self.migrations)
     }
 
     @Test func reopeningAFileDatabaseDoesNotRerunMigrations() throws {
@@ -36,7 +39,23 @@ struct SchemaTests {
         let count = try reopened.writer.read { db in
             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM grdb_migrations")
         }
-        #expect(count == 1)
+        #expect(count == Self.migrations.count)
+    }
+
+    @Test func v3AddsTheNullableSensorColumns() throws {
+        let database = try AppDatabase.inMemory()
+        let columns = try database.writer.read { db in
+            try String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('historical_record')")
+        }
+        for column in ["gravity_x", "gravity_y", "gravity_z", "gravity2_x", "gravity2_y", "gravity2_z",
+                       "ambient_drive", "led_drive1", "led_drive2"] {
+            #expect(columns.contains(column), "missing column \(column)")
+        }
+        // The v2 dedup constraint survives the additive migration.
+        let constraints = try database.writer.read { db in
+            try String.fetchAll(db, sql: "SELECT sql FROM sqlite_master WHERE name = 'historical_record'")
+        }
+        #expect(constraints.first?.contains("UNIQUE (band_id, ts_ms)") == true)
     }
 
     @Test func profileIsSingleRowWithCheckConstraint() throws {

@@ -30,6 +30,17 @@ public struct HistoricalRecordRow: Codable, Equatable, Sendable, FetchableRecord
     public var skinTempRaw: Int?
     public var respRateRaw: Int?
     public var signalQuality: Int?
+    /// Both gravity triplets, in g (v3). NULL in rows written before v3.
+    public var gravityX: Double?
+    public var gravityY: Double?
+    public var gravityZ: Double?
+    public var gravity2X: Double?
+    public var gravity2Y: Double?
+    public var gravity2Z: Double?
+    /// Raw ambient-light and LED drive bytes (v3). NULL in rows written before v3.
+    public var ambientDrive: Int?
+    public var ledDrive1: Int?
+    public var ledDrive2: Int?
 
     enum CodingKeys: String, CodingKey {
         case rowid
@@ -46,6 +57,15 @@ public struct HistoricalRecordRow: Codable, Equatable, Sendable, FetchableRecord
         case skinTempRaw = "skin_temp_raw"
         case respRateRaw = "resp_rate_raw"
         case signalQuality = "signal_quality"
+        case gravityX = "gravity_x"
+        case gravityY = "gravity_y"
+        case gravityZ = "gravity_z"
+        case gravity2X = "gravity2_x"
+        case gravity2Y = "gravity2_y"
+        case gravity2Z = "gravity2_z"
+        case ambientDrive = "ambient_drive"
+        case ledDrive1 = "led_drive1"
+        case ledDrive2 = "led_drive2"
     }
 
     /// The stored R-R values, or nil when the JSON did not decode.

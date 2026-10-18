@@ -9,6 +9,9 @@ enum Schema {
         migrator.registerMigration("v2") { db in
             try db.execute(sql: v2)
         }
+        migrator.registerMigration("v3") { db in
+            try db.execute(sql: v3)
+        }
     }
 
     /// Migration v1, copied from PLAN.md 10.2. Times are epoch ms UTC.
@@ -75,5 +78,20 @@ enum Schema {
       algo_version INTEGER NOT NULL, computed_at INTEGER NOT NULL,
       UNIQUE (band_id, start_ms));
     CREATE INDEX sleep_session_start ON sleep_session(start_ms);
+    """
+    /// Migration v3, advanced raw band data. Additive: nine nullable columns on `historical_record`
+    /// for the fields the v2 ingest dropped — both gravity triplets (f32, in g) and the ambient-light
+    /// and LED drive bytes (raw u16). Older rows keep NULLs, and the UNIQUE(band_id, ts_ms) dedup
+    /// constraint from v2 is untouched (replayed batches still dedupe).
+    static let v3 = """
+    ALTER TABLE historical_record ADD COLUMN gravity_x REAL;
+    ALTER TABLE historical_record ADD COLUMN gravity_y REAL;
+    ALTER TABLE historical_record ADD COLUMN gravity_z REAL;
+    ALTER TABLE historical_record ADD COLUMN gravity2_x REAL;
+    ALTER TABLE historical_record ADD COLUMN gravity2_y REAL;
+    ALTER TABLE historical_record ADD COLUMN gravity2_z REAL;
+    ALTER TABLE historical_record ADD COLUMN ambient_drive INTEGER;
+    ALTER TABLE historical_record ADD COLUMN led_drive1 INTEGER;
+    ALTER TABLE historical_record ADD COLUMN led_drive2 INTEGER;
     """
 }

@@ -28,6 +28,17 @@ extension Database {
         public let skinTempRaw: Int?
         public let respRateRaw: Int?
         public let signalQuality: Int?
+        /// Both gravity triplets, in g (v3).
+        public let gravityX: Double?
+        public let gravityY: Double?
+        public let gravityZ: Double?
+        public let gravity2X: Double?
+        public let gravity2Y: Double?
+        public let gravity2Z: Double?
+        /// Raw ambient-light and LED drive bytes (v3).
+        public let ambientDrive: Int?
+        public let ledDrive1: Int?
+        public let ledDrive2: Int?
 
         public init(
             peripheralUUID: UUID,
@@ -42,7 +53,16 @@ extension Database {
             spo2Ir: Int? = nil,
             skinTempRaw: Int? = nil,
             respRateRaw: Int? = nil,
-            signalQuality: Int? = nil
+            signalQuality: Int? = nil,
+            gravityX: Double? = nil,
+            gravityY: Double? = nil,
+            gravityZ: Double? = nil,
+            gravity2X: Double? = nil,
+            gravity2Y: Double? = nil,
+            gravity2Z: Double? = nil,
+            ambientDrive: Int? = nil,
+            ledDrive1: Int? = nil,
+            ledDrive2: Int? = nil
         ) {
             self.peripheralUUID = peripheralUUID
             self.tsMs = tsMs
@@ -57,6 +77,15 @@ extension Database {
             self.skinTempRaw = skinTempRaw
             self.respRateRaw = respRateRaw
             self.signalQuality = signalQuality
+            self.gravityX = gravityX
+            self.gravityY = gravityY
+            self.gravityZ = gravityZ
+            self.gravity2X = gravity2X
+            self.gravity2Y = gravity2Y
+            self.gravity2Z = gravity2Z
+            self.ambientDrive = ambientDrive
+            self.ledDrive1 = ledDrive1
+            self.ledDrive2 = ledDrive2
         }
     }
 
@@ -68,8 +97,9 @@ extension Database {
         let statement = try makeStatement(sql: """
         INSERT OR IGNORE INTO historical_record
           (band_id, ts_ms, version, bpm, contact, rr_ms, ppg_green, ppg_red_ir, spo2_red, spo2_ir,
-           skin_temp_raw, resp_rate_raw, signal_quality)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           skin_temp_raw, resp_rate_raw, signal_quality, gravity_x, gravity_y, gravity_z,
+           gravity2_x, gravity2_y, gravity2_z, ambient_drive, led_drive1, led_drive2)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)
         var bandIDs: [UUID: String] = [:]
         var inserted = 0
@@ -95,6 +125,15 @@ extension Database {
                 sample.skinTempRaw,
                 sample.respRateRaw,
                 sample.signalQuality,
+                sample.gravityX,
+                sample.gravityY,
+                sample.gravityZ,
+                sample.gravity2X,
+                sample.gravity2Y,
+                sample.gravity2Z,
+                sample.ambientDrive,
+                sample.ledDrive1,
+                sample.ledDrive2,
             ])
             try statement.execute()
             inserted += changesCount
