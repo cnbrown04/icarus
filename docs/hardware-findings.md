@@ -50,9 +50,15 @@ For each item, write the result, the firmware it was measured on, and the fixtur
 ### 5. Which SET_CLOCK payload length does this firmware latch (8 or 9 bytes)?
 
 - Source: [S12]
-- Result:
-- Firmware:
-- Fixture:
+- Result: The RTC latches (GET_CLOCK reads back the seconds sent, and the strap resumes banking
+  history) only after the handshake writes BOTH forms: the 8-byte `[u32 LE][u32 zero]` body alone
+  was ACKed but never latched — the strap RTC stayed months stale and no new history was banked.
+  With `setClock(unix:)` followed by `setClockLegacy(unix:)` (the 9-byte `[u32 LE][5 zero]` body),
+  GET_CLOCK read back exactly the seconds sent (2026-10-18 capture). Matches NOOP's finding that
+  fw 41.17.x latches only the 9-byte form; which of the two forms this strap latched was not
+  isolated (both were sent, and isolating them would desync the RTC again).
+- Firmware: WHOOP 4.0, GET_HELLO firmware string `8e27cafe` (see ios band log capture)
+- Fixture: live capture, `ios/Packages/BandKit` log capture (`BandLog.startCapture`), 2026-10-18
 
 ### 6. Does RUN_HAPTICS_PATTERN 79 with `[2, n, 0, 0, 0]` buzz a WHOOP 4.0, and what does GET_ALL_HAPTICS_PATTERN 80 return?
 
