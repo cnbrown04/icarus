@@ -40,4 +40,8 @@ public enum BandEvent: Sendable, Equatable {
     /// A human-readable reason the Tier B custom-service setup or handshake failed. Emitted just
     /// before `.tierB(.unavailable)`. The Device screen shows it while the state is `.unavailable`.
     case tierBFailure(String)
+    /// A decoded frame the controller did not otherwise act on — today the REALTIME_RAW_DATA
+    /// (0x2B) accel/PPG flood (~1.9 KB/s), which nothing parses. The raw-data viewer shows its
+    /// header and hex; consumers format hex lazily, because the flood never stops while streaming.
+    case rawFrame(Frame, at: Date)
 }

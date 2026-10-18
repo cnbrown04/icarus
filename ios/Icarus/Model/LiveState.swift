@@ -34,6 +34,8 @@ final class LiveState {
     /// Called on the main actor when a history offload drain completes. The records are NOT stored
     /// here — the consumer owns their persistence (PLAN.md 5.3.4).
     @ObservationIgnored var onHistoricalRecords: (@MainActor ([HistoricalRecord]) -> Void)?
+    /// The last record of the most recent history drain, for the raw-data viewer. Not persisted.
+    private(set) var lastHistoricalRecord: HistoricalRecord?
     private(set) var lastDataAt: Date?
     /// Bands seen while scanning, plus the connected band, in the order first seen.
     private(set) var bands: [DiscoveredBand] = []
@@ -190,6 +192,10 @@ final class LiveState {
             rememberedID = id
         case let .raw(char, bytes, at):
             frameLog.append(characteristic: char, bytes: bytes, at: at)
+        case let .rawFrame(frame, at):
+            // Decoded frames the controller only surfaces, the 0x2B flood included. The ring is
+            // tiny and nothing formats hex here, so the flood stays cheap (PLAN.md 7.2 debugging).
+            frameLog.append(frame: frame, at: at)
         case let .hr(measurement, receivedAt):
             latestBPM = measurement.bpm
             lastDataAt = receivedAt
@@ -220,6 +226,7 @@ final class LiveState {
             bandInfo = info
         case let .historical(records):
             BandLog.tierB(.info, "app: historical records arrived (\(records.count))")
+            lastHistoricalRecord = records.last
             onHistoricalRecords?(records)
         }
     }

@@ -19,6 +19,11 @@ struct DebugView: View {
             dataServerSection
 
             Section {
+                NavigationLink {
+                    RawDataView(liveState: liveState)
+                } label: {
+                    Label("Raw band data", systemImage: "waveform.path.ecg")
+                }
                 LabeledContent("Source", value: liveState.sourceName)
                 LabeledContent("Frames kept", value: "\(liveState.frameLog.count)")
                 ShareLink(item: sessionExport, preview: SharePreview("Icarus session.ndjson")) {
