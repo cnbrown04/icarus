@@ -95,6 +95,11 @@ final class AppEnvironment {
                         .appendingPathComponent("band_log.txt")
                 )
             }
+            // One-time junk cleanup: launch with `-purge-junk-records` to delete the garbage
+            // `historical_record` rows an old buggy parser wrote (see `purgeJunkRecords`).
+            if ProcessInfo.processInfo.arguments.contains("purge-junk-records") {
+                purgeJunkRecords(in: file)
+            }
             #endif
             return AppEnvironment(
                 database: file, clock: clock, storageFailed: false, ingestsLiveData: true,
@@ -182,7 +187,16 @@ final class AppEnvironment {
                 spo2Ir: raw(record.spo2Ir),
                 skinTempRaw: raw(record.skinTempRaw),
                 respRateRaw: raw(record.respRateRaw),
-                signalQuality: raw(record.signalQuality)
+                signalQuality: raw(record.signalQuality),
+                gravityX: record.gravity.x,
+                gravityY: record.gravity.y,
+                gravityZ: record.gravity.z,
+                gravity2X: record.secondaryGravity.x,
+                gravity2Y: record.secondaryGravity.y,
+                gravity2Z: record.secondaryGravity.z,
+                ambientDrive: raw(record.ambientDrive),
+                ledDrive1: raw(record.ledDrive1),
+                ledDrive2: raw(record.ledDrive2)
             )
         }
         let fromMs = samples.map(\.tsMs).min() ?? 0
@@ -349,6 +363,30 @@ final class AppEnvironment {
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("Icarus", isDirectory: true)
             .appendingPathComponent("debug_dump.json")
+    }
+
+    /// Records older than this ts_ms (2026-01-01) predate anything the band can produce: the strap's
+    /// banked history starts in June 2026 (stale-RTC era) and its store reaches back only days. The
+    /// garbage rows were written in 2010–2014 by an old buggy parser.
+    private static let junkRecordCutoffMs: Int64 = 1_767_225_600_000
+
+    /// One-time cleanup of the 8 garbage `historical_record` rows from the old buggy parser:
+    /// launched with `-purge-junk-records`, it deletes every row with ts_ms before 2026-01-01 and
+    /// logs the count. Without the launch argument it does nothing, and once the rows are gone
+    /// running it again deletes nothing.
+    private static func purgeJunkRecords(in database: AppDatabase) {
+        do {
+            let deleted = try database.writer.write { db in
+                try db.execute(
+                    sql: "DELETE FROM historical_record WHERE ts_ms < ?",
+                    arguments: [junkRecordCutoffMs]
+                )
+                return db.changesCount
+            }
+            BandLog.tierB(.info, "purge-junk-records: deleted \(deleted) junk row(s)")
+        } catch {
+            BandLog.tierB(.error, "purge-junk-records failed: \(String(describing: error))")
+        }
     }
     #endif
 
