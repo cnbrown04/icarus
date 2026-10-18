@@ -1,0 +1,99 @@
+/* App tokens for state, stress, HR zones and kcal. They are not Lyra tokens: index.css and the Lyra lock stay generated.
+   Text values pass WCAG AA on the card and on their 12% tints; graphic values pass 3:1 on the card. */
+:root {
+  --status-ok: oklch(0.5 0.12 155);
+  --status-warn: oklch(0.52 0.13 70);
+  --status-danger: oklch(0.5 0.19 27);
+  --status-info: oklch(0.5 0.13 255);
+  --stress-low: oklch(0.5 0.12 155);
+  --stress-moderate: oklch(0.53 0.13 70);
+  --stress-high: oklch(0.5 0.19 27);
+  --zone-1: oklch(0.55 0.14 250);
+  --zone-2: oklch(0.52 0.13 150);
+  --zone-3: oklch(0.65 0.17 95);
+  --zone-4: oklch(0.58 0.19 50);
+  --zone-5: oklch(0.5 0.2 27);
+  --hr: oklch(0.52 0.2 15);
+  --kcal-resting: oklch(0.56 0.1 200);
+  --kcal-active: oklch(0.6 0.17 50);
+  --hrv: oklch(0.5 0.2 290);
+}
+
+.dark {
+  --status-ok: oklch(0.84 0.15 155);
+  --status-warn: oklch(0.86 0.14 80);
+  --status-danger: oklch(0.84 0.16 25);
+  --status-info: oklch(0.84 0.12 250);
+  --stress-low: oklch(0.84 0.15 155);
+  --stress-moderate: oklch(0.86 0.14 80);
+  --stress-high: oklch(0.84 0.16 25);
+  --zone-1: oklch(0.78 0.13 250);
+  --zone-2: oklch(0.84 0.16 150);
+  --zone-3: oklch(0.92 0.15 95);
+  --zone-4: oklch(0.8 0.17 55);
+  --zone-5: oklch(0.76 0.19 27);
+  --hr: oklch(0.8 0.17 15);
+  --kcal-resting: oklch(0.8 0.1 200);
+  --kcal-active: oklch(0.84 0.16 55);
+  --hrv: oklch(0.82 0.15 290);
+}
+
+/* Tints for badges and icon squares: 12% of the token over whatever sits behind it. */
+:root,
+.dark {
+  --status-ok-muted: color-mix(in oklab, var(--status-ok) 12%, transparent);
+  --status-warn-muted: color-mix(in oklab, var(--status-warn) 12%, transparent);
+  --status-danger-muted: color-mix(in oklab, var(--status-danger) 12%, transparent);
+  --status-info-muted: color-mix(in oklab, var(--status-info) 12%, transparent);
+  --stress-low-muted: color-mix(in oklab, var(--stress-low) 12%, transparent);
+  --stress-moderate-muted: color-mix(in oklab, var(--stress-moderate) 12%, transparent);
+  --stress-high-muted: color-mix(in oklab, var(--stress-high) 12%, transparent);
+  --hr-muted: color-mix(in oklab, var(--hr) 12%, transparent);
+  --kcal-resting-muted: color-mix(in oklab, var(--kcal-resting) 12%, transparent);
+  --kcal-active-muted: color-mix(in oklab, var(--kcal-active) 12%, transparent);
+  --hrv-muted: color-mix(in oklab, var(--hrv) 12%, transparent);
+}
+
+/* Utility classes with Tailwind's names. Tailwind v4 compiles each CSS entry separately, so a @theme block here
+   would not reach the utilities in index.css. */
+@layer utilities {
+  .text-status-ok { color: var(--status-ok); }
+  .text-status-warn { color: var(--status-warn); }
+  .text-status-danger { color: var(--status-danger); }
+  .text-status-info { color: var(--status-info); }
+  .bg-status-ok { background-color: var(--status-ok); }
+  .bg-status-ok-muted { background-color: var(--status-ok-muted); }
+  .bg-status-warn-muted { background-color: var(--status-warn-muted); }
+  .bg-status-danger-muted { background-color: var(--status-danger-muted); }
+  .bg-status-info-muted { background-color: var(--status-info-muted); }
+  .text-stress-low { color: var(--stress-low); }
+  .text-stress-moderate { color: var(--stress-moderate); }
+  .text-stress-high { color: var(--stress-high); }
+  .bg-stress-low { background-color: var(--stress-low); }
+  .bg-stress-moderate { background-color: var(--stress-moderate); }
+  .bg-stress-high { background-color: var(--stress-high); }
+  .bg-stress-low-muted { background-color: var(--stress-low-muted); }
+  .bg-stress-moderate-muted { background-color: var(--stress-moderate-muted); }
+  .bg-stress-high-muted { background-color: var(--stress-high-muted); }
+  .bg-zone-1 { background-color: var(--zone-1); }
+  .bg-zone-2 { background-color: var(--zone-2); }
+  .bg-zone-3 { background-color: var(--zone-3); }
+  .bg-zone-4 { background-color: var(--zone-4); }
+  .bg-zone-5 { background-color: var(--zone-5); }
+  .text-hr { color: var(--hr); }
+  .bg-hr { background-color: var(--hr); }
+  .bg-hr-muted { background-color: var(--hr-muted); }
+  .text-kcal-resting { color: var(--kcal-resting); }
+  .bg-kcal-resting { background-color: var(--kcal-resting); }
+  .bg-kcal-resting-muted { background-color: var(--kcal-resting-muted); }
+  .text-kcal-active { color: var(--kcal-active); }
+  .bg-kcal-active { background-color: var(--kcal-active); }
+  .bg-kcal-active-muted { background-color: var(--kcal-active-muted); }
+  .bg-coverage-1 { background-color: color-mix(in oklab, var(--status-ok) 25%, transparent); }
+  .bg-coverage-2 { background-color: color-mix(in oklab, var(--status-ok) 45%, transparent); }
+  .bg-coverage-3 { background-color: color-mix(in oklab, var(--status-ok) 70%, transparent); }
+  .bg-coverage-4 { background-color: var(--status-ok); }
+  .text-hrv { color: var(--hrv); }
+  .bg-hrv { background-color: var(--hrv); }
+  .bg-hrv-muted { background-color: var(--hrv-muted); }
+}

@@ -1,0 +1,15 @@
+# Secrets scan config (PLAN.md §18). Default rules plus an allowlist for test fixtures,
+# which hold fake secrets on purpose. Real secrets never belong in these paths either.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake secrets in tests, mocks and documented examples"
+paths = [
+  '''^web/src/mocks/''',
+  '''^web/src/.*\.test\.tsx?$''',
+  '''^web/tests/''',
+  '''^server/crates/[^/]+/tests/''',
+  '''^PLAN\.md$''',
+  '''^shared/api-contract\.md$''',
+]

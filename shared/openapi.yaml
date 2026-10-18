@@ -1,0 +1,2522 @@
+openapi: 3.1.0
+info:
+  title: Icarus API
+  description: Contract v1 for the Icarus server (shared/api-contract.md). Times are RFC 3339 UTC with Z, except fields ending in _ms (epoch milliseconds). Metrics are estimates, not medical readings.
+  version: 1.0.0
+paths:
+  /healthz:
+    get:
+      tags:
+      - Health
+      summary: Liveness. Does not touch the database.
+      operationId: healthz
+      responses:
+        '200':
+          description: The process is up.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+  /readyz:
+    get:
+      tags:
+      - Health
+      summary: 'Readiness: the database answers and every embedded migration is applied.'
+      operationId: readyz
+      responses:
+        '200':
+          description: Ready to serve.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        default:
+          description: Not ready.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/alarm-dispatches:
+    get:
+      tags:
+      - Alarms
+      operationId: list_alarm_dispatches
+      parameters:
+      - name: limit
+        in: query
+        description: 1 to 200. Default 50.
+        required: false
+        schema:
+          type: integer
+          format: int64
+      responses:
+        '200':
+          description: Newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DispatchList'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+      - device: []
+  /v1/alarm-dispatches/{id}/ack:
+    post:
+      tags:
+      - Alarms
+      summary: |-
+        The app reports what the phone and band did. The first ack sets `acked_at`; later acks replace
+        the statuses.
+      operationId: ack_alarm_dispatch
+      parameters:
+      - name: id
+        in: path
+        description: Id of the resource.
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AckBody'
+        required: true
+      responses:
+        '204':
+          description: Recorded. The first ack sets acked_at.
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - device: []
+  /v1/alarms:
+    get:
+      tags:
+      - Alarms
+      operationId: list_alarms
+      responses:
+        '200':
+          description: Alarms that are not deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlarmList'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+      - device: []
+    post:
+      tags:
+      - Alarms
+      operationId: create_alarm
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlarmCreate'
+        required: true
+      responses:
+        '201':
+          description: The created alarm.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alarm'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+      - device: []
+  /v1/alarms/pending:
+    get:
+      tags:
+      - Alarms
+      summary: Unacked dispatches from the last 10 minutes, for the app's pull (PLAN.md §9.3).
+      operationId: pending_alarm_dispatches
+      responses:
+        '200':
+          description: Unacked dispatches from the last 10 minutes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DispatchList'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - device: []
+  /v1/alarms/{id}:
+    delete:
+      tags:
+      - Alarms
+      summary: 'Soft delete: the row stays as a tombstone with a new version, so the app learns of the deletion.'
+      operationId: delete_alarm
+      parameters:
+      - name: id
+        in: path
+        description: Id of the resource.
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: If-Match
+        in: header
+        description: Optional. When sent, a stale value gets 409.
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      responses:
+        '204':
+          description: Soft-deleted. The version is bumped so the app sees a tombstone.
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+      - device: []
+    patch:
+      tags:
+      - Alarms
+      operationId: patch_alarm
+      parameters:
+      - name: id
+        in: path
+        description: Id of the resource.
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: If-Match
+        in: header
+        description: Current version. Required; a stale value gets 409.
+        required: true
+        schema:
+          type: integer
+          format: int64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlarmPatch'
+        required: true
+      responses:
+        '200':
+          description: The updated alarm.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alarm'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+      - device: []
+  /v1/alarms/{id}/test:
+    post:
+      tags:
+      - Alarms
+      summary: |-
+        Queues a test dispatch with the alarm's own rhythm and channels. The app and dispatcher treat it
+        like a webhook dispatch.
+      operationId: test_alarm
+      parameters:
+      - name: id
+        in: path
+        description: Id of the resource.
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Queued with the alarm rhythm and channels.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DispatchIdResponse'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+      - device: []
+  /v1/auth/login:
+    post:
+      tags:
+      - Auth
+      operationId: login
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginBody'
+        required: true
+      responses:
+        '204':
+          description: Signed in. Sets the icarus_session cookie (HttpOnly, SameSite=Lax, Secure unless ICARUS_INSECURE_COOKIES=1).
+        '401':
+          description: Bad credentials.
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/auth/logout:
+    post:
+      tags:
+      - Auth
+      operationId: logout
+      responses:
+        '204':
+          description: Signed out. Clears the session cookie.
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/devices:
+    get:
+      tags:
+      - Devices
+      operationId: list_devices
+      responses:
+        '200':
+          description: Devices and bands of the account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceList'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+      - device: []
+  /v1/devices/me/push-token:
+    put:
+      tags:
+      - Devices
+      operationId: put_push_token
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushTokenBody'
+        required: true
+      responses:
+        '204':
+          description: Stored for this device.
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - device: []
+  /v1/devices/pair:
+    post:
+      tags:
+      - Devices
+      summary: Exchanges a single-use pairing code for a device token. The token is returned once.
+      operationId: pair_device
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PairBody'
+        required: true
+      responses:
+        '201':
+          description: Paired. The token is shown once.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PairResponse'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/devices/pairing-codes:
+    post:
+      tags:
+      - Devices
+      operationId: create_pairing_code
+      responses:
+        '200':
+          description: A single-use code, valid for 10 minutes, and its QR code.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PairingCodeResponse'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+  /v1/devices/{id}:
+    delete:
+      tags:
+      - Devices
+      summary: Revokes a device. Its token gets 401 from the next request on.
+      operationId: revoke_device
+      parameters:
+      - name: id
+        in: path
+        description: Id of the resource.
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Device revoked. Its token gets 401 from now on.
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+  /v1/export:
+    get:
+      tags:
+      - Data
+      operationId: export_data
+      responses:
+        '200':
+          description: One JSON object per line, each with a kind field.
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+  /v1/hooks:
+    get:
+      tags:
+      - Webhooks
+      operationId: list_hooks
+      responses:
+        '200':
+          description: Hooks, without secrets.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HookList'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+    post:
+      tags:
+      - Webhooks
+      operationId: create_hook
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HookCreate'
+        required: true
+      responses:
+        '201':
+          description: The hook. The secret is in this response only.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HookCreated'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+  /v1/hooks/{id}:
+    post:
+      tags:
+      - Webhook ingress
+      summary: '`POST /v1/hooks/{key}`: HMAC-signed, for endpoints in `hmac` mode.'
+      operationId: post_hook_ingress
+      parameters:
+      - name: id
+        in: path
+        description: Hook id for management routes. For ingress, the endpoint slug.
+        required: true
+        schema:
+          type: string
+      - name: X-Icarus-Signature
+        in: header
+        description: t=<unix>,v1=<hex HMAC-SHA256(secret, t + "." + body)>. Timestamp within 300 s.
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngressBody'
+        required: true
+      responses:
+        '200':
+          description: Repeated idempotency_key. The original dispatch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DuplicateDispatch'
+        '202':
+          description: Queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DispatchIdResponse'
+        '408':
+          description: Did not finish within 2 s. Empty body.
+        '429':
+          description: Over the per-IP budget (60 per minute) or the endpoint budget. No delivery row is written for the per-IP case.
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    delete:
+      tags:
+      - Webhooks
+      summary: |-
+        Hard delete. Deliveries and their dispatches go with it. The sync config has no tombstone for
+        hooks (api-contract.md `Hook` has no `deleted_at`), so the app learns of it on its next full read.
+      operationId: delete_hook
+      parameters:
+      - name: id
+        in: path
+        description: Id of the resource.
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Hard-deleted with its deliveries.
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+    patch:
+      tags:
+      - Webhooks
+      operationId: patch_hook
+      parameters:
+      - name: id
+        in: path
+        description: Id of the resource.
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: If-Match
+        in: header
+        description: Current version. Required; a stale value gets 409.
+        required: true
+        schema:
+          type: integer
+          format: int64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HookPatch'
+        required: true
+      responses:
+        '200':
+          description: The updated hook.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Hook'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+  /v1/hooks/{id}/deliveries:
+    get:
+      tags:
+      - Webhooks
+      operationId: list_hook_deliveries
+      parameters:
+      - name: id
+        in: path
+        description: Id of the resource.
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: cursor
+        in: query
+        description: Opaque cursor from next_cursor.
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 50 per page, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveriesPage'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+  /v1/hooks/{id}/rotate-secret:
+    post:
+      tags:
+      - Webhooks
+      operationId: rotate_hook_secret
+      parameters:
+      - name: id
+        in: path
+        description: Id of the resource.
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: The new secret. Shown once.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecretResponse'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+  /v1/hooks/{id}/{secret}:
+    post:
+      tags:
+      - Webhook ingress
+      summary: '`POST /v1/hooks/{key}/{secret}`: secret-URL mode, for endpoints that opted in.'
+      operationId: post_hook_ingress_secret
+      parameters:
+      - name: id
+        in: path
+        description: Endpoint slug.
+        required: true
+        schema:
+          type: string
+      - name: secret
+        in: path
+        description: The secret from the hook, for secret_url endpoints only.
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngressBody'
+        required: true
+      responses:
+        '200':
+          description: Repeated idempotency_key. The original dispatch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DuplicateDispatch'
+        '202':
+          description: Queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DispatchIdResponse'
+        '429':
+          description: Over the per-IP budget (60 per minute) or the endpoint budget.
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/integrations/whoop:
+    get:
+      tags:
+      - WHOOP
+      summary: '`GET /v1/integrations/whoop`. Only our own bookkeeping: no WHOOP values.'
+      operationId: get_whoop_status
+      responses:
+        '200':
+          description: Connection state. No WHOOP values.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusBody'
+        '404':
+          description: WHOOP is off on this server.
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+    delete:
+      tags:
+      - WHOOP
+      summary: '`DELETE /v1/integrations/whoop`: revoke at WHOOP, then delete tokens and webhook rows. 204.'
+      operationId: disconnect_whoop
+      responses:
+        '204':
+          description: Revoked at WHOOP and tokens deleted.
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+  /v1/integrations/whoop/callback:
+    get:
+      tags:
+      - WHOOP
+      summary: '`GET /v1/integrations/whoop/callback`. The state names the user, so no session cookie is needed.'
+      operationId: whoop_callback
+      parameters:
+      - name: code
+        in: query
+        description: WHOOP authorization code.
+        required: true
+        schema:
+          type: string
+      - name: state
+        in: query
+        description: The 8-character state from connect.
+        required: true
+        schema:
+          type: string
+      responses:
+        '302':
+          description: Redirect to /integrations/whoop.
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/integrations/whoop/connect:
+    get:
+      tags:
+      - WHOOP
+      summary: '`GET /v1/integrations/whoop/connect`: 302 to WHOOP''s authorize page with a fresh 8-character state.'
+      operationId: connect_whoop
+      responses:
+        '302':
+          description: Redirect to WHOOP authorization.
+          headers:
+            location:
+              schema:
+                type: string
+              description: WHOOP authorize URL.
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+  /v1/integrations/whoop/summary:
+    get:
+      tags:
+      - WHOOP
+      summary: '`GET /v1/integrations/whoop/summary?day=`: live fetch, nothing written except refreshed tokens.'
+      operationId: get_whoop_summary
+      parameters:
+      - name: day
+        in: query
+        description: YYYY-MM-DD. Defaults to today in the user time zone.
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Live from WHOOP, not stored. Any value may be null.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Summary'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+  /v1/integrations/whoop/webhook:
+    post:
+      tags:
+      - WHOOP
+      summary: '`POST /v1/integrations/whoop/webhook`: verify, dedupe by trace id, store the row, answer 204.'
+      operationId: whoop_webhook
+      requestBody:
+        description: WHOOP event. Verified against the signature header, never stored raw.
+        content:
+          application/json:
+            schema:
+              type: object
+        required: true
+      responses:
+        '204':
+          description: Accepted. Verified with WHOOP's signature header.
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/me:
+    get:
+      tags:
+      - Me
+      operationId: get_me
+      responses:
+        '200':
+          description: The account profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+      - device: []
+    delete:
+      tags:
+      - Me
+      summary: Deletes the account and, through cascades, every row that belongs to it.
+      operationId: delete_me
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteBody'
+        required: true
+      responses:
+        '204':
+          description: Account and all of its rows deleted.
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+    patch:
+      tags:
+      - Me
+      operationId: patch_me
+      parameters:
+      - name: If-Match
+        in: header
+        description: Current version. Required; a stale value gets 409.
+        required: true
+        schema:
+          type: integer
+          format: int64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MePatch'
+        required: true
+      responses:
+        '200':
+          description: The updated profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+      - device: []
+  /v1/metrics/daily:
+    get:
+      tags:
+      - Metrics
+      operationId: get_daily
+      parameters:
+      - name: from
+        in: query
+        description: YYYY-MM-DD in the user time zone.
+        required: true
+        schema:
+          type: string
+      - name: to
+        in: query
+        description: YYYY-MM-DD, inclusive. At most 3660 days after from.
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Daily summaries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyResponse'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+      - device: []
+  /v1/metrics/hr:
+    get:
+      tags:
+      - Metrics
+      operationId: get_hr
+      parameters:
+      - name: from
+        in: query
+        description: RFC 3339 start.
+        required: true
+        schema:
+          type: string
+      - name: to
+        in: query
+        description: RFC 3339 end, exclusive.
+        required: true
+        schema:
+          type: string
+      - name: res
+        in: query
+        description: raw (up to 6 h), 1m or 5m (up to 14 d), or 1h (up to 14 d).
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Points, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HrResponse'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+      - device: []
+  /v1/metrics/live:
+    get:
+      tags:
+      - Metrics
+      summary: Latest raw sample across the user's bands, or nulls when there is none.
+      operationId: get_live
+      responses:
+        '200':
+          description: The latest raw sample, or nulls.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveResponse'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+      - device: []
+  /v1/metrics/minutes:
+    get:
+      tags:
+      - Metrics
+      operationId: get_minutes
+      parameters:
+      - name: from
+        in: query
+        description: RFC 3339 start.
+        required: true
+        schema:
+          type: string
+      - name: to
+        in: query
+        description: RFC 3339 end, exclusive. At most 14 days.
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Minute metrics. Estimates, not medical readings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MinutesResponse'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+      - device: []
+  /v1/sync/batches:
+    post:
+      tags:
+      - Sync
+      operationId: post_sync_batch
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        description: Same value as batch_id.
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Content-Encoding
+        in: header
+        description: gzip, or absent.
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchBody'
+        required: true
+      responses:
+        '200':
+          description: Stored. A repeated batch_id answers with the stored counts and duplicate = true.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchResponse'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - device: []
+  /v1/sync/config:
+    get:
+      tags:
+      - Sync
+      summary: Rows with `version > since`, tombstones included, plus the profile (api-contract.md).
+      operationId: get_sync_config
+      parameters:
+      - name: since
+        in: query
+        description: Return rows with version greater than this. Omit for all rows.
+        required: false
+        schema:
+          type: integer
+          format: int64
+      responses:
+        '200':
+          description: Alarms (tombstones included), hooks, profile and the newest version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigResponse'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - device: []
+  /v1/sync/state:
+    get:
+      tags:
+      - Sync
+      operationId: get_sync_state
+      responses:
+        '200':
+          description: The latest 50 batches.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StateResponse'
+        default:
+          description: An error as application/problem+json (api-contract.md Errors).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - session: []
+      - device: []
+components:
+  schemas:
+    AckBody:
+      type: object
+      required:
+      - phone
+      - band
+      properties:
+        band:
+          type: string
+        detail:
+          type:
+          - string
+          - 'null'
+        phone:
+          type: string
+      additionalProperties: false
+    Alarm:
+      type: object
+      description: '`Alarm` in api-contract.md.'
+      required:
+      - id
+      - kind
+      - label
+      - rhythm
+      - channels
+      - enabled
+      - version
+      - updated_at
+      properties:
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/Channel'
+        deleted_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        enabled:
+          type: boolean
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/AlarmKind'
+        label:
+          type: string
+        rhythm:
+          $ref: '#/components/schemas/Rhythm'
+        schedule:
+          oneOf:
+          - $ref: '#/components/schemas/Schedule'
+          - type: 'null'
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+    AlarmCreate:
+      type: object
+      required:
+      - kind
+      - label
+      - rhythm
+      - channels
+      properties:
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/Channel'
+        enabled:
+          type: boolean
+        id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/AlarmKind'
+        label:
+          type: string
+        rhythm:
+          $ref: '#/components/schemas/Rhythm'
+        schedule:
+          oneOf:
+          - $ref: '#/components/schemas/Schedule'
+          - type: 'null'
+      additionalProperties: false
+    AlarmKind:
+      type: string
+      enum:
+      - scheduled
+      - webhook
+      - relay
+    AlarmList:
+      type: object
+      required:
+      - alarms
+      properties:
+        alarms:
+          type: array
+          items:
+            $ref: '#/components/schemas/Alarm'
+    AlarmPatch:
+      type: object
+      properties:
+        channels:
+          type:
+          - array
+          - 'null'
+          items:
+            $ref: '#/components/schemas/Channel'
+        enabled:
+          type:
+          - boolean
+          - 'null'
+        kind:
+          oneOf:
+          - $ref: '#/components/schemas/AlarmKind'
+          - type: 'null'
+        label:
+          type:
+          - string
+          - 'null'
+        rhythm:
+          oneOf:
+          - $ref: '#/components/schemas/Rhythm'
+          - type: 'null'
+        schedule:
+          oneOf:
+          - $ref: '#/components/schemas/Schedule'
+          - type: 'null'
+      additionalProperties: false
+    AuthMode:
+      type: string
+      enum:
+      - hmac
+      - secret_url
+    Band:
+      type: object
+      required:
+      - id
+      - created_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        firmware:
+          type:
+          - string
+          - 'null'
+        id:
+          type: string
+          format: uuid
+        last_seen_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        name:
+          type:
+          - string
+          - 'null'
+    BandIn:
+      type: object
+      required:
+      - id
+      - name
+      properties:
+        firmware:
+          type:
+          - string
+          - 'null'
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+    BatchBody:
+      type: object
+      required:
+      - schema
+      - batch_id
+      - device_id
+      - created_at
+      properties:
+        alarm_deliveries:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeliveryIn'
+        bands:
+          type: array
+          items:
+            $ref: '#/components/schemas/BandIn'
+        batch_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+        device_id:
+          type: string
+          format: uuid
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventIn'
+        hr:
+          oneOf:
+          - $ref: '#/components/schemas/HrIn'
+          - type: 'null'
+        minute_metrics:
+          type: array
+          items:
+            $ref: '#/components/schemas/MinuteIn'
+        rr:
+          oneOf:
+          - $ref: '#/components/schemas/RrIn'
+          - type: 'null'
+        schema:
+          type: integer
+          format: int64
+    BatchResponse:
+      type: object
+      required:
+      - batch_id
+      - duplicate
+      - server_time
+      - counts
+      properties:
+        batch_id:
+          type: string
+          format: uuid
+        counts:
+          $ref: '#/components/schemas/Counts'
+        duplicate:
+          type: boolean
+        server_time:
+          type: string
+          format: date-time
+    BatchSummary:
+      type: object
+      required:
+      - id
+      - device_id
+      - received_at
+      - counts
+      - status
+      properties:
+        counts: {}
+        device_id:
+          type: string
+          format: uuid
+        id:
+          type: string
+          format: uuid
+        received_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+    Channel:
+      type: string
+      enum:
+      - phone
+      - band
+    ConfigResponse:
+      type: object
+      required:
+      - alarms
+      - webhook_endpoints
+      - profile
+      - max_version
+      - server_time
+      properties:
+        alarms:
+          type: array
+          items:
+            $ref: '#/components/schemas/Alarm'
+        max_version:
+          type: integer
+          format: int64
+        profile:
+          $ref: '#/components/schemas/Me'
+        server_time:
+          type: string
+          format: date-time
+        webhook_endpoints:
+          type: array
+          items:
+            $ref: '#/components/schemas/Hook'
+    Counts:
+      type: object
+      required:
+      - hr
+      - rr
+      - minute_metrics
+      - events
+      - alarm_deliveries
+      properties:
+        alarm_deliveries:
+          $ref: '#/components/schemas/Inserted'
+        events:
+          $ref: '#/components/schemas/Inserted'
+        hr:
+          $ref: '#/components/schemas/Inserted'
+        minute_metrics:
+          $ref: '#/components/schemas/Upserted'
+        rr:
+          $ref: '#/components/schemas/Inserted'
+    DailyResponse:
+      type: object
+      required:
+      - days
+      properties:
+        days:
+          type: array
+          items:
+            $ref: '#/components/schemas/DayOut'
+    DayOut:
+      type: object
+      required:
+      - day
+      properties:
+        coverage:
+          type:
+          - number
+          - 'null'
+          format: float
+        day:
+          type: string
+          format: date
+        hr_avg:
+          type:
+          - number
+          - 'null'
+          format: float
+        hr_max:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        kcal_active:
+          type:
+          - number
+          - 'null'
+          format: float
+        kcal_total:
+          type:
+          - number
+          - 'null'
+          format: float
+        rhr:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        rmssd_night_ms:
+          type:
+          - number
+          - 'null'
+          format: float
+        stress_avg:
+          type:
+          - number
+          - 'null'
+          format: float
+        stress_high_minutes:
+          type:
+          - integer
+          - 'null'
+          format: int32
+    DeleteBody:
+      type: object
+      required:
+      - confirm
+      properties:
+        confirm:
+          type: string
+    DeliveriesPage:
+      type: object
+      required:
+      - deliveries
+      properties:
+        deliveries:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeliveryView'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+    DeliveryIn:
+      type: object
+      required:
+      - id
+      - ts_ms
+      - channel
+      - status
+      properties:
+        alarm_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        channel:
+          type: string
+        detail:
+          type:
+          - string
+          - 'null'
+        dispatch_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        ts_ms:
+          type: integer
+          format: int64
+    DeliveryView:
+      type: object
+      description: |-
+        One webhook request as the web page shows it. `status` is `accepted`, `rejected`,
+        `rate_limited` or `duplicate`. Raw bodies are never stored.
+      required:
+      - id
+      - received_at
+      - status
+      - signature_valid
+      properties:
+        dispatch:
+          oneOf:
+          - $ref: '#/components/schemas/Dispatch'
+          - type: 'null'
+        id:
+          type: string
+          format: uuid
+        received_at:
+          type: string
+        signature_valid:
+          type: boolean
+        status:
+          type: string
+    Device:
+      type: object
+      required:
+      - id
+      - name
+      - created_at
+      properties:
+        app_version:
+          type:
+          - string
+          - 'null'
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        last_seen_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        model:
+          type:
+          - string
+          - 'null'
+        name:
+          type: string
+        os_version:
+          type:
+          - string
+          - 'null'
+        revoked_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    DeviceList:
+      type: object
+      required:
+      - devices
+      - bands
+      properties:
+        bands:
+          type: array
+          items:
+            $ref: '#/components/schemas/Band'
+        devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/Device'
+    Dispatch:
+      type: object
+      description: '`Dispatch` in api-contract.md.'
+      required:
+      - id
+      - created_at
+      - attempts
+      - status
+      - rhythm
+      properties:
+        acked_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        alarm_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        attempts:
+          type: integer
+          format: int32
+        band_status:
+          type:
+          - string
+          - 'null'
+        created_at:
+          type: string
+          format: date-time
+        delivery_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        id:
+          type: string
+          format: uuid
+        message:
+          type:
+          - string
+          - 'null'
+        phone_status:
+          type:
+          - string
+          - 'null'
+        rhythm:
+          $ref: '#/components/schemas/Rhythm'
+        status:
+          $ref: '#/components/schemas/DispatchStatus'
+    DispatchIdResponse:
+      type: object
+      description: Returned by the test route and by webhook ingress.
+      required:
+      - dispatch_id
+      properties:
+        dispatch_id:
+          type: string
+          format: uuid
+    DispatchList:
+      type: object
+      required:
+      - dispatches
+      properties:
+        dispatches:
+          type: array
+          items:
+            $ref: '#/components/schemas/Dispatch'
+    DispatchStatus:
+      type: string
+      enum:
+      - pending
+      - sent
+      - acked
+      - unacked
+      - failed
+    DuplicateDispatch:
+      type: object
+      description: 'A repeated idempotency key: the original dispatch, with `duplicate` set.'
+      required:
+      - duplicate
+      - dispatch_id
+      properties:
+        dispatch_id:
+          type: string
+          format: uuid
+        duplicate:
+          type: boolean
+    EventIn:
+      type: object
+      required:
+      - band_id
+      - ts_ms
+      - kind
+      properties:
+        band_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+        payload: {}
+        ts_ms:
+          type: integer
+          format: int64
+    FormulaSex:
+      type: string
+      enum:
+      - male
+      - female
+    Hook:
+      type: object
+      description: '`Hook` in api-contract.md. `url` is built from `PUBLIC_BASE_URL` at read time.'
+      required:
+      - id
+      - slug
+      - label
+      - auth_mode
+      - rate_limit_per_min
+      - enabled
+      - url
+      - created_at
+      - version
+      properties:
+        alarm_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        auth_mode:
+          $ref: '#/components/schemas/AuthMode'
+        created_at:
+          type: string
+          format: date-time
+        enabled:
+          type: boolean
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+        last_triggered_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        rate_limit_per_min:
+          type: integer
+          format: int32
+        slug:
+          type: string
+        url:
+          type: string
+        version:
+          type: integer
+          format: int64
+    HookCreate:
+      type: object
+      required:
+      - label
+      - alarm_id
+      - auth_mode
+      properties:
+        alarm_id:
+          type: string
+          format: uuid
+        auth_mode:
+          $ref: '#/components/schemas/AuthMode'
+        label:
+          type: string
+        rate_limit_per_min:
+          type:
+          - integer
+          - 'null'
+          format: int32
+      additionalProperties: false
+    HookCreated:
+      allOf:
+      - $ref: '#/components/schemas/Hook'
+      - type: object
+        required:
+        - secret
+        properties:
+          secret:
+            type: string
+      description: The created hook. `secret` is shown once and never returned again.
+    HookList:
+      type: object
+      required:
+      - hooks
+      properties:
+        hooks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Hook'
+    HookPatch:
+      type: object
+      properties:
+        alarm_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        enabled:
+          type:
+          - boolean
+          - 'null'
+        label:
+          type:
+          - string
+          - 'null'
+        rate_limit_per_min:
+          type:
+          - integer
+          - 'null'
+          format: int32
+      additionalProperties: false
+    HrIn:
+      type: object
+      required:
+      - band_id
+      - ts_ms
+      - bpm
+      - source
+      - contact
+      properties:
+        band_id:
+          type: string
+          format: uuid
+        bpm:
+          type: array
+          items:
+            type: integer
+            format: int64
+        contact:
+          type: array
+          items:
+            type:
+            - boolean
+            - 'null'
+        source:
+          type: array
+          items:
+            type: integer
+            format: int64
+        ts_ms:
+          type: array
+          items:
+            type: integer
+            format: int64
+    HrPoint:
+      type: object
+      required:
+      - t
+      properties:
+        avg:
+          type:
+          - number
+          - 'null'
+          format: double
+        max:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        min:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        t:
+          type: string
+          format: date-time
+    HrResponse:
+      type: object
+      description: Heart-rate points. `t` is the start of each bucket.
+      required:
+      - res
+      - points
+      properties:
+        points:
+          type: array
+          items:
+            $ref: '#/components/schemas/HrPoint'
+        res:
+          type: string
+    IngressBody:
+      type: object
+      properties:
+        channels:
+          type:
+          - array
+          - 'null'
+          items:
+            $ref: '#/components/schemas/Channel'
+        idempotency_key:
+          type:
+          - string
+          - 'null'
+        message:
+          type:
+          - string
+          - 'null'
+        rhythm:
+          oneOf:
+          - $ref: '#/components/schemas/Rhythm'
+          - type: 'null'
+      additionalProperties: false
+    Inserted:
+      type: object
+      required:
+      - inserted
+      - duplicate
+      properties:
+        duplicate:
+          type: integer
+          format: int64
+          minimum: 0
+        inserted:
+          type: integer
+          format: int64
+          minimum: 0
+    LiveResponse:
+      type: object
+      description: The latest raw sample, or both fields null when there is none.
+      properties:
+        bpm:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        ts:
+          type:
+          - string
+          - 'null'
+    LoginBody:
+      type: object
+      required:
+      - email
+      - password
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+    Me:
+      type: object
+      description: '`GET /v1/me`. Profile fields may be null.'
+      required:
+      - id
+      - email
+      - tz
+      - version
+      properties:
+        birth_year:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        email:
+          type: string
+        formula_sex:
+          oneOf:
+          - $ref: '#/components/schemas/FormulaSex'
+          - type: 'null'
+        height_cm:
+          type:
+          - number
+          - 'null'
+          format: float
+        hr_max:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        id:
+          type: string
+          format: uuid
+        tz:
+          type: string
+        version:
+          type: integer
+          format: int64
+        weight_kg:
+          type:
+          - number
+          - 'null'
+          format: float
+    MePatch:
+      type: object
+      properties:
+        birth_year:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        formula_sex:
+          oneOf:
+          - $ref: '#/components/schemas/FormulaSex'
+          - type: 'null'
+        height_cm:
+          type:
+          - number
+          - 'null'
+          format: float
+        hr_max:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        tz:
+          type:
+          - string
+          - 'null'
+        weight_kg:
+          type:
+          - number
+          - 'null'
+          format: float
+    MinuteIn:
+      type: object
+      required:
+      - minute_ms
+      - algo_version
+      - sync_rev
+      properties:
+        active_kcal:
+          type:
+          - number
+          - 'null'
+          format: double
+        algo_version:
+          type: integer
+          format: int64
+        baevsky_sqrt:
+          type:
+          - number
+          - 'null'
+          format: double
+        hr_avg:
+          type:
+          - number
+          - 'null'
+          format: double
+        hr_max:
+          type:
+          - integer
+          - 'null'
+          format: int64
+        hr_min:
+          type:
+          - integer
+          - 'null'
+          format: int64
+        hr_n:
+          type:
+          - integer
+          - 'null'
+          format: int64
+        kcal:
+          type:
+          - number
+          - 'null'
+          format: double
+        kcal_estimated:
+          type:
+          - boolean
+          - 'null'
+        minute_ms:
+          type: integer
+          format: int64
+        rmssd_ms:
+          type:
+          - number
+          - 'null'
+          format: double
+        sdnn_ms:
+          type:
+          - number
+          - 'null'
+          format: double
+        stress:
+          type:
+          - integer
+          - 'null'
+          format: int64
+        stress_state:
+          type:
+          - string
+          - 'null'
+        sync_rev:
+          type: integer
+          format: int64
+    MinuteOut:
+      type: object
+      required:
+      - minute
+      properties:
+        active_kcal:
+          type:
+          - number
+          - 'null'
+          format: float
+        baevsky_sqrt:
+          type:
+          - number
+          - 'null'
+          format: float
+        hr_avg:
+          type:
+          - number
+          - 'null'
+          format: float
+        hr_max:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        hr_min:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        hr_n:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        kcal:
+          type:
+          - number
+          - 'null'
+          format: float
+        kcal_estimated:
+          type:
+          - boolean
+          - 'null'
+        minute:
+          type: string
+          format: date-time
+        rmssd_ms:
+          type:
+          - number
+          - 'null'
+          format: float
+        sdnn_ms:
+          type:
+          - number
+          - 'null'
+          format: float
+        stress:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        stress_state:
+          type:
+          - string
+          - 'null'
+    MinutesResponse:
+      type: object
+      description: 'Typed responses: going through `json!` would widen `f32` values and show their binary noise.'
+      required:
+      - minutes
+      properties:
+        minutes:
+          type: array
+          items:
+            $ref: '#/components/schemas/MinuteOut'
+    NamedRhythm:
+      type: string
+      description: Built-in rhythm names. PLAN.md §9.2.
+      enum:
+      - single
+      - double
+      - triple
+      - long
+      - ramp
+      - sos
+    PairBody:
+      type: object
+      required:
+      - code
+      - name
+      properties:
+        app_version:
+          type:
+          - string
+          - 'null'
+        code:
+          type: string
+        model:
+          type:
+          - string
+          - 'null'
+        name:
+          type: string
+        os_version:
+          type:
+          - string
+          - 'null'
+    PairResponse:
+      type: object
+      required:
+      - device_id
+      - token
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        token:
+          type: string
+    PairingCodeResponse:
+      type: object
+      required:
+      - code
+      - qr_svg
+      - expires_at
+      properties:
+        code:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        qr_svg:
+          type: string
+    Problem:
+      type: object
+      description: RFC 9457 problem document. Handlers build it in `error.rs`; this type only documents it.
+      required:
+      - type
+      - title
+      - status
+      - detail
+      properties:
+        current:
+          type:
+          - object
+          - 'null'
+          description: The stored entity, on `conflict` responses only.
+        detail:
+          type: string
+        status:
+          type: integer
+          format: int32
+          minimum: 0
+        title:
+          type: string
+        type:
+          type: string
+          description: '`urn:icarus:problem:<slug>`, where the slug is one of the contract''s list.'
+    PushTokenBody:
+      type: object
+      required:
+      - apns_token
+      - environment
+      properties:
+        apns_token:
+          type: string
+        environment:
+          type: string
+    Rhythm:
+      oneOf:
+      - $ref: '#/components/schemas/NamedRhythm'
+      - type: array
+        items:
+          $ref: '#/components/schemas/Step'
+      description: A built-in name, or an explicit list of steps.
+    RrIn:
+      type: object
+      required:
+      - band_id
+      - ts_ms
+      - seq
+      - rr_ms
+      - accepted
+      properties:
+        accepted:
+          type: array
+          items:
+            type: boolean
+        band_id:
+          type: string
+          format: uuid
+        rr_ms:
+          type: array
+          items:
+            type: number
+            format: double
+        seq:
+          type: array
+          items:
+            type: integer
+            format: int64
+        ts_ms:
+          type: array
+          items:
+            type: integer
+            format: int64
+    Schedule:
+      type: object
+      description: Scheduled alarms only. `weekdays` uses ISO numbering (1 = Monday). Empty means the next occurrence.
+      required:
+      - time
+      - weekdays
+      properties:
+        time:
+          type: string
+        weekdays:
+          type: array
+          items:
+            type: integer
+            format: int32
+            minimum: 0
+    SecretResponse:
+      type: object
+      required:
+      - secret
+      properties:
+        secret:
+          type: string
+    StateResponse:
+      type: object
+      required:
+      - server_time
+      - batches
+      properties:
+        batches:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchSummary'
+        last_batch_at:
+          type:
+          - string
+          - 'null'
+        server_time:
+          type: string
+          format: date-time
+    StatusBody:
+      type: object
+      required:
+      - connected
+      - scopes
+      properties:
+        connected:
+          type: boolean
+        connected_at:
+          type:
+          - string
+          - 'null'
+        last_webhook_at:
+          type:
+          - string
+          - 'null'
+        scopes:
+          type: array
+          items:
+            type: string
+    StatusResponse:
+      type: object
+      required:
+      - status
+      properties:
+        status:
+          type: string
+    Step:
+      oneOf:
+      - type: object
+        required:
+        - preset
+        - loops
+        - type
+        properties:
+          loops:
+            type: integer
+            format: int32
+            minimum: 0
+          preset:
+            type: integer
+            format: int32
+            minimum: 0
+          type:
+            type: string
+            enum:
+            - buzz
+      - type: object
+        required:
+        - ms
+        - type
+        properties:
+          ms:
+            type: integer
+            format: int32
+            minimum: 0
+          type:
+            type: string
+            enum:
+            - pause
+      description: One rhythm step. A buzz loop counts as 1 s toward the 30 s limit.
+    Summary:
+      type: object
+      description: The day's values as the API contract shows them. Any may be null.
+      properties:
+        hrv_rmssd_milli:
+          type:
+          - number
+          - 'null'
+          format: double
+        kilojoule:
+          type:
+          - number
+          - 'null'
+          format: double
+        recovery_score:
+          type:
+          - number
+          - 'null'
+          format: double
+        resting_heart_rate:
+          type:
+          - number
+          - 'null'
+          format: double
+        sleep_performance:
+          type:
+          - number
+          - 'null'
+          format: double
+        strain:
+          type:
+          - number
+          - 'null'
+          format: double
+    Upserted:
+      type: object
+      required:
+      - upserted
+      - stale
+      properties:
+        stale:
+          type: integer
+          format: int64
+          minimum: 0
+        upserted:
+          type: integer
+          format: int64
+          minimum: 0
+  securitySchemes:
+    device:
+      type: http
+      scheme: bearer
+    session:
+      type: apiKey
+      in: cookie
+      name: icarus_session
+      description: 'Website session from POST /v1/auth/login. Non-GET requests also send X-Icarus-CSRF: 1.'
+tags:
+- name: Health
+- name: Auth
+  description: 'Website sign-in. No sign-up route: the single user is created with the create-user command.'
+- name: Me
+- name: Devices
+- name: Sync
+  description: Upload from the app, config download and state.
+- name: Metrics
+- name: Alarms
+- name: Webhooks
+  description: Hook management (website only).
+- name: Webhook ingress
+  description: Public. Authenticated by signature or secret URL, not by session or device token.
+- name: Data
+- name: WHOOP
+  description: Optional. Every route answers 404 unless WHOOP_CLIENT_ID and WHOOP_CLIENT_SECRET are set.

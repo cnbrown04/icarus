@@ -1,0 +1,99 @@
+name: Web lyra init
+
+# One-off setup of the shadcn Lyra preset in web/. Commits the generated files to the branch.
+# Hand edits to generated files are not allowed (PLAN.md §13.2).
+# Runs on push because workflow_dispatch only works once the file is on the default branch.
+# On push it does nothing when web/components.json already exists.
+
+on:
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - "web/package.json"
+      - ".github/workflows/web-lyra-init.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  init:
+    name: Initialise shadcn Lyra
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check if Lyra is already initialised
+        id: state
+        run: |
+          if [ -f web/components.json ] && [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            echo "web/components.json exists; nothing to do on push"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.state.outputs.skip != 'true'
+        with:
+          package_json_file: web/package.json
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.state.outputs.skip != 'true'
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        if: steps.state.outputs.skip != 'true'
+        working-directory: web
+        run: pnpm install
+
+      - name: Initialise shadcn preset
+        if: steps.state.outputs.skip != 'true'
+        working-directory: web
+        run: |
+          set -euo pipefail
+          if [ -f components.json ]; then
+            echo "components.json exists, skipping init"
+          else
+            pnpm dlx shadcn@latest init --preset lyra --yes
+          fi
+
+      - name: Add components
+        if: steps.state.outputs.skip != 'true'
+        working-directory: web
+        run: pnpm dlx shadcn@latest add button card sidebar table sheet dialog input label separator skeleton sonner chart --yes
+
+      - name: Regenerate Lyra lock
+        if: steps.state.outputs.skip != 'true'
+        working-directory: web
+        run: pnpm lyra:lock
+
+      - name: Commit and push
+        if: steps.state.outputs.skip != 'true'
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web
+          git status
+          git diff --cached --stat
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "web: initialise shadcn lyra preset"
+          # Other jobs (screenshot commits) may push to the same branch meanwhile.
+          for attempt in 1 2 3; do
+            git pull --rebase origin "$BRANCH" && git push origin "HEAD:refs/heads/$BRANCH" && exit 0
+            echo "Push attempt $attempt failed; retrying"
+            sleep $((attempt * 5))
+          done
+          exit 1

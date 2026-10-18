@@ -1,0 +1,91 @@
+name: Web shadcn add
+
+# Adds shadcn components listed in web/scripts/shadcn-components.txt and commits the
+# generated files. The dev container cannot reach ui.shadcn.com, so CI runs the CLI.
+# Generated files are never edited by hand (PLAN.md §13.2).
+
+on:
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - "web/scripts/shadcn-components.txt"
+      - ".github/workflows/web-shadcn-add.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  add:
+    name: Add shadcn components
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Find missing components
+        id: missing
+        working-directory: web
+        run: |
+          set -euo pipefail
+          missing=""
+          if [ -f scripts/shadcn-components.txt ]; then
+            while read -r name; do
+              name=$(echo "$name" | tr -d '[:space:]')
+              [ -z "$name" ] && continue
+              case "$name" in \#*) continue ;; esac
+              [ -f "src/components/ui/$name.tsx" ] || missing="$missing $name"
+            done < scripts/shadcn-components.txt
+          fi
+          echo "Missing:$missing"
+          echo "names=$missing" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.missing.outputs.names != ''
+        with:
+          package_json_file: web/package.json
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.missing.outputs.names != ''
+        with:
+          node-version: 22
+
+      - name: Add components and refresh the Lyra lock
+        if: steps.missing.outputs.names != ''
+        working-directory: web
+        env:
+          NAMES: ${{ steps.missing.outputs.names }}
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          # shellcheck disable=SC2086
+          pnpm dlx shadcn@latest add $NAMES --yes
+          pnpm install --no-frozen-lockfile
+          pnpm lyra:lock
+
+      - name: Commit and push
+        if: steps.missing.outputs.names != ''
+        env:
+          BRANCH: ${{ github.ref_name }}
+          NAMES: ${{ steps.missing.outputs.names }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web
+          git diff --cached --stat
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "web: add shadcn components:$NAMES"
+          for attempt in 1 2 3; do
+            git pull --rebase origin "$BRANCH" && git push origin "HEAD:refs/heads/$BRANCH" && exit 0
+            echo "Push attempt $attempt failed; retrying"
+            sleep $((attempt * 5))
+          done
+          exit 1

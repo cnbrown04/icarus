@@ -1,0 +1,85 @@
+name: Server
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/server.yml"
+      - "server/**"
+      - "shared/openapi.yaml"
+      - "scripts/**"
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - ".github/workflows/server.yml"
+      - "server/**"
+      - "shared/openapi.yaml"
+      - "scripts/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: fmt, clippy and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: icarus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/icarus
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: server
+
+      - name: Format check
+        working-directory: server
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        working-directory: server
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        working-directory: server
+        run: cargo test --workspace
+
+  # The OpenAPI drift check (shared/openapi.yaml, PLAN.md §17.2) is the openapi_matches_checked_in_file
+  # test, so the Tests step above covers it.
+
+  scripts:
+    name: shellcheck scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Shellcheck
+        run: shellcheck scripts/*.sh

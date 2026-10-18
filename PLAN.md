@@ -350,6 +350,7 @@ Sources: NOOP [S12], jmooves [S11] (which pads the inner payload to a multiple o
 - We took seven complete frames published by bWanShiTong [S8]: HR-broadcast on/off, start activity, set alarm ×2, reboot.
 - We recomputed both checksums locally (Python `zlib.crc32` plus a CRC-8/poly-0x07 routine).
 - **All seven match** the envelope that NOOP, jmooves and my-whoop describe.
+- Phase 0 update (2026-10-08): the same README publishes 80 complete frames (commands, realtime, events, metadata, history). All 80 pass both checksums with standard zlib CRC-32 over the inner bytes, and all are in `shared/golden/frames.json`.
 
 That ties four independent write-ups to one format. bWanShiTong's "custom CRC-32 parameters" (xor-out `0xF43F44AC`) are the same CRC computed over the whole frame instead of the inner bytes. These frames become golden test vectors in `BandProtocol`.
 
@@ -1168,7 +1169,7 @@ These apply to every web page and app screen. PRs are reviewed against this list
 12. **Vertical rhythm:** 24 between sections, 12 between items in a section, 8 between label and value.
 13. **One primary action per screen/page**, top-right on web, toolbar trailing on iOS. Secondary actions go in menus.
 14. **No hero sections, banners or marketing blocks** inside the product.
-15. **Cards only when grouping is meaningful.** No card-inside-card. On web, Lyra cards with zero radius; on iOS, plain grouped sections with square corners to match Lyra's boxy look (§20 asks Caleb to confirm square corners for iOS).
+15. **Cards only when grouping is meaningful.** No card-inside-card. On web, Lyra cards with zero radius; on iOS, default SwiftUI styling with rounded corners (Caleb decided 2026-10-08, §20 Q9).
 16. **Alignment:** numbers right-aligned in tables; metric tiles align baselines across a row.
 
 ### 15.3 Visual
@@ -1408,7 +1409,7 @@ Each phase ends with a demo artifact Caleb can see without a Mac (CI artifacts, 
 6. **Hosting.** Where should `icarus-server` + Postgres run (Fly.io, Railway, a VPS, home server with a tunnel)? It needs a public HTTPS URL for webhooks and the website. Do you want TimescaleDB (host must support the extension)?
 7. **WHOOP API integration (Phase 7).** Build it at all? It shows WHOOP's recovery/sleep/strain but can't be stored permanently under the API ToS.
 8. **Profile inputs.** Your formula sex, birth year, height, weight, and a measured HRmax if you have one. Defaults are Tanaka-estimated [S17] [Unverified primary source].
-9. **Square corners on iOS.** Lyra on web is radius-none. Should the iOS app match (square cards/buttons) or use iOS-native rounded controls?
+9. **Square corners on iOS.** Answered 2026-10-08: use iOS-native rounded controls and the default SwiftUI look, with rich charts.
 10. **Webhook sources.** Which systems will call webhooks (iOS Shortcuts, Home Assistant, IFTTT, GitHub, custom scripts)? This decides whether secret-URL mode is needed in v1.
 11. **Screenshot delivery.** May the parent agent automatically send you the contact sheet after each screenshot run, and via which channel?
 12. **Backups of on-device data.** Include the Icarus database in encrypted iCloud/device backups (default) or exclude it?

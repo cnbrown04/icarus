@@ -1,0 +1,20 @@
+[package]
+name = "icarus-push"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+a2.workspace = true
+chrono.workspace = true
+icarus-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+icarus-db.workspace = true

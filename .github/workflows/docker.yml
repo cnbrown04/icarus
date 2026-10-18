@@ -1,0 +1,64 @@
+name: Docker image
+
+# Builds the single deploy image (Dockerfile) and smoke-tests it against Postgres.
+
+on:
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - ".github/workflows/docker.yml"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "docker-compose.yml"
+      - "server/**"
+      - "web/pnpm-lock.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and smoke-test image
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: icarus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build image
+        run: docker build -t icarus:ci .
+
+      - name: Start container and check health
+        run: |
+          set -euo pipefail
+          docker run -d --name icarus --network host \
+            -e DATABASE_URL=postgres://postgres:postgres@localhost:5432/icarus \
+            -e ICARUS_ENC_KEY="$(head -c 32 /dev/urandom | base64)" \
+            icarus:ci
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/readyz; then break; fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8080/healthz
+          curl -fsS http://localhost:8080/readyz
+          curl -fsS http://localhost:8080/ | grep -q '<div id="root">'
+          docker logs icarus | tail -20

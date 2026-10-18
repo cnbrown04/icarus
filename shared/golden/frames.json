@@ -1,0 +1,402 @@
+[
+  {
+    "name": "cmd_to_strap_initial_write",
+    "hex": "aa0800a823461600699b4cfb",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "set_alarm_0700",
+    "hex": "aa100057236d4201d036656600000000f62deb81",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "set_alarm_0701",
+    "hex": "aa100057236e42010c376566000000001023ccef",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "set_alarm_1200",
+    "hex": "aa100057236f4201207d656600000000fea1e060",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "set_alarm_0420",
+    "hex": "aa100057237042015011656600000000f226a8bd",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "set_alarm_peak_0620",
+    "hex": "aa10005723814201f07e6666000000007037c2a4",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "set_alarm_perform_0620",
+    "hex": "aa10005723824201f07e6666000000007151203d",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "set_alarm_in_the_green_0620",
+    "hex": "aa10005723834201f07e666600000000b18eaefc",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "hr_broadcast_off_seq07",
+    "hex": "aa0800a823070e00c7e40f08",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "hr_broadcast_on_seq08",
+    "hex": "aa0800a823080e016c935474",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "hr_broadcast_off_seq09",
+    "hex": "aa0800a823090e00cdc99102",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "activity_starting",
+    "hex": "aa0800a8238c03017d5ec627",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "activity_exiting",
+    "hex": "aa0800a8238d0300dc040351",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "activity_start",
+    "hex": "aa0800a8239003016904fa32",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "activity_exit",
+    "hex": "aa0800a823910300c85e3f44",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "sleep_start",
+    "hex": "aa0800a8238f0300b2d08752",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "health_monitor_off",
+    "hex": "aa0800a823050300e44e25be",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "health_monitor_on",
+    "hex": "aa0800a8230603012bc064cb",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "cmd_0x74_seq66",
+    "hex": "aa0800a8236674013ae4cde3",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "alarm_off_cmd45_seq91",
+    "hex": "aa0800a823914501dd861b95",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "retrieve_data",
+    "hex": "aa0800a8230e16001147c585",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "realtime_data_ad896566",
+    "hex": "aa1800ff2802ad896566f0654201670600000000000001013ba00d4d",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "realtime_data_ae896566",
+    "hex": "aa1800ff2802ae896566f8604300000000000000000001015025f793",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "realtime_data_af896566",
+    "hex": "aa1800ff2802af896566085c420000000000000000000101add7df13",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "realtime_data_b0896566",
+    "hex": "aa1800ff2802b0896566105742000000000000000000010124b22179",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "realtime_data_b1896566",
+    "hex": "aa1800ff2802b18965661852420000000000000000000101e0a905b8",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "realtime_data_b2896566",
+    "hex": "aa1800ff2802b2896566284d420000000000000000000101d943226a",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "realtime_data_b3896566",
+    "hex": "aa1800ff2802b3896566384843000000000000000000010128364865",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "realtime_data_b4896566",
+    "hex": "aa1800ff2802b489656640434300000000000000000001019c2e99ba",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "realtime_data_b5896566",
+    "hex": "aa1800ff2802b5896566503e430000000000000000000101ebb8a1ce",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "realtime_data_b6896566",
+    "hex": "aa1800ff2802b68965665039430000000000000000000101d1635459",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "realtime_data_b7896566",
+    "hex": "aa1800ff2802b78965666834430000000000000000000101ccefa569",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "realtime_data_b8896566",
+    "hex": "aa1800ff2802b8896566702f4300000000000000000001018770ff99",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "realtime_data_b9896566",
+    "hex": "aa1800ff2802b9896566802a430000000000000000000101d2299e02",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "realtime_data_ba896566",
+    "hex": "aa1800ff2802ba89656688254400000000000000000001013cd6a988",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "realtime_data_bb896566",
+    "hex": "aa1800ff2802bb896566902044000000000000000000010194f13f2f",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "realtime_data_bc896566",
+    "hex": "aa1800ff2802bc896566a01b440000000000000000000101c8ed7785",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "realtime_data_bd896566",
+    "hex": "aa1800ff2802bd896566b0164400000000000000000001013b07bb4b",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "metadata_seq18",
+    "hex": "aa1c00ab311802f65c70668040430000002e470100040000000000007f873cf3",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "metadata_seq19",
+    "hex": "aa1c00ab311902fb5c70667041430000002e47010004000000000000f277ceb0",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "metadata_seq1a",
+    "hex": "aa1c00ab311a02005d70666842430000002e470100040000000000006b7b573f",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "metadata_seq1b",
+    "hex": "aa1c00ab311b02055d70666843430000002e470100040000000000000b876f87",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "cmd_0x73_seq15",
+    "hex": "aa0800a823157301f4a43bfa",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "cmd_0x74_seq16",
+    "hex": "aa0800a8231674016a8c3cb7",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "erase_device_seqcf",
+    "hex": "aa10005723cf19fefefefefefefefe002f8744f6",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "erase_device_seqd2",
+    "hex": "aa10005723d219fefefefefefefefe00e30e2693",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "erase_device_seqd3",
+    "hex": "aa10005723d319fefefefefefefefe0023d1a852",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "reboot_device_seqd4",
+    "hex": "aa0800a823d41d003c2e2fe6",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "reboot_device_seqda",
+    "hex": "aa0800a823da1d003603b1ec",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "reboot_device_seqdf",
+    "hex": "aa0800a823df1d00ddc17aea",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "reboot_device_seqe2",
+    "hex": "aa0800a823e21d001eb7c9c6",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seqb0_rec03",
+    "hex": "aa2400fa30b003002e316966901f140002e9000000e90e000001010f0301002f01000000699d4a60",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seq64_rec03",
+    "hex": "aa2400fa306403006a316966d02e140002f1000000ed0e00000101010401002e010000002d6beb1e",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seq28_rec03",
+    "hex": "aa2400fa30280300a6316966703d140002f9000000f00e00000101370401002d0100000050e4148e",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seqf3_rec03",
+    "hex": "aa2400fa30f30300e2316966584c14000201010000f20e00000101310501002c010000000a6472e1",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seq57_rec03",
+    "hex": "aa2400fa305703001e326966a05a14000209010000f60e00000101230601002b01000000b6aff508",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seq6b_rec03",
+    "hex": "aa2400fa306b03005a326966586914000211010000fb0e00000101150701002b01000000b584c4fc",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seq76_rec03",
+    "hex": "aa2400fa3076030096326966a877140002190100004a0f00000101070801002a01000000f6cfde23",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seq87_rec03",
+    "hex": "aa2400fa30870300d3326966c80514000221010000480f000001013508010029010000007586b95f",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seqa1_rec03",
+    "hex": "aa2400fa30a103000f336966d013140002290100004b0f000001012f0901002801000000b7d66926",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seqac_rec03",
+    "hex": "aa2400fa30ac03004b336966f02014000231010000480f00000101210a010027010000005b22a14b",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seqb7_rec03",
+    "hex": "aa2400fa30b7030087336966682e140002390100004f0f00000101130b01002601000000bc513013",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seqc5_rec03",
+    "hex": "aa2400fa30c50300c3336966f03b14000241010000500f00000101050c010025010000002849050a",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seq5b_rec21",
+    "hex": "aa100057305b21003f32696668540000b0b2435b",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seq65_rec22",
+    "hex": "aa1000573065220045326966a8660000093b5aa6",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seq66_rec18",
+    "hex": "aa100057306618004832696630120000ef5360f0",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seq81_rec18",
+    "hex": "aa10005730811800ba326966287300009b28989f",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seq6a_rec21",
+    "hex": "aa100057306a2100e45e6866e0680000323b066b",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seq6e_rec22",
+    "hex": "aa100057306e2200e85e6866284300001489a6e0",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seq70_rec18",
+    "hex": "aa10005730701800135f6866f8100000f05e2f2f",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seq75_rec15",
+    "hex": "aa100057307515001c5f6866b003000055066632",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "event_seq76_rec07",
+    "hex": "aa100057307607001c5f6866a0050000ac1a4bdc",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "historical_seq0c_8bb7",
+    "hex": "aa5c00f02f0c078bb70900c8326966e03c8054cc015801b9020000000000000000f96dff00a7e73b140eafbe298c5b3e715d753f00001046140eafbe298c5b3e715d753fe50146022003470282016004010c020c3000000000000002833a28fd",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "historical_seq0c_8cb7",
+    "hex": "aa5c00f02f0c078cb70900c9326966f0378054cc015801b5020000000000000000a16eff0070b43b1fedaebe3d9a5b3ecd34753f00005ac61fedaebe3d9a5b3ecd34753fe50146022003450282016004010c020c3000000000000002149f6d4f",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "historical_seq0c_8db7",
+    "hex": "aa5c00f02f0c078db70900ca326966f8328054cc015802b802b9020000000000008b63ff0041a43b14e6aebea4b05b3e4819753f0000c0c514e6aebea4b05b3e4819753fe50146021e03450282016004010c020c3000000000000002a4d38c63",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "historical_seq0c_8eb7",
+    "hex": "aa5c00f02f0c078eb70900cb326966082e8054cc015801ce0200000000000000004661ff001bb03b8fcaaebe1fd55b3e0008753f0000b2c68fcaaebe1fd55b3e0008753fe50146021d03440287016004010c020c30000000000000022891f236",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "historical_seq0c_8fb7",
+    "hex": "aa5c00f02f0c078fb70900cc32696610298054cc015801c1020000000000000000d161ff00f3a43ba480aebe859b5b3ed7e7743f0000e046a480aebe859b5b3ed7e7743fe50146021d03450287016004010c020c3000000000000002c197f209",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "historical_seq0c_90b7",
+    "hex": "aa5c00f02f0c0790b70900cd32696620248054cc015802df02d302000000000000f961ff0041fd3b7bb4aebeae475b3e1fd9743f000082467bb4aebeae475b3e1fd9743fe50146021d03440287016004010c020c3000000000000002aec41896",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "historical_seq0c_91b7",
+    "hex": "aa5c00f02f0c0791b70900ce326966281f8054cc015701f8020000000000000000a16aff0061c63b48a1aebe3d0a5c3e66aa743f0000d84548a1aebe3d0a5c3e66aa743fe50146021c03440287016004010c020c3000000000000002dfafea59",
+    "source": "S8 bWanShiTong README"
+  },
+  {
+    "name": "historical_seq0c_92b7",
+    "hex": "aa5c00f02f0c0792b70900cf326966381a8054cc015701fb0200000000000000008c6aff00c8b43bec71aebe33c35b3e9ac1743f000050c5ec71aebe33c35b3e9ac1743fe50146021c03440287016004010c020c300000000000000276ae1006",
+    "source": "S8 bWanShiTong README"
+  }
+]
