@@ -48,4 +48,25 @@ struct ProfileDraftTests {
         #expect(draft.hrMax == "190")
         #expect(draft.row()?.heightCm == 180)
     }
+
+    @Test func messagesNameTheUnitsInUse() {
+        // Metric names cm and kg; imperial names the converted display range (40...98 in and
+        // 66.2...661.3 lb, widened outward so accepted display values map back into metric range).
+        #expect(ProfileDraft.Issue.height.message(isImperial: false) == "Height must be from 100 to 250 cm.")
+        #expect(ProfileDraft.Issue.height.message(isImperial: true) == "Height must be from 3'4\" to 8'2\".")
+        #expect(ProfileDraft.Issue.weight.message(isImperial: false) == "Weight must be from 30 to 300 kg.")
+        #expect(ProfileDraft.Issue.weight.message(isImperial: true) == "Weight must be from 66.2 to 661.3 lb.")
+        #expect(ProfileDraft.Issue.hrMax.message(isImperial: true) == "Max heart rate must be from 100 to 230 bpm, or empty.")
+    }
+
+    @Test func parsedValuesIgnoreRangeForDisplaySeeding() {
+        var draft = complete()
+        #expect(draft.parsedHeightCm == 165)
+        #expect(draft.parsedWeightKg == 62.5)
+        draft.heightCm = "99" // out of range but still displayable
+        #expect(draft.parsedHeightCm == 99)
+        #expect(draft.firstIssue == .height)
+        draft.heightCm = "abc"
+        #expect(draft.parsedHeightCm == nil)
+    }
 }

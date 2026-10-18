@@ -1,3 +1,4 @@
+import Metrics
 import Store
 import SwiftUI
 
@@ -18,6 +19,13 @@ struct ProfileView: View {
     @State private var draft = ProfileDraft()
     @State private var loaded = false
     @State private var attempted = false
+    @StateObject private var units = UnitPreferences()
+    /// Imperial display buffers. One-way sync: edits flow into the draft's canonical cm/kg (see
+    /// `storeHeightImperial` / `storeWeightImperial`); the buffers are only re-seeded from the draft
+    /// when a stored profile loads (`loadImperialBuffers`), so typing is never rewritten underneath.
+    @State private var heightFeet = ""
+    @State private var heightInches = ""
+    @State private var weightPounds = ""
 
     var body: some View {
         Form {
@@ -40,30 +48,69 @@ struct ProfileView: View {
                     Label("Birth year", systemImage: "calendar")
                 }
 
-                LabeledContent {
-                    HStack(spacing: Spacing.s4) {
-                        TextField("Required", text: $draft.heightCm)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .accessibilityIdentifier("profile.height")
-                        Text("cm")
-                            .foregroundStyle(.secondary)
+                if units.isImperial {
+                    LabeledContent {
+                        HStack(spacing: Spacing.s4) {
+                            TextField("ft", text: $heightFeet)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .accessibilityIdentifier("profile.height")
+                                .onChange(of: heightFeet) { _, _ in storeHeightImperial() }
+                            Text("ft")
+                                .foregroundStyle(.secondary)
+                            TextField("in", text: $heightInches)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .accessibilityIdentifier("profile.heightInches")
+                                .onChange(of: heightInches) { _, _ in storeHeightImperial() }
+                            Text("in")
+                                .foregroundStyle(.secondary)
+                        }
+                    } label: {
+                        Label("Height", systemImage: "ruler")
                     }
-                } label: {
-                    Label("Height", systemImage: "ruler")
+                } else {
+                    LabeledContent {
+                        HStack(spacing: Spacing.s4) {
+                            TextField("Required", text: $draft.heightCm)
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                                .accessibilityIdentifier("profile.height")
+                            Text("cm")
+                                .foregroundStyle(.secondary)
+                        }
+                    } label: {
+                        Label("Height", systemImage: "ruler")
+                    }
                 }
 
-                LabeledContent {
-                    HStack(spacing: Spacing.s4) {
-                        TextField("Required", text: $draft.weightKg)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .accessibilityIdentifier("profile.weight")
-                        Text("kg")
-                            .foregroundStyle(.secondary)
+                if units.isImperial {
+                    LabeledContent {
+                        HStack(spacing: Spacing.s4) {
+                            TextField("Required", text: $weightPounds)
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                                .accessibilityIdentifier("profile.weight")
+                                .onChange(of: weightPounds) { _, _ in storeWeightImperial() }
+                            Text("lb")
+                                .foregroundStyle(.secondary)
+                        }
+                    } label: {
+                        Label("Weight", systemImage: "scalemass")
                     }
-                } label: {
-                    Label("Weight", systemImage: "scalemass")
+                } else {
+                    LabeledContent {
+                        HStack(spacing: Spacing.s4) {
+                            TextField("Required", text: $draft.weightKg)
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                                .accessibilityIdentifier("profile.weight")
+                            Text("kg")
+                                .foregroundStyle(.secondary)
+                        }
+                    } label: {
+                        Label("Weight", systemImage: "scalemass")
+                    }
                 }
             } footer: {
                 Text(bodyFooter)
@@ -72,7 +119,7 @@ struct ProfileView: View {
             Section {
                 LabeledContent {
                     HStack(spacing: Spacing.s4) {
-                        TextField("From birth year", text: $draft.hrMax)
+                        TextField(hrMaxPlaceholder, text: $draft.hrMax)
                             .keyboardType(.numberPad)
                             .multilineTextAlignment(.trailing)
                             .accessibilityIdentifier("profile.hrMax")
@@ -80,7 +127,7 @@ struct ProfileView: View {
                             .foregroundStyle(.secondary)
                     }
                 } label: {
-                    Label("HRmax", systemImage: "heart.fill")
+                    Label("Max heart rate", systemImage: "heart.fill")
                 }
             } footer: {
                 Text(hrMaxFooter)
@@ -98,21 +145,79 @@ struct ProfileView: View {
             loaded = true
             let row = try? await environment.database.writer.read { try $0.profile() }
             draft = ProfileDraft(row: row)
+            loadImperialBuffers()
         }
     }
 
     private var bodyFooter: String {
         if attempted, let issue = draft.firstIssue, issue != .hrMax {
-            return issue.message
+            return issue.message(isImperial: units.isImperial)
         }
         return "Sex, age, height and weight set calorie estimates and heart-rate zones."
     }
 
     private var hrMaxFooter: String {
         if attempted, let issue = draft.firstIssue, issue == .hrMax {
-            return issue.message
+            return issue.message(isImperial: units.isImperial)
         }
-        return "Blank uses an estimate from birth year."
+        if let estimate = hrMaxEstimate {
+            return "Heart-rate zones and calorie burn use this. Blank applies the Tanaka estimate, 208 − 0.7 × age (≈\(estimate) bpm here); a lab- or field-tested value overrides it."
+        }
+        return "Heart-rate zones and calorie burn use this. Blank applies the Tanaka estimate, 208 − 0.7 × age; a lab- or field-tested value overrides it."
+    }
+
+    /// Tanaka estimate from the entered birth year, shown as the HRmax placeholder.
+    private var hrMaxEstimate: Int? {
+        guard let year = Int(draft.birthYear.trimmingCharacters(in: .whitespaces)),
+              ProfileDraft.birthYearRange.contains(year)
+        else { return nil }
+        let age = max(Calendar.current.component(.year, from: Date()) - year, 0)
+        return Int(HeartRateZones.tanakaMaxHR(ageYears: age).rounded())
+    }
+
+    private var hrMaxPlaceholder: String {
+        hrMaxEstimate.map { "≈\($0) (estimated)" } ?? "Optional"
+    }
+
+    /// Seeds the imperial display buffers from the draft's canonical metric text. Blank when the
+    /// value does not parse (fresh onboarding or a cleared field).
+    private func loadImperialBuffers() {
+        guard units.isImperial else { return }
+        if let cm = draft.parsedHeightCm {
+            let (feet, inches) = UnitConversions.feetInches(fromCm: cm)
+            heightFeet = "\(feet)"
+            heightInches = "\(inches)"
+        }
+        if let kg = draft.parsedWeightKg {
+            weightPounds = ProfileDraft.number(UnitConversions.poundsDisplay(fromKg: kg))
+        }
+    }
+
+    /// Canonical cm for the typed feet + inches. Blank inches counts as 0 while typing; anything
+    /// unparseable (or 13+ inches) clears the canonical value so the range error shows.
+    private func storeHeightImperial() {
+        let feetText = heightFeet.trimmingCharacters(in: .whitespaces)
+        let inchesText = heightInches.trimmingCharacters(in: .whitespaces)
+        guard let feet = Int(feetText), feet >= 0 else {
+            draft.heightCm = ""
+            return
+        }
+        let inches = inchesText.isEmpty ? 0 : Int(inchesText)
+        guard let inches, inches >= 0, inches < 12 else {
+            draft.heightCm = ""
+            return
+        }
+        draft.heightCm = ProfileDraft.number(UnitConversions.cm(fromFeetInches: feet, inches: inches))
+    }
+
+    /// Canonical kg (one decimal) for the typed pounds. Anything unparseable clears the canonical
+    /// value so the range error shows.
+    private func storeWeightImperial() {
+        guard let pounds = ProfileDraft.parseLooseText(weightPounds), pounds > 0 else {
+            draft.weightKg = ""
+            return
+        }
+        draft.weightKg = ProfileDraft.number(UnitConversions.kilograms(fromPoundsDisplay: pounds))
     }
 
     private var actionTitle: String {

@@ -1,4 +1,5 @@
 import Foundation
+import Metrics
 import Store
 
 /// Editable profile fields for onboarding and Settings (PLAN.md §14 row 4). Text stays as typed until
@@ -41,6 +42,9 @@ struct ProfileDraft: Equatable {
     }
 
     /// Why the draft cannot be saved, or nil when it can. HRmax is optional and may be left blank.
+    /// Height and weight stay canonical in cm/kg; in imperial the bounds are the converted display
+    /// range (see `UnitConversions.inchesRange` / `poundsRange`), so the message names the units
+    /// actually on screen.
     enum Issue: Equatable {
         case sex
         case birthYear
@@ -49,12 +53,26 @@ struct ProfileDraft: Equatable {
         case hrMax
 
         var message: String {
+            message(isImperial: false)
+        }
+
+        func message(isImperial: Bool) -> String {
             switch self {
-            case .sex: "Choose a formula sex."
-            case .birthYear: "Birth year must be from 1900 to 2030."
-            case .height: "Height must be from 100 to 250 cm."
-            case .weight: "Weight must be from 30 to 300 kg."
-            case .hrMax: "HRmax must be from 100 to 230 bpm, or empty."
+            case .sex: return "Choose a formula sex."
+            case .birthYear: return "Birth year must be from 1900 to 2030."
+            case .height:
+                if isImperial {
+                    let inches = UnitConversions.inchesRange(fromCmRange: ProfileDraft.heightRange)
+                    return "Height must be from \(UnitConversions.feetInchesText(inches.lowerBound / 12, inches.lowerBound % 12)) to \(UnitConversions.feetInchesText(inches.upperBound / 12, inches.upperBound % 12))."
+                }
+                return "Height must be from 100 to 250 cm."
+            case .weight:
+                if isImperial {
+                    let pounds = UnitConversions.poundsRange(fromKgRange: ProfileDraft.weightRange)
+                    return "Weight must be from \(pounds.lowerBound.oneDecimal) to \(pounds.upperBound.oneDecimal) lb."
+                }
+                return "Weight must be from 30 to 300 kg."
+            case .hrMax: return "Max heart rate must be from 100 to 230 bpm, or empty."
             }
         }
     }
@@ -108,14 +126,37 @@ struct ProfileDraft: Equatable {
         return value
     }
 
+    /// The canonical height text parsed as cm when it is a number, regardless of range. The view
+    /// uses this to seed imperial display fields.
+    var parsedHeightCm: Double? { Self.parseLoose(heightCm) }
+
+    /// The canonical weight text parsed as kg when it is a number, regardless of range. The view
+    /// uses this to seed imperial display fields.
+    var parsedWeightKg: Double? { Self.parseLoose(weightKg) }
+
+    /// Any text parsed as a number when possible, regardless of range (comma accepted as decimal
+    /// point). Used by the view for imperial entries.
+    static func parseLooseText(_ text: String) -> Double? { parseLoose(text) }
+
+    /// Metric text for a parsed value: whole numbers without a decimal ("180"), otherwise as-is
+    /// ("74.8"). Also used by the view to store converted imperial entries.
+    static func number(_ value: Double) -> String {
+        value.rounded() == value ? String(Int(value)) : String(value)
+    }
+
     private static func parseNumber(_ text: String, in range: ClosedRange<Double>) -> Double? {
-        guard let value = Double(text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")),
-              range.contains(value)
-        else { return nil }
+        guard let value = parseLoose(text), range.contains(value) else { return nil }
         return value
     }
 
-    private static func number(_ value: Double) -> String {
-        value.rounded() == value ? String(Int(value)) : String(value)
+    private static func parseLoose(_ text: String) -> Double? {
+        Double(text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: "."))
+    }
+}
+
+private extension Double {
+    /// One-decimal display text like "66.2" (used for imperial weight bounds).
+    var oneDecimal: String {
+        String(format: "%.1f", self)
     }
 }
