@@ -112,11 +112,6 @@ struct MainTabView: View {
             .tabItem { Label("Alarms", systemImage: "alarm.fill") }
 
             NavigationStack {
-                DeviceView(liveState: liveState)
-            }
-            .tabItem { Label("Device", systemImage: "antenna.radiowaves.left.and.right") }
-
-            NavigationStack {
                 SettingsView(environment: environment, liveState: liveState)
             }
             .tabItem { Label("Settings", systemImage: "gearshape.fill") }

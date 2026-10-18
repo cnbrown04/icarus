@@ -156,7 +156,7 @@ struct DeviceView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
-        .navigationTitle("Device")
+        .navigationTitle("Band")
     }
 
     /// Off switches the channel at once. On only opens the explainer, and the switch moves when "Turn on" is tapped.

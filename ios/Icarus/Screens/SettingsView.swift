@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var versionTaps = 0
     @State private var showsDebug = false
     @State private var confirmsUnpair = false
+    @StateObject private var units = UnitPreferences()
 
     /// Five taps on the version row opens the hidden Debug screen (PLAN.md §14 row 18).
     private static let debugTapCount = 5
@@ -24,7 +25,24 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Band and Sync") {
+            Section {
+                Picker("Length & mass", selection: $units.lengthMass) {
+                    ForEach(LengthMassUnits.allCases) { unit in
+                        Text(unit.label).tag(unit)
+                    }
+                }
+                Picker("Temperature", selection: $units.temperature) {
+                    ForEach(TemperatureUnits.allCases) { unit in
+                        Text(unit.label).tag(unit)
+                    }
+                }
+            } header: {
+                Text("Units")
+            } footer: {
+                Text("System follows the locale. Storage and sync always use metric (cm, kg, °C); only display changes.")
+            }
+
+            Section("Band") {
                 NavigationLink {
                     DeviceView(liveState: liveState)
                 } label: {
@@ -35,10 +53,9 @@ struct SettingsView: View {
                             .foregroundStyle(Palette.link(liveState.state))
                     }
                 }
-                LabeledContent("Battery") {
-                    Text(batteryText).monospacedDigit()
-                }
-                LabeledContent("Last data", value: lastDataText)
+            }
+
+            Section("Server") {
                 LabeledContent("Server", value: serverText)
                 NavigationLink {
                     SyncView(environment: environment)
@@ -71,6 +88,14 @@ struct SettingsView: View {
             Section("Data") {
                 LabeledContent("Raw heart rate kept", value: "\(RetentionPolicy.rawDays) days")
                 LabeledContent("Minute metrics kept", value: "\(RetentionPolicy.minuteDays) days")
+            }
+
+            Section("Advanced") {
+                NavigationLink {
+                    RawDataView(liveState: liveState)
+                } label: {
+                    settingsLabel("Raw band data", symbol: "waveform.path.ecg", tint: .purple)
+                }
             }
 
             Section {
@@ -117,17 +142,6 @@ struct SettingsView: View {
 
     private var serverText: String {
         environment.sync.status.serverHost ?? "Not paired"
-    }
-
-    private var batteryText: String {
-        guard let battery = liveState.batteryPercent else { return "--" }
-        return Format.percent(battery)
-    }
-
-    /// Static text, exact when the screen opens. The Device screen keeps a live age (PLAN.md 7.2).
-    private var lastDataText: String {
-        guard let last = liveState.lastDataAt else { return "None" }
-        return DataAge.text(seconds: liveState.clock.now.timeIntervalSince(last))
     }
 
     private var syncPhaseText: String {
