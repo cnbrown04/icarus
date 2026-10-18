@@ -2,8 +2,7 @@ import Store
 import SwiftUI
 import SyncKit
 
-/// Status, pending rows, batches and the interval setting (PLAN.md 14 row 16). Reached from Settings and from
-/// Today's "Band and sync" card.
+/// Status, pending rows, batches and the interval setting (PLAN.md 14 row 16). Reached from Settings.
 struct SyncView: View {
     let environment: AppEnvironment
 
@@ -93,7 +92,7 @@ struct SyncView: View {
         .navigationTitle("Sync")
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("Sync now") {
+                Button("Sync Now") {
                     Task { await environment.sync.runNow() }
                 }
                 .disabled(environment.sync.isRunning)

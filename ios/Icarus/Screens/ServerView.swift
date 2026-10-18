@@ -44,7 +44,7 @@ struct ServerView: View {
 
             if let onSkip {
                 Section {
-                    Button("Skip for now", action: onSkip)
+                    Button("Skip for Now", action: onSkip)
                         .accessibilityIdentifier("server.skip")
                 } footer: {
                     Text("Without a server, data stays on this iPhone.")

@@ -76,7 +76,7 @@ struct StressDetailView: View {
                     StatTile(title: "Sqrt Baevsky SI", value: snapshot?.baevskySqrt.map(Self.decimal) ?? "--")
                 }
 
-                Button("How stress is estimated") {
+                Button("How Stress Is Estimated") {
                     showsMethod = true
                 }
                 .buttonStyle(.bordered)
@@ -158,7 +158,7 @@ private struct StressMethodSheet: View {
                     Text("This is an estimate, not WHOOP's Stress Monitor, and not a medical measure.")
                 }
             }
-            .navigationTitle("Stress method")
+            .navigationTitle("Stress Method")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

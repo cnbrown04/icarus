@@ -20,7 +20,7 @@ struct HeartRateDetailView: View {
                 }
                 .pickerStyle(.segmented)
 
-                ChartCard(title: "Heart rate", footer: rangeFooter) {
+                ChartCard(title: "Heart Rate", footer: rangeFooter) {
                     Text(snapshot?.average.map { Format.number($0, unit: "bpm") } ?? "--")
                         .font(.metricValue)
                         .monospacedDigit()
@@ -67,7 +67,7 @@ struct HeartRateDetailView: View {
             .padding(.vertical, Spacing.s8)
         }
         .dashboardBackground()
-        .navigationTitle("Heart rate")
+        .navigationTitle("Heart Rate")
         .task(id: range) {
             let selected = range
             for await value in environment.snapshots(every: .seconds(15), { db, nowMs in

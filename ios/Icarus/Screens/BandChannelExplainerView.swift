@@ -34,7 +34,7 @@ struct BandChannelExplainerView: View {
                 .padding(.vertical, Spacing.s24)
             }
             .safeAreaInset(edge: .bottom) {
-                Button("Turn on", action: onTurnOn)
+                Button("Turn On", action: onTurnOn)
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .frame(maxWidth: .infinity)

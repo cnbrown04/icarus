@@ -88,7 +88,7 @@ struct AlarmEditorView: View {
                     }
                 }
             }
-            .navigationTitle(isNew ? "New alarm" : "Alarm")
+            .navigationTitle(isNew ? "New Alarm" : "Alarm")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
