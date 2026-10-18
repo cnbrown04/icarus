@@ -95,6 +95,7 @@ Every protocol or platform claim in this plan carries one of these tags:
 - **[Community-verified]**: documented by community projects, and we cross-checked it ourselves (e.g. recomputed checksums on published frames) or two independent projects agree.
 - **[Community]**: documented by one community project. Plausible but not independently confirmed.
 - **[Unverified]**: our inference, a conflict between sources, or something not found in any fetched source. Must be checked on Caleb's band or device.
+- **[Hardware-verified]**: measured on Caleb's own band during a Phase 1 hardware session and recorded with firmware and fixture in `docs/hardware-findings.md`. Overrides any community tag it conflicts with.
 
 ---
 
@@ -366,8 +367,8 @@ Commands relevant to Icarus. Decimal values, from NOOP [S12], jmooves [S11] and 
 |---|---|---|---|
 | 3 (`0x03`) | TOGGLE_REALTIME_HR | Live HR on the custom channel | [Community-verified]: name in [S11][S12]; byte `0x03` in bWanShiTong's frames [S8] |
 | 14 (`0x0e`) | (HR broadcast toggle) | Turn standard HR broadcast on/off | [Community] [S8][S9]; frames CRC-verified by us |
-| 10 / 11 | SET_CLOCK / GET_CLOCK | Keep the band RTC correct (needed for alarms and history timestamps) | [Community]. **The SET_CLOCK payload length varies by firmware** (8 vs 9 bytes; a wrong length is acked but not latched) [S12] |
-| 22 / 23 | SEND_HISTORICAL_DATA / HISTORICAL_DATA_RESULT | Offload the band's on-device history with batch ACKs | [Community-verified] [S11][S12][S15]; ACK layouts differ slightly between write-ups [Unverified detail] |
+| 10 / 11 | SET_CLOCK / GET_CLOCK | Keep the band RTC correct (needed for alarms and history timestamps) | [Community] [S12]; **[Hardware-verified 2026-10-18]** on fw 41.17.x: the 8-byte form `[u32 LE seconds][4 zero bytes]` is ACKed but **not latched**; only the legacy 9-byte form `[u32 LE][5 zero bytes]` latches the RTC — GET_CLOCK read back exactly the seconds sent and the strap resumed banking history. The handshake now sends **both** forms back to back (`docs/hardware-findings.md` §5.5 #5) |
+| 22 / 23 | SEND_HISTORICAL_DATA / HISTORICAL_DATA_RESULT | Offload the band's on-device history with batch ACKs | [Community-verified] [S11][S12][S15]; ACK layouts differ slightly between write-ups, **[Hardware-verified 2026-10-18]** on fw 41.17.x: each HISTORICAL_DATA_RESULT (23) ack payload is `[0x01] + 8-byte endData token` — a bare token was rejected (the strap replayed the same first batch every ~5 s and the trim cursor never advanced). Only METADATA HISTORY_END frames (meta_type/cmd == 2) are acked with the token echo; HISTORY_COMPLETE (cmd 3) ends the drain (quiet timeout or completion event); HISTORY_START (cmd 1) is not acked (`docs/hardware-findings.md`) |
 | 26 | GET_BATTERY_LEVEL | Battery (u16 ÷ 10 = %) | [Community-verified] [S11][S15]; one report says it is silent on some recent firmware [S12] |
 | 34 | GET_DATA_RANGE | History window | [Community-verified] |
 | 66 (`0x42`) | SET_ALARM_TIME | Arm the **band's firmware alarm** (UTC unix); buzzes even if the app is not running | [Community-verified]: name and behaviour in [S12]; byte `0x42` + u32 unix payload in bWanShiTong's CRC-valid alarm frames [S8] |
@@ -426,7 +427,7 @@ WHOOP 5.0 / MG uses service `fd4b0001-cce1-4033-93ce-002d5875f58a`, a CRC16-Modb
 2. Does `0x2A37` include R-R intervals (flag bit 4) on Caleb's firmware, and what fraction of seconds carry ≥1 R-R? [S12][S15] vs [S10]
 3. Does a `.withResponse` write from **iOS** bond the custom service (look for the `BLE_BONDED` event)? [S12][S15] vs [S11]
 4. Can the official WHOOP app and Icarus be connected at the same time? [S11] vs [S15]
-5. Which SET_CLOCK payload length does Caleb's firmware latch (8 or 9 bytes)? [S12]
+5. Which SET_CLOCK payload length does Caleb's firmware latch (8 or 9 bytes)? [S12] — **Answered 2026-10-18:** the 8-byte form is ACKed but not latched; the legacy 9-byte form `[u32 LE][5 zero bytes]` latches (GET_CLOCK read back the seconds sent). The handshake sends both forms back to back. Result and fixture in `docs/hardware-findings.md` §5.5 #5.
 6. Does RUN_HAPTICS_PATTERN 79 with `[2, n, 0, 0, 0]` buzz a WHOOP 4.0, and what does GET_ALL_HAPTICS_PATTERN 80 return? [S12]
 7. Firmware version (REPORT_VERSION_INFO 7), recorded with every fixture.
 
@@ -541,7 +542,7 @@ Implementations:
 - **Subscribing:** Tier A subscribes to `0x2A37`. Tier B additionally subscribes to `61080003/4/5` after the bonding write.
 - **Tier B handshake** (once per connection, guarded by a flag because re-running it mid-offload stops history [S12]):
   1. `GET_HELLO` and advertising name;
-  2. `SET_CLOCK` (firmware-specific length, chosen by probing and caching per firmware);
+  2. `SET_CLOCK` — write **both** forms back to back: the 8-byte `[u32 LE seconds][4 zero bytes]` body, then the legacy 9-byte `[u32 LE][5 zero bytes]` body, which is the one that latches on fw 41.17.x [Hardware-verified 2026-10-18, §5.3.4];
   3. `GET_CLOCK`;
   4. disable the raw realtime flood (`SEND_R10_R11_REALTIME [0x00]` per [S12]);
   5. `GET_DATA_RANGE`.
