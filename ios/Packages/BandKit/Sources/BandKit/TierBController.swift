@@ -187,7 +187,7 @@ public actor TierBController {
                     // SET_CLOCK form actually latched (a latched RTC reads back ≈ the seconds sent).
                     let p = reply.payload
                     let rtc = UInt32(p[2]) | (UInt32(p[3]) << 8) | (UInt32(p[4]) << 16) | (UInt32(p[5]) << 24)
-                    BandLog.tierB(.info, "strap RTC reads back \(rtc) (SET_CLOCK sent \(unix ?? 0))")
+                    BandLog.tierB(.info, "strap RTC reads back \(rtc) (SET_CLOCK sent \(unix))")
                 }
             }
         } catch {
@@ -330,6 +330,12 @@ public actor TierBController {
             case let .sendResult(token):
                 do {
                     try await writeConfirmedWithoutReply(.historicalDataResult(token: token))
+                    BandLog.tierB(.info, "acked batch, trim cursor \(Self.tokenValue(token)) (\(offload.recordCount) record(s) so far)")
+                    // The strap permanently trims everything this ack covers, so the decoded records
+                    // must be handed to the app NOW: holding the whole drain in memory until it stops
+                    // would lose every acked record if the app died mid-drain. Repeated stores dedupe
+                    // on (band_id, ts_ms).
+                    flushRecords()
                 } catch {
                     BandLog.tierB(.error, "HISTORICAL_DATA_RESULT write failed: \(String(describing: error))")
                 }
@@ -363,16 +369,23 @@ public actor TierBController {
         await runOffloadEffects(offload.quietElapsed())
     }
 
-    /// Ends the current drain and emits everything decoded since it started, exactly once
-    /// (PLAN.md 5.3.4). A drain that produced no records emits nothing.
+    /// Ends the current drain and emits any records not yet flushed (PLAN.md 5.3.4). Records are
+    /// flushed per acked batch (`runOffloadEffects`), so a finished drain normally has nothing left;
+    /// a drain that stops between batches still emits its partial batch exactly once.
     private func finishDrain() {
         offloadWatchdog?.cancel()
         offloadWatchdog = nil
         offloadWatchdogDeadline = nil
+        BandLog.tierB(.info, "historical offload ended (\(offload.phase)): \(offload.recordCount) record(s) total, \(historicalRecords.count) unflushed")
+        flushRecords()
+    }
+
+    /// Hands the accumulated records to the app and clears the buffer. Called after each acked
+    /// batch (the strap's trim point) and at drain end; a no-op when nothing is pending.
+    private func flushRecords() {
         let records = historicalRecords
-        historicalRecords = []
-        BandLog.tierB(.info, "historical offload ended (\(offload.phase)): \(records.count) record(s)")
         guard !records.isEmpty else { return }
+        historicalRecords = []
         emit(.historical(records))
     }
 
@@ -466,6 +479,11 @@ public actor TierBController {
                 armedAlarm = nil
                 await rearmNext()
             }
+        } else if frame.packetType == .realtimeRawData {
+            // The accel/PPG raw flood (PLAN.md 5.3.4, 1.9 KB/s): never parsed, only surfaced so
+            // the raw-data viewer can show it. The emit is cheap — no hex formatting here.
+            BandLog.tierB(.debug, "realtime raw: \(frame.payload.count) payload bytes")
+            emit(.rawFrame(frame, at: clock.now()))
         }
     }
 
@@ -657,6 +675,16 @@ public actor TierBController {
         if let current = waiter {
             resolve(current.token, with: .failure(error))
         }
+    }
+
+    /// The 8-byte HISTORY_END token read as a u64 little-endian, for the log line. A short token
+    /// (should not happen) still produces a value from the bytes it has.
+    private static func tokenValue(_ bytes: [UInt8]) -> UInt64 {
+        var value: UInt64 = 0
+        for (index, byte) in bytes.enumerated() where index < 8 {
+            value |= UInt64(byte) << (8 * UInt64(index))
+        }
+        return value
     }
 
     private func setState(_ new: TierBState) {

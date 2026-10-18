@@ -403,14 +403,20 @@ struct TierBControllerTests {
         #expect(h.band.last?.cmd == 23, "the batch token is echoed as HISTORICAL_DATA_RESULT")
         #expect(h.band.last?.payload == [0x01] + token, "the ack leads with 0x01 (NOOP, verified on 4.0)")
 
-        // The drain went quiet: the watchdog fires and the drain stops with its records.
+        // The acked batch flushes immediately: the strap trims acked records permanently, so
+        // holding them until the drain stops would lose them if the app died mid-drain.
+        func historicalEvents() -> [[HistoricalRecord]] {
+            h.events.all.compactMap { event -> [HistoricalRecord]? in
+                if case let .historical(records) = event { return records }
+                return nil
+            }
+        }
+        #expect(historicalEvents() == [[record]])
+
+        // The drain then goes quiet and stops; the flushed records are NOT emitted a second time.
         h.clock.advance(by: OffloadStateMachine.quietTimeout)
         await flush()
-        let historical = h.events.all.compactMap { event -> [HistoricalRecord]? in
-            if case let .historical(records) = event { return records }
-            return nil
-        }
-        #expect(historical == [[record]])
+        #expect(historicalEvents() == [[record]], "records flush exactly once")
     }
 
     @Test func aLinkDropEmitsThePartialDrain() async throws {
