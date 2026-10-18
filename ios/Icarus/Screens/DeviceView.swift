@@ -33,7 +33,17 @@ struct DeviceView: View {
                         .foregroundStyle(Palette.heartRate)
                     Text(liveState.rememberedID == nil ? "Not paired" : bandName)
                         .font(.title3.weight(.semibold))
-                    StatusPill.link(liveState)
+                    // A plain tinted Label renders naturally in the Form's centered stack; the
+                    // capsule pill fought the row height and alignment here.
+                    Label(liveState.connectionText, systemImage: liveState.connectionSymbol)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(Palette.link(liveState.state))
+                    if let bpm = liveState.latestBPM {
+                        Text("\(bpm) bpm")
+                            .font(.subheadline)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, Spacing.s8)
@@ -68,6 +78,19 @@ struct DeviceView: View {
                         Label("Last data", systemImage: "clock")
                     }
                 }
+                // Identity the band reported in its bandInfo event (PLAN.md §14 row 15).
+                LabeledContent {
+                    Text(liveState.bandInfo?.firmwareVersion ?? "--")
+                } label: {
+                    Label("Firmware", systemImage: "cpu")
+                }
+                if let serial = liveState.bandInfo?.serial {
+                    LabeledContent {
+                        Text(serial)
+                    } label: {
+                        Label("Serial", systemImage: "barcode")
+                    }
+                }
             }
 
             Section {
@@ -75,10 +98,10 @@ struct DeviceView: View {
                     NavigationLink {
                         PairBandView(liveState: liveState)
                     } label: {
-                        Label("Pair band", systemImage: "plus.circle")
+                        Label("Pair Band", systemImage: "plus.circle")
                     }
                 } else {
-                    Button("Forget band", role: .destructive) {
+                    Button("Forget Band", role: .destructive) {
                         confirmsForget = true
                     }
                 }
@@ -86,20 +109,26 @@ struct DeviceView: View {
 
             Section {
                 Toggle(isOn: bandChannelBinding) {
-                    Label("Band channel", systemImage: "waveform")
+                    Label("Band Channel", systemImage: "waveform")
                 }
                 .accessibilityIdentifier("device.bandChannel")
                 LabeledContent {
-                    tierBPill
+                    Text(tierBStateText)
+                        .foregroundStyle(tierBStateTint)
                 } label: {
-                    Text("Channel status")
+                    Label("Channel status", systemImage: "dot.radiowaves.left.and.right")
+                }
+                if liveState.tierBState == .unavailable, let reason = liveState.tierBFailure {
+                    Text(reason)
+                        .font(.footnote)
+                        .foregroundStyle(Palette.error)
                 }
                 LabeledContent {
                     lastBandEventText
                 } label: {
                     Label("Last band event", systemImage: "hand.tap")
                 }
-                Button("Test buzz") {
+                Button("Test Buzz") {
                     playTestBuzz()
                 }
                 .disabled(liveState.tierBState != .ready)
@@ -122,7 +151,7 @@ struct DeviceView: View {
             )
         }
         .confirmationDialog("Forget '\(bandName)'?", isPresented: $confirmsForget, titleVisibility: .visible) {
-            Button("Forget band", role: .destructive) {
+            Button("Forget Band", role: .destructive) {
                 liveState.forgetBand()
             }
             Button("Cancel", role: .cancel) {}
@@ -155,18 +184,22 @@ struct DeviceView: View {
         Task { await liveState.runRhythm(double) }
     }
 
-    private var tierBPill: StatusPill {
+    private var tierBStateText: String {
         switch liveState.tierBState {
-        case .disabled:
-            StatusPill(text: "Off", symbol: "pause.circle", tint: Palette.neutral)
-        case .awaitingLink:
-            StatusPill(text: "Waiting for band", symbol: "antenna.radiowaves.left.and.right", tint: Palette.warn)
-        case .handshaking:
-            StatusPill(text: "Connecting", symbol: "arrow.triangle.2.circlepath", tint: Palette.warn)
-        case .ready:
-            StatusPill(text: "Ready", symbol: "checkmark.seal.fill", tint: Palette.syncOK)
-        case .unavailable:
-            StatusPill(text: "Unavailable", symbol: "exclamationmark.triangle.fill", tint: Palette.error)
+        case .disabled: "Off"
+        case .awaitingLink: "Waiting for band"
+        case .handshaking: "Connecting"
+        case .ready: "Ready"
+        case .unavailable: "Unavailable"
+        }
+    }
+
+    private var tierBStateTint: Color {
+        switch liveState.tierBState {
+        case .disabled: Palette.neutral
+        case .awaitingLink, .handshaking: Palette.warn
+        case .ready: Palette.syncOK
+        case .unavailable: Palette.error
         }
     }
 

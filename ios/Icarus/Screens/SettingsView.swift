@@ -22,19 +22,33 @@ struct SettingsView: View {
                 } label: {
                     settingsLabel("Profile", symbol: "person.fill", tint: .blue)
                 }
+            }
+
+            Section("Band and Sync") {
                 NavigationLink {
                     DeviceView(liveState: liveState)
                 } label: {
-                    settingsLabel("Band", symbol: "bolt.heart.fill", tint: Palette.heartRate)
+                    HStack(spacing: Spacing.s8) {
+                        settingsLabel("Band", symbol: "bolt.heart.fill", tint: Palette.heartRate)
+                        Spacer(minLength: Spacing.s8)
+                        Text(liveState.connectionText)
+                            .foregroundStyle(Palette.link(liveState.state))
+                    }
                 }
-            }
-
-            Section("Server and sync") {
+                LabeledContent("Battery") {
+                    Text(batteryText).monospacedDigit()
+                }
+                LabeledContent("Last data", value: lastDataText)
                 LabeledContent("Server", value: serverText)
                 NavigationLink {
                     SyncView(environment: environment)
                 } label: {
-                    settingsLabel("Sync", symbol: "arrow.triangle.2.circlepath", tint: Palette.syncOK)
+                    HStack(spacing: Spacing.s8) {
+                        settingsLabel("Sync", symbol: "arrow.triangle.2.circlepath", tint: Palette.syncOK)
+                        Spacer(minLength: Spacing.s8)
+                        Text(syncPhaseText)
+                            .foregroundStyle(Palette.sync(environment.sync.status.phase))
+                    }
                 }
                 if environment.sync.status.phase == .notPaired {
                     NavigationLink {
@@ -89,7 +103,7 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .navigationDestination(isPresented: $showsDebug) {
-            DebugView(liveState: liveState)
+            DebugView(liveState: liveState, environment: environment)
         }
     }
 
@@ -103,6 +117,28 @@ struct SettingsView: View {
 
     private var serverText: String {
         environment.sync.status.serverHost ?? "Not paired"
+    }
+
+    private var batteryText: String {
+        guard let battery = liveState.batteryPercent else { return "--" }
+        return Format.percent(battery)
+    }
+
+    /// Static text, exact when the screen opens. The Device screen keeps a live age (PLAN.md 7.2).
+    private var lastDataText: String {
+        guard let last = liveState.lastDataAt else { return "None" }
+        return DataAge.text(seconds: liveState.clock.now.timeIntervalSince(last))
+    }
+
+    private var syncPhaseText: String {
+        switch environment.sync.status.phase {
+        case .notPaired: return "Not paired"
+        case .idle: return "Up to date"
+        case .syncing: return "Syncing"
+        case let .retrying(at):
+            return "Retrying in \(max(0, Int(at.timeIntervalSince(environment.clock.now)))) s"
+        case .needsRepair: return "Needs repair"
+        }
     }
 
     private var appVersion: String {
