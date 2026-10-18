@@ -142,7 +142,7 @@ final class EventLog: @unchecked Sendable {
 /// Replies with the request's command id and seq. The battery reply is 873, which is 87.3 %.
 let answerAll: FakeBand.Responder = { request, _ in
     let batteryOpcode = BandCommand.getBatteryLevel().command.rawValue
-    return reply(to: request, payload: request.cmd == batteryOpcode ? [0x69, 0x03] : [])
+    return reply(to: request, payload: request.cmd == batteryOpcode ? [0x00, 0x01, 0x69, 0x03] : [])
 }
 
 func reply(to request: Frame, payload: [UInt8] = []) -> Frame {
@@ -151,6 +151,28 @@ func reply(to request: Frame, payload: [UInt8] = []) -> Frame {
 
 func eventFrame(_ id: UInt8) -> Frame {
     Frame(type: PacketType.event.rawValue, seq: 0, cmd: id, payload: [])
+}
+
+/// A minimal version-24 HISTORICAL_DATA (type 47) record frame. Offsets are `Frame.payload` offsets
+/// (= NOOP's frame-absolute offsets minus the 7-byte envelope): unix seconds at 4, heart rate at 14,
+/// on-wrist at 48.
+func historicalRecordFrame(unix: UInt32, heartRate: UInt8 = 60) -> Frame {
+    var payload = [UInt8](repeating: 0, count: 77)
+    for (index, byte) in littleEndian(unix).enumerated() {
+        payload[4 + index] = byte
+    }
+    payload[14] = heartRate
+    payload[48] = 1
+    return Frame(type: PacketType.historicalData.rawValue, seq: HistoricalRecord.supportedVersion, cmd: 7, payload: payload)
+}
+
+/// A METADATA (type 49) frame carrying the 8-byte batch token at payload[10..<18] (HistoricalMetadata).
+func metadataFrame(token: [UInt8]) -> Frame {
+    var payload = [UInt8](repeating: 0, count: 21)
+    for (index, byte) in token.enumerated() {
+        payload[10 + index] = byte
+    }
+    return Frame(type: PacketType.metadata.rawValue, seq: 24, cmd: 2, payload: payload)
 }
 
 /// A controller wired to a fake band, a manual clock and an event log.

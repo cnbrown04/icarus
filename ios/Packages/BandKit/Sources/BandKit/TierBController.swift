@@ -49,7 +49,8 @@ public enum TierBError: Error, Sendable, Equatable {
     case writeFailed
 }
 
-/// Tier B command queue, handshake, rate limits, rhythms and band alarm (PLAN.md 5.3.4, 6.5, 7.2, 9.2, 9.5).
+/// Tier B command queue, handshake, rate limits, rhythms, band alarm and the history-offload driver
+/// (PLAN.md 5.3.4, 6.5, 7.2, 9.2, 9.5).
 ///
 /// Only `BandCommand` can be sent, and `BandCommand` only holds whitelisted opcodes, so the denylist
 /// (PLAN.md 5.3.5) holds at the type level. Pure logic: there is no CoreBluetooth in this file.
@@ -60,6 +61,10 @@ public actor TierBController {
     public static let maxRetries = 3
     /// PLAN.md 6.5: battery at most every 10 min.
     public static let batteryInterval: TimeInterval = 600
+    /// The live HR stream is re-armed this often while the link is ready (NOOP's keep-alive).
+    public static let realtimeRearmInterval: TimeInterval = 30
+    /// The history offload is restarted this often while the link is ready (NOOP's backfill cadence).
+    public static let historicalRedrainInterval: TimeInterval = 900
 
     private struct Job {
         let command: BandCommand
@@ -95,6 +100,19 @@ public actor TierBController {
     private var upcomingAlarms: [Date] = []
     private var armedAlarm: Date?
     private var lastBatteryRequest: Date?
+    /// Re-arms the strap's live HR stream while the link is ready (PLAN.md 7.2).
+    private var realtimeTask: Task<Void, Never>?
+    /// Drives the strap's history offload: decodes type-47 records and produces the write and stop
+    /// effects (PLAN.md 5.3.4).
+    private var offload: HistoricalOffloadHandler
+    /// Records decoded since the current drain began; emitted with `.historical` when the drain stops.
+    private var historicalRecords: [HistoricalRecord] = []
+    /// Restarts the offload every `historicalRedrainInterval` while the link is ready.
+    private var offloadCadenceTask: Task<Void, Never>?
+    /// Sleeps until the active drain's quiet deadline, then fires `.quietElapsed` (PLAN.md 5.3.4).
+    private var offloadWatchdog: Task<Void, Never>?
+    /// The quiet deadline the watchdog is parked on, so a stale wake-up is ignored.
+    private var offloadWatchdogDeadline: Date?
 
     public init(writer: any CommandWriter, clock: any TierBClock, enabled: Bool, emit: @escaping @Sendable (BandEvent) -> Void) {
         self.writer = writer
@@ -102,14 +120,18 @@ public actor TierBController {
         self.emit = emit
         self.enabled = enabled
         self.state = enabled ? .awaitingLink : .disabled
+        self.offload = HistoricalOffloadHandler(clock: clock)
     }
 
     // MARK: Link and toggle
 
     /// The Tier B toggle. Turning it off drops queued and in-flight commands and stops any rhythm.
     /// It sends nothing; the transport unsubscribes the custom characteristics (PLAN.md 19 Phase 6).
+    /// Enabling while `.unavailable` retries: setup reruns on the next connection (or on the live
+    /// link when the transport rediscovers).
     public func setEnabled(_ on: Bool) {
-        guard on != enabled else { return }
+        guard on != enabled || (on && state == .unavailable) else { return }
+        BandLog.tierB(.info, "channel \(on ? "on" : "off") (was: \(state) enabled=\(enabled))")
         enabled = on
         handshakeStarted = false
         if on {
@@ -118,6 +140,9 @@ public actor TierBController {
             // The transport tears down the custom link when the toggle goes off, so no link remains.
             linkOpen = false
             armedAlarm = nil
+            realtimeTask?.cancel()
+            realtimeTask = nil
+            stopOffloadForLinkLoss()
             failPending(.disabled)
             rhythmTask?.cancel()
             rhythmTask = nil
@@ -129,29 +154,68 @@ public actor TierBController {
     public func connectionOpened() async {
         linkOpen = true
         armedAlarm = nil
+        BandLog.tierB(.info, "link open; handshake begins")
         guard enabled, !handshakeStarted else { return }
         handshakeStarted = true
         setState(.handshaking)
-        // SET_CLOCK is skipped: its payload is undocumented (PLAN.md 5.3.4). GET_HELLO and the raw
-        // realtime disable are not in SafeCommand or PLAN.md 5.3.4, so they are skipped too.
-        for command in [BandCommand.getClock(), BandCommand.getDataRange()] {
-            do {
-                _ = try await send(command)
-            } catch {
-                guard enabled else { return }
-                if linkOpen {
-                    setState(.unavailable)
-                } else {
-                    handshakeStarted = false
-                    setState(.awaitingLink)
-                }
-                return
+        // SET_CLOCK (cmd 10) first, as a confirmed write with no reply awaited (PLAN.md 5.3.4): a
+        // wrong-length SET_CLOCK is ACKed but not latched per community findings, and some firmware
+        // never replies, so the write's GATT ack is the only confirmation. WHOOP 4 fw 41.17.x latches
+        // ONLY the legacy 9-byte form (the 8-byte body is ignored outright and the RTC stays lost,
+        // which stops the strap from banking history); newer firmware wants the 8-byte form — so both
+        // go out with the same seconds (NOOP, hardware-verified; double-latching is harmless).
+        // GET_HELLO mirrors the official app's per-link hello (NOOP, verified); GET_CLOCK reads the
+        // RTC back (its reply confirms the link); GET_DATA_RANGE confirms the record range.
+        var step = "SET_CLOCK"
+        var helloReply: Frame?
+        do {
+            let unix = clock.now().timeIntervalSince1970.rounded(.down)
+            if let unix = UInt32(exactly: unix) {
+                try await writeConfirmedWithoutReply(.setClock(unix: unix))
+                try await writeConfirmedWithoutReply(.setClockLegacy(unix: unix))
+            } else {
+                BandLog.tierB(.info, "SET_CLOCK skipped: the wall clock is outside the u32 range")
             }
+            for command in [BandCommand.getHello(), BandCommand.getClock(), BandCommand.getDataRange()] {
+                step = "\(command.command)"
+                let reply = try await send(command)
+                if command.command == .getHello {
+                    helloReply = reply
+                }
+                if command.command == .getClock, reply.payload.count >= 6 {
+                    // Reply: [resp_seq][result][u32 clock …]. Logged so the capture shows whether a
+                    // SET_CLOCK form actually latched (a latched RTC reads back ≈ the seconds sent).
+                    let p = reply.payload
+                    let rtc = UInt32(p[2]) | (UInt32(p[3]) << 8) | (UInt32(p[4]) << 16) | (UInt32(p[5]) << 24)
+                    BandLog.tierB(.info, "strap RTC reads back \(rtc) (SET_CLOCK sent \(unix ?? 0))")
+                }
+            }
+        } catch {
+            guard enabled else { return }
+            if linkOpen {
+                let reason = "Handshake step \(step) failed: \(String(describing: error))"
+                BandLog.tierB(.error, reason)
+                emit(.tierBFailure(reason))
+                setState(.unavailable)
+            } else {
+                handshakeStarted = false
+                setState(.awaitingLink)
+            }
+            return
         }
+        BandLog.tierB(.info, "handshake complete")
         guard enabled, linkOpen else { return }
         setState(.ready)
+        if let helloReply {
+            // Best-effort identity strings from the hello reply (PLAN.md 5.3.4). [Unverified]
+            emit(.bandInfo(BandInfo.helloReply(helloReply.payload)))
+        }
         await rearmNext()
         await refreshBattery()
+        await rearmRealtime()
+        startRealtime()
+        await startDrain()
+        startOffloadCadence()
     }
 
     /// The link dropped. Pending commands fail with `.notConnected`.
@@ -159,7 +223,11 @@ public actor TierBController {
         linkOpen = false
         handshakeStarted = false
         armedAlarm = nil
+        realtimeTask?.cancel()
+        realtimeTask = nil
+        stopOffloadForLinkLoss()
         failPending(.notConnected)
+        BandLog.tierB(.info, "link closed (enabled=\(enabled), state=\(state))")
         // A failed setup stays `.unavailable` until the next connection opens.
         if enabled, state != .unavailable {
             setState(.awaitingLink)
@@ -170,10 +238,171 @@ public actor TierBController {
     public func linkFailed() {
         linkOpen = false
         handshakeStarted = false
+        realtimeTask?.cancel()
+        realtimeTask = nil
+        stopOffloadForLinkLoss()
         failPending(.notConnected)
+        BandLog.tierB(.error, "link failed (enabled=\(enabled))")
         if enabled {
             setState(.unavailable)
         }
+    }
+
+    // MARK: Realtime heart rate
+
+    /// Keeps re-arming the strap's live HR stream every `realtimeRearmInterval` while the link is
+    /// ready, mirroring the official client's keep-alive (NOOP). The first arm happened in
+    /// `connectionOpened` before this task started, so the loop sleeps first.
+    private func startRealtime() {
+        realtimeTask?.cancel()
+        let clock = clock
+        realtimeTask = Task {
+            while !Task.isCancelled {
+                try? await clock.sleep(seconds: Self.realtimeRearmInterval)
+                await self.rearmRealtime()
+            }
+        }
+    }
+
+    private func rearmRealtime() async {
+        guard enabled, state == .ready, linkOpen else { return }
+        _ = try? await send(.toggleRealtimeHR(on: true))
+    }
+
+    // MARK: Historical offload (PLAN.md 5.3.4)
+
+    /// Starts one history drain: writes SEND_HISTORICAL_DATA (cmd 22) as a fire-and-forget
+    /// confirmed write and lets the strap stream its on-device history. A drain already running is
+    /// left alone — restarting it would drop the records collected so far without emitting them.
+    private func startDrain() async {
+        guard enabled, state == .ready, linkOpen else { return }
+        if case .draining = offload.phase { return }
+        BandLog.tierB(.info, "starting historical offload")
+        historicalRecords.removeAll()
+        await runOffloadEffects(offload.start())
+        scheduleQuietWatchdog()
+    }
+
+    /// Restarts the offload every `historicalRedrainInterval` while the link is ready, mirroring
+    /// the realtime keep-alive's backfill cadence. Cancelled on toggle-off and link loss.
+    private func startOffloadCadence() {
+        offloadCadenceTask?.cancel()
+        let clock = clock
+        offloadCadenceTask = Task {
+            while !Task.isCancelled {
+                try? await clock.sleep(seconds: Self.historicalRedrainInterval)
+                await self.startDrain()
+            }
+        }
+    }
+
+    /// Feeds one reassembled frame into the offload handler and performs its effects. The handler
+    /// ignores frames that are neither HISTORICAL_DATA (type 47) nor METADATA (type 49), and
+    /// ignores them while no drain is running.
+    private func handleOffloadFrame(_ frame: Frame) async {
+        guard case .draining = offload.phase else { return }
+        // The handler only surfaces a record's time through its effects, so the record itself is
+        // decoded here for the `.historical` event. A record is collected even when it stops the
+        // drain (the live-edge rule), because it belongs to the finished batch.
+        let record = try? HistoricalRecord.parse(frame)
+        let effects = offload.handle(frame)
+        if let record {
+            historicalRecords.append(record)
+        }
+        await runOffloadEffects(effects)
+        scheduleQuietWatchdog()
+    }
+
+    /// Performs the effects a state-machine event produced: the cmd 22/23 writes are fire-and-
+    /// forget confirmed writes, and `.stop` ends the drain and emits what was decoded.
+    private func runOffloadEffects(_ effects: [OffloadStateMachine.Effect]) async {
+        for effect in effects {
+            switch effect {
+            case .sendHistoricalData:
+                do {
+                    try await writeConfirmedWithoutReply(.sendHistoricalData())
+                } catch {
+                    BandLog.tierB(.error, "SEND_HISTORICAL_DATA write failed: \(String(describing: error))")
+                    // Without the write the strap streams nothing, so the drain is abandoned. A
+                    // failing link also lands here via connectionClosed/linkFailed.
+                    stopOffloadForLinkLoss()
+                }
+            case let .sendResult(token):
+                do {
+                    try await writeConfirmedWithoutReply(.historicalDataResult(token: token))
+                } catch {
+                    BandLog.tierB(.error, "HISTORICAL_DATA_RESULT write failed: \(String(describing: error))")
+                }
+            case .stop:
+                finishDrain()
+            }
+        }
+    }
+
+    /// Parks the quiet watchdog on the drain's current quiet deadline (PLAN.md 5.3.4). Every record
+    /// or metadata pushes the deadline out, so the watchdog is rescheduled on each deadline change.
+    private func scheduleQuietWatchdog() {
+        guard case .draining = offload.phase, let deadline = offload.quietDeadline else { return }
+        guard deadline != offloadWatchdogDeadline else { return }
+        offloadWatchdog?.cancel()
+        offloadWatchdogDeadline = deadline
+        let clock = clock
+        let seconds = max(0, deadline.timeIntervalSince(clock.now()))
+        offloadWatchdog = Task {
+            try? await clock.sleep(seconds: seconds)
+            await self.quietWatchdogElapsed(deadline)
+        }
+    }
+
+    /// A watchdog wake-up. Only the fire parked on the current deadline acts; a stale one,
+    /// superseded by a pushed deadline or already finished, is dropped.
+    private func quietWatchdogElapsed(_ deadline: Date) async {
+        guard offloadWatchdogDeadline == deadline else { return }
+        offloadWatchdogDeadline = nil
+        offloadWatchdog = nil
+        await runOffloadEffects(offload.quietElapsed())
+    }
+
+    /// Ends the current drain and emits everything decoded since it started, exactly once
+    /// (PLAN.md 5.3.4). A drain that produced no records emits nothing.
+    private func finishDrain() {
+        offloadWatchdog?.cancel()
+        offloadWatchdog = nil
+        offloadWatchdogDeadline = nil
+        let records = historicalRecords
+        historicalRecords = []
+        BandLog.tierB(.info, "historical offload ended (\(offload.phase)): \(records.count) record(s)")
+        guard !records.isEmpty else { return }
+        emit(.historical(records))
+    }
+
+    /// Tears the offload down for a lost link: cancels the cadence and quiet watchdog and, if a
+    /// drain was running, ends it and emits the records decoded so far (PLAN.md 5.3.4).
+    private func stopOffloadForLinkLoss() {
+        offloadCadenceTask?.cancel()
+        offloadCadenceTask = nil
+        offloadWatchdog?.cancel()
+        offloadWatchdog = nil
+        offloadWatchdogDeadline = nil
+        for effect in offload.linkDropped() {
+            if case .stop = effect {
+                finishDrain()
+            }
+        }
+    }
+
+    /// Writes one command frame as a confirmed (with-response) GATT write and returns when the
+    /// link ACKs it. Unlike `send`, no command response notification is awaited: SET_CLOCK,
+    /// SEND_HISTORICAL_DATA and HISTORICAL_DATA_RESULT are ACKed by the link but do not reliably
+    /// produce replies (PLAN.md 5.3.4).
+    private func writeConfirmedWithoutReply(_ command: BandCommand) async throws {
+        guard enabled else { throw TierBError.disabled }
+        guard linkOpen else { throw TierBError.notConnected }
+        let seq = nextSeq
+        nextSeq &+= 1
+        let frame = command.frame(seq: seq)
+        BandLog.tierB(.debug, "send \(command.command) seq=\(seq) (no reply awaited) frame=\(hex(frame))")
+        try await writer.writeCommand(frame)
     }
 
     // MARK: Commands
@@ -188,18 +417,47 @@ public actor TierBController {
         }
     }
 
-    /// Feeds one reassembled frame from the band. Replies complete the in-flight command. Events are emitted.
+    /// Feeds one reassembled frame from the band. Replies complete the in-flight command. Events
+    /// are emitted. HISTORICAL_DATA (type 47) and METADATA (type 49) frames drive the history
+    /// offload (PLAN.md 5.3.4).
     public func receive(_ frame: Frame) async {
-        guard enabled, linkOpen else { return }
+        guard enabled, linkOpen else {
+            BandLog.tierB(.debug, "frame dropped (enabled=\(enabled) linkOpen=\(linkOpen))")
+            return
+        }
+        await handleOffloadFrame(frame)
         if frame.packetType == .commandResponse {
-            guard let current = waiter, frame.cmd == current.command.rawValue else { return }
-            guard frame.seq == current.seq || !seqEchoObserved else { return }
+            guard let current = waiter else {
+                BandLog.tierB(.debug, "reply for cmd \(frame.cmd) ignored: nothing in flight")
+                return
+            }
+            guard frame.cmd == current.command.rawValue else {
+                BandLog.tierB(.debug, "reply ignored: expected \(current.command) (op \(current.command.rawValue)), got cmd \(frame.cmd) seq=\(frame.seq)")
+                return
+            }
+            guard frame.seq == current.seq || !seqEchoObserved else {
+                BandLog.tierB(.debug, "stale reply seq=\(frame.seq) (waiting for seq=\(current.seq))")
+                return
+            }
             if frame.seq == current.seq {
                 seqEchoObserved = true
             }
+            BandLog.tierB(.info, "reply: cmd=\(frame.cmd) seq=\(frame.seq) payload=\(hex(frame.payload))")
             resolve(current.token, with: .success(frame))
+        } else if frame.packetType == .realtimeData {
+            // The strap's live HR stream (type 40, ~1 Hz), turned on by TOGGLE_REALTIME_HR.
+            if let measurement = RealtimeHeartRate.parse(frame.payload) {
+                BandLog.tierB(.debug, "realtime HR: \(measurement.bpm) bpm")
+                emit(.hr(measurement, receivedAt: clock.now()))
+            }
         } else if let kind = BandEventParser.parse(frame) {
+            BandLog.tierB(.debug, "event: \(kind)")
             emit(.bandEvent(kind))
+            if kind == .batteryLevel, let percent = BatteryEvent.percent(frame.payload) {
+                // The battery EVENT carries a percent as well [Unverified]; the GET_BATTERY_LEVEL
+                // reply already emitted it, but the event is the strap's own push.
+                emit(.battery(percent))
+            }
             if kind == .strapDrivenAlarmExecuted {
                 // The band has fired the alarm it was given. Drop it and arm the next due one.
                 if let fired = armedAlarm {
@@ -243,8 +501,11 @@ public actor TierBController {
         guard let next = upcomingAlarms.first(where: { $0 > now }), next != armedAlarm else { return }
         let unix = next.timeIntervalSince1970.rounded(.down)
         guard unix >= 0, unix <= Double(UInt32.max) else { return }
+        BandLog.tierB(.info, "arming band alarm for \(next)")
         if (try? await send(.setAlarmTime(unix: UInt32(unix)))) != nil {
             armedAlarm = next
+        } else {
+            BandLog.tierB(.error, "arming band alarm for \(next) failed")
         }
     }
 
@@ -272,6 +533,7 @@ public actor TierBController {
 
     /// Plays a rhythm in the background. A rhythm already running is stopped first, so two never overlap.
     public func startRhythm(_ rhythm: Rhythm) {
+        BandLog.tierB(.info, "rhythm start: \(rhythm.steps.count) step(s)")
         let previous = rhythmTask
         previous?.cancel()
         rhythmGeneration += 1
@@ -342,6 +604,7 @@ public actor TierBController {
             nextToken &+= 1
             let token = nextToken
             let frame = command.frame(seq: seq)
+            BandLog.tierB(.debug, "send \(command.command) seq=\(seq) attempt=\(retries + 1) frame=\(hex(frame))")
 
             let outcome: Result<Frame, TierBError> = await withCheckedContinuation { continuation in
                 let timer = Task {
@@ -364,11 +627,12 @@ public actor TierBController {
             }
 
             switch outcome {
-            case .success:
-                return outcome
+            case .success(let reply):
+                return .success(reply)
             case .failure(.disabled), .failure(.notConnected):
                 return outcome
-            case .failure:
+            case .failure(let error):
+                BandLog.tierB(.error, "\(command.command) attempt \(retries + 1) failed: \(error)")
                 retries += 1
                 if retries > Self.maxRetries {
                     return outcome
@@ -397,7 +661,30 @@ public actor TierBController {
 
     private func setState(_ new: TierBState) {
         guard new != state else { return }
+        BandLog.tierB(.info, "state: \(state) → \(new)")
         state = new
         emit(.tierB(new))
+    }
+}
+
+/// Best-effort battery percent from the payload of an EVENT (0x30) frame with event id 3
+/// (PLAN.md 5.3.4). No capture pins the event payload's layout, so every shape tried here is
+/// [Unverified]: the GET_BATTERY_LEVEL reply's `[counter][status][u16 LE / 10]`, a bare
+/// `[u16 LE / 10]`, and a single percent byte. Nil when nothing plausible fits.
+enum BatteryEvent {
+    static func percent(_ payload: [UInt8]) -> Int? {
+        if payload.count >= 4, let percent = clamp(raw: Double(u16(payload, 2)) / 10) { return percent }
+        if payload.count >= 2, let percent = clamp(raw: Double(u16(payload, 0)) / 10) { return percent }
+        if payload.count == 1, payload[0] <= 100 { return Int(payload[0]) }
+        return nil
+    }
+
+    private static func u16(_ payload: [UInt8], _ offset: Int) -> UInt16 {
+        UInt16(payload[offset]) | (UInt16(payload[offset + 1]) << 8)
+    }
+
+    private static func clamp(raw: Double) -> Int? {
+        guard raw >= 0, raw <= 100 else { return nil }
+        return Int(raw.rounded())
     }
 }

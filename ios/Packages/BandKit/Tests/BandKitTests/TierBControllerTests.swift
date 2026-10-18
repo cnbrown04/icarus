@@ -10,12 +10,14 @@ struct TierBControllerTests {
 
     // MARK: Handshake
 
-    @Test func handshakeReadsTheClockAndRangeOnceAndNeverSetsTheClock() async {
+    @Test func handshakeSetsTheClockThenReadsTheClockAndRangeOncePerConnection() async {
         let h = Harness()
         await h.controller.connectionOpened()
         await h.controller.connectionOpened()
-        #expect(h.band.opcodes == [11, 34, 26])
-        #expect(!h.band.opcodes.contains(10))
+        // The handshake writes SET_CLOCK in BOTH forms (8-byte and legacy 9-byte: which one a given
+        // firmware latches is firmware-specific), then hello, clock, range, battery, realtime, drain.
+        #expect(h.band.opcodes == [10, 10, 35, 11, 34, 26, 3, 22])
+        #expect(h.band.opcodes.filter { $0 == 10 }.count == 2, "both SET_CLOCK forms per connection")
         #expect(await h.controller.state == .ready)
         #expect(h.events.all.contains(.battery(87)))
         #expect(h.events.all.contains(.tierB(.ready)))
@@ -27,20 +29,21 @@ struct TierBControllerTests {
         await h.controller.connectionClosed()
         #expect(await h.controller.state == .awaitingLink)
         await h.controller.connectionOpened()
-        #expect(h.band.opcodes == [11, 34, 26, 11, 34])
+        #expect(h.band.opcodes == [10, 10, 35, 11, 34, 26, 3, 22, 10, 10, 35, 11, 34, 3, 22])
     }
 
     @Test func aSilentBandFailsTheHandshakeAfterRetriesAndStaysUnavailable() async {
         let h = Harness(responder: nil)
         let opening = Task { await h.controller.connectionOpened() }
         for attempt in 1 ... 4 {
-            await settle { h.band.count == attempt }
+            // +2: the two SET_CLOCK writes precede the retried GET_HELLO.
+            await settle { h.band.count >= attempt + 2 }
             await settle { h.clock.sleeperCount == 1 }
             h.clock.advance(by: TierBController.responseTimeout)
         }
         await opening.value
         #expect(await h.controller.state == .unavailable)
-        #expect(h.band.opcodes == [11, 11, 11, 11])
+        #expect(h.band.opcodes == [10, 10, 35, 35, 35, 35])
         #expect(!h.events.all.contains(.tierB(.ready)))
 
         // A dropped link does not clear unavailable. Only a new connection tries again.
@@ -57,16 +60,16 @@ struct TierBControllerTests {
 
         let first = Task { try await h.controller.send(.getAlarmTime()) }
         let second = Task { try await h.controller.send(.getDataRange()) }
-        await settle { h.band.count == 4 }
+        await settle { h.band.count == 9 }
         await flush()
-        #expect(h.band.count == 4, "the second command must wait for the first reply")
+        #expect(h.band.count == 9, "the second command must wait for the first reply")
         #expect(h.band.last?.cmd == 67)
 
         await h.controller.receive(reply(to: h.band.last!))
         let firstReply = try await first.value
         #expect(firstReply.cmd == 67)
 
-        await settle { h.band.count == 5 }
+        await settle { h.band.count == 10 }
         #expect(h.band.last?.cmd == 34)
         await h.controller.receive(reply(to: h.band.last!))
         _ = try await second.value
@@ -81,7 +84,8 @@ struct TierBControllerTests {
         let task = Task { try await h.controller.send(.getAlarmTime()) }
         for attempt in 1 ... 4 {
             await settle { h.band.count == base + attempt }
-            await settle { h.clock.sleeperCount == 1 }
+            // Attempt timer + realtime keep-alive + offload cadence.
+            await settle { h.clock.sleeperCount == 3 }
             h.clock.advance(by: TierBController.responseTimeout)
         }
         guard case let .failure(error) = await task.result else {
@@ -104,7 +108,7 @@ struct TierBControllerTests {
 
         let task = Task { try await h.controller.send(.getAlarmTime()) }
         await settle { h.band.count == base + 1 }
-        await settle { h.clock.sleeperCount == 1 }
+        await settle { h.clock.sleeperCount == 3 }
         h.clock.advance(by: TierBController.responseTimeout)
         let frame = try await task.value
         #expect(frame.cmd == 67)
@@ -120,7 +124,7 @@ struct TierBControllerTests {
         await settle { h.band.count == base + 1 }
 
         await h.controller.receive(Frame(type: PacketType.commandResponse.rawValue, seq: h.band.last!.seq, cmd: 34, payload: []))
-        await settle { h.clock.sleeperCount == 1 }
+        await settle { h.clock.sleeperCount == 3 }
         h.clock.advance(by: TierBController.responseTimeout)
         await settle { h.band.count == base + 2 }
         #expect(h.band.last?.cmd == 67, "the timeout retried the original command")
@@ -139,7 +143,7 @@ struct TierBControllerTests {
 
         // The handshake replies echoed seq, so a mismatched seq is treated as stale and ignored.
         await h.controller.receive(Frame(type: PacketType.commandResponse.rawValue, seq: request.seq &+ 9, cmd: 67, payload: []))
-        await settle { h.clock.sleeperCount == 1 }
+        await settle { h.clock.sleeperCount == 3 }
         h.clock.advance(by: TierBController.responseTimeout)
         await settle { h.band.count == base + 2 }
 
@@ -220,7 +224,25 @@ struct TierBControllerTests {
         #expect(await h.controller.state == .awaitingLink)
         #expect(h.band.count == 0)
         await h.controller.connectionOpened()
-        #expect(h.band.opcodes == [11, 34, 26])
+        #expect(h.band.opcodes == [10, 10, 35, 11, 34, 26, 3, 22])
+    }
+
+    /// The Device checkbox becomes the way to retry from the red triangle: enabling while
+    /// `.unavailable` re-arms the channel instead of being swallowed by the same-value guard.
+    @Test func enablingWhileUnavailableRetriesSetup() async {
+        let h = Harness()
+        await h.controller.connectionOpened()
+        #expect(await h.controller.state == .ready)
+
+        await h.controller.linkFailed()
+        #expect(await h.controller.state == .unavailable)
+
+        // A repeat enable call (the toggle is already on) must recover the channel.
+        await h.controller.setEnabled(true)
+        #expect(await h.controller.state == .awaitingLink)
+        #expect(h.events.all.contains(.tierB(.awaitingLink)))
+        await h.controller.connectionOpened()
+        #expect(await h.controller.state == .ready)
     }
 
     // MARK: Rate limit
@@ -251,6 +273,16 @@ struct TierBControllerTests {
         #expect(h.events.all.contains(.bandEvent(.doubleTap)))
         #expect(h.events.all.contains(.bandEvent(.bleBonded)))
         #expect(h.events.all.contains(.bandEvent(.unknown(21))))
+    }
+
+    /// The battery EVENT (id 3) carries a percent [Unverified]; the controller decodes it and
+    /// emits the same `.battery` the GET_BATTERY_LEVEL reply produces.
+    @Test func aBatteryEventAlsoEmitsItsDecodedPercent() async {
+        let h = Harness()
+        await h.controller.connectionOpened()
+        await h.controller.receive(Frame(type: PacketType.event.rawValue, seq: 0, cmd: 3, payload: [0xD8, 0x03]))
+        #expect(h.events.all.contains(.bandEvent(.batteryLevel)))
+        #expect(h.events.all.contains(.battery(98)))
     }
 
     // MARK: Band alarm (PLAN.md 9.5)
@@ -296,7 +328,7 @@ struct TierBControllerTests {
         await h.controller.armAlarms([h.clock.now().addingTimeInterval(300)])
         #expect(h.band.count == 0)
         await h.controller.connectionOpened()
-        #expect(h.band.opcodes == [11, 34, alarmOpcode, batteryOpcode])
+        #expect(h.band.opcodes == [10, 10, 35, 11, 34, alarmOpcode, batteryOpcode, 3, 22])
     }
 
     @Test func alarmTimesOutsideTheUInt32RangeAreNotSent() async {
@@ -305,6 +337,96 @@ struct TierBControllerTests {
         let base = h.band.count
         await h.controller.armAlarms([Date(timeIntervalSince1970: 5_000_000_000)])
         #expect(h.band.count == base)
+    }
+
+    // MARK: SET_CLOCK and hello (PLAN.md 5.3.4)
+
+    /// The observed GET_HELLO reply header plus its ASCII strings (see `BandInfo.helloReply`).
+    private static let helloPayload: [UInt8] = [
+        0x00, 0x01, 0x04, 0xD8, 0x03, 0x00, 0x00, 0x00, 0xA2, 0x8F, 0xE2, 0x01, 0x28, 0x03, 0x00, 0x00,
+    ] + Array("4C1551500".utf8) + [0x00] + Array("8e27cafe".utf8) + [0x00]
+
+    /// SET_CLOCK goes out in both forms per connection (8-byte and legacy 9-byte): which one a
+    /// given firmware latches is firmware-specific (NOOP hardware-verified), and double-latching
+    /// the same seconds is harmless.
+    @Test func setClockIsWrittenTwicePerConnectionInBothForms() async {
+        let h = Harness()
+        await h.controller.connectionOpened()
+        await h.controller.connectionClosed()
+        await h.controller.connectionOpened()
+        let setClocks = h.band.commands.filter { $0.cmd == 10 }
+        #expect(setClocks.count == 4, "both forms, once per connection")
+        let secs = littleEndian(UInt32(ManualClock.origin.timeIntervalSince1970))
+        #expect(setClocks[0].payload == secs + [0, 0, 0, 0], "the 8-byte form first")
+        #expect(setClocks[1].payload == secs + [0, 0, 0, 0, 0], "then the legacy 9-byte form")
+        #expect(setClocks[2].payload == secs + [0, 0, 0, 0])
+        #expect(setClocks[3].payload == secs + [0, 0, 0, 0, 0])
+    }
+
+    @Test func helloReplyPopulatesBandInfo() async {
+        let h = Harness(responder: nil)
+        h.band.setResponder { request, _ in
+            reply(to: request, payload: request.cmd == 35 ? Self.helloPayload : [])
+        }
+        await h.controller.connectionOpened()
+        #expect(h.events.all.contains(.bandInfo(BandInfo(
+            firmwareVersion: "8e27cafe",
+            hardwareRevision: nil,
+            serial: "4C1551500"
+        ))))
+    }
+
+    @Test func aHelloReplyWithoutReadableStringsLeavesBandInfoFieldsNil() async {
+        let h = Harness()
+        await h.controller.connectionOpened()
+        let infos = h.events.all.compactMap { event -> BandInfo? in
+            if case let .bandInfo(info) = event { return info }
+            return nil
+        }
+        #expect(infos == [BandInfo(firmwareVersion: nil, hardwareRevision: nil, serial: nil)])
+    }
+
+    // MARK: Historical offload (PLAN.md 5.3.4)
+
+    @Test func aStoppedDrainEmitsItsDecodedRecordsOnce() async throws {
+        let h = Harness()
+        await h.controller.connectionOpened()
+        #expect(h.band.opcodes.contains(22), "the drain starts with SEND_HISTORICAL_DATA")
+        #expect(h.band.opcodes.filter { $0 == 22 }.count == 1)
+
+        let frame = historicalRecordFrame(unix: UInt32(ManualClock.origin.timeIntervalSince1970) - 3600)
+        await h.controller.receive(frame)
+        let record = try HistoricalRecord.parse(frame)
+
+        let token: [UInt8] = [0x2E, 0x47, 0x01, 0x00, 0x04, 0x00, 0x00, 0x00]
+        await h.controller.receive(metadataFrame(token: token))
+        #expect(h.band.last?.cmd == 23, "the batch token is echoed as HISTORICAL_DATA_RESULT")
+        #expect(h.band.last?.payload == [0x01] + token, "the ack leads with 0x01 (NOOP, verified on 4.0)")
+
+        // The drain went quiet: the watchdog fires and the drain stops with its records.
+        h.clock.advance(by: OffloadStateMachine.quietTimeout)
+        await flush()
+        let historical = h.events.all.compactMap { event -> [HistoricalRecord]? in
+            if case let .historical(records) = event { return records }
+            return nil
+        }
+        #expect(historical == [[record]])
+    }
+
+    @Test func aLinkDropEmitsThePartialDrain() async throws {
+        let h = Harness()
+        await h.controller.connectionOpened()
+        let frame = historicalRecordFrame(unix: UInt32(ManualClock.origin.timeIntervalSince1970) - 3600)
+        await h.controller.receive(frame)
+        let record = try HistoricalRecord.parse(frame)
+
+        await h.controller.connectionClosed()
+        let historical = h.events.all.compactMap { event -> [HistoricalRecord]? in
+            if case let .historical(records) = event { return records }
+            return nil
+        }
+        #expect(historical == [[record]])
+        #expect(await h.controller.state == .awaitingLink)
     }
 }
 
@@ -323,13 +445,13 @@ struct RhythmPlaybackTests {
         #expect(h.band.last?.cmd == 79)
         #expect(h.band.last?.payload == [2, 2, 0, 0, 0])
 
-        await settle { h.clock.sleeperCount == 1 }
+        await settle { h.clock.sleeperCount == 3 }
         h.clock.advance(by: 1.5)
         await flush()
         #expect(h.band.count == base + 1, "the pause must not start before the buzz slot ends")
 
         h.clock.advance(by: 0.5)
-        await settle { h.clock.sleeperCount == 1 }
+        await settle { h.clock.sleeperCount == 3 }
         await flush()
         #expect(h.band.count == base + 1, "the pause runs for 500 ms before the next buzz")
 
@@ -337,7 +459,7 @@ struct RhythmPlaybackTests {
         await settle { h.band.count == base + 2 }
         #expect(h.band.last?.payload == [3, 1, 0, 0, 0])
 
-        await settle { h.clock.sleeperCount == 1 }
+        await settle { h.clock.sleeperCount == 3 }
         h.clock.advance(by: 1)
         try await task.value
         #expect(Array(h.band.opcodes.suffix(2)) == [79, 79])
@@ -352,12 +474,13 @@ struct RhythmPlaybackTests {
 
         await h.controller.startRhythm(rhythm)
         await settle { h.band.count == base + 1 }
-        await settle { h.clock.sleeperCount == 1 }
+        await settle { h.clock.sleeperCount == 3 }
 
         await h.controller.stopHaptics()
         #expect(Array(h.band.opcodes.suffix(2)) == [79, 122])
 
-        h.clock.advance(by: 60)
+        // Just under the realtime re-arm interval, so the keep-alive does not add a write here.
+        h.clock.advance(by: TierBController.realtimeRearmInterval - 1)
         await flush()
         #expect(h.band.count == base + 2, "nothing is sent after the cancel")
     }
@@ -368,7 +491,7 @@ struct RhythmPlaybackTests {
         let base = h.band.count
         await h.controller.startRhythm(try Rhythm(steps: [.buzz(preset: 2, loops: 5)]))
         await settle { h.band.count == base + 1 }
-        await settle { h.clock.sleeperCount == 1 }
+        await settle { h.clock.sleeperCount == 3 }
 
         await h.controller.startRhythm(try Rhythm(steps: [.buzz(preset: 4, loops: 1)]))
         await settle { h.band.count == base + 3 }
