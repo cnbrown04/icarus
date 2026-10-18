@@ -15,7 +15,9 @@ struct IcarusApp: App {
         _environment = State(initialValue: environment)
         _liveState = State(initialValue: liveState)
         environment.alarms.connect(band: liveState)
-        PushRouter.shared.attach(sync: environment.sync, band: liveState)
+        environment.connectHistoricalRecords(band: liveState)
+        // [push disabled] Re-enable for PLAN.md 12.5 (alarm push dispatch).
+        // PushRouter.shared.attach(sync: environment.sync, band: liveState)
         // Must run before launch finishes (PLAN.md 11.2).
         BackgroundTasks.register(environment)
     }
@@ -29,6 +31,13 @@ struct IcarusApp: App {
                     liveState.start()
                     environment.startSync()
                     environment.alarms.start()
+                    #if DEBUG
+                    // Serves the store's rows to a computer on this Wi-Fi (DebugView shows the URL).
+                    // Not in UI tests, so fixtures launch with no listener.
+                    if !config.isUITest {
+                        DebugServer.shared.start(database: environment.database)
+                    }
+                    #endif
                 }
         }
     }

@@ -23,6 +23,16 @@ enum Format {
         "\(value) min"
     }
 
+    /// A duration as hours and minutes, e.g. "7 h 12 min"; under an hour, minutes only (PLAN.md 15.1).
+    static func duration(_ seconds: Int64) -> String {
+        let minutes = Int((Double(seconds) / 60).rounded())
+        guard minutes > 0 else { return "0 min" }
+        if minutes < 60 { return "\(minutes) min" }
+        let hours = minutes / 60
+        let rest = minutes % 60
+        return rest == 0 ? "\(hours) h" : "\(hours) h \(rest) min"
+    }
+
     /// A number with an optional unit, rounded. Used by trend averages.
     static func number(_ value: Double, unit: String) -> String {
         let text = "\(Int(value.rounded()))"
@@ -73,6 +83,15 @@ enum Format {
         case .exertion: "Exertion"
         case .insufficient: "Insufficient data"
         case .hrOnly: "HR only"
+        }
+    }
+
+    /// Band word for a derived sleep quality (PLAN.md 8.1's sleep detection proxy).
+    static func sleepQuality(_ quality: SleepQuality) -> String {
+        switch quality {
+        case .good: "Good"
+        case .fair: "Fair"
+        case .poor: "Poor"
         }
     }
 

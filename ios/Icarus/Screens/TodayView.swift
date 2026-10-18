@@ -8,15 +8,17 @@ enum TodayDestination: Hashable {
     case heartRate
     case stress
     case calories
-    case sync
+    case sleep
 }
 
-/// The Today dashboard: live heart rate, four metric tiles, stress and zones for the day, and band and sync status.
+/// The Today dashboard: live heart rate, four metric tiles, and stress and zones for the day. Band and sync state
+/// lives in Settings.
 struct TodayView: View {
     let environment: AppEnvironment
     let liveState: LiveState
 
     @State private var snapshot: Dashboard.TodaySnapshot?
+    @State private var sleep: Dashboard.SleepSnapshot?
 
     var body: some View {
         ScrollView {
@@ -31,7 +33,7 @@ struct TodayView: View {
                 metricGrid
                 stressCard
                 zonesCard
-                statusCard
+                sleepCard
             }
             .pagePadding()
             .padding(.vertical, Spacing.s8)
@@ -46,7 +48,7 @@ struct TodayView: View {
             case .heartRate: HeartRateDetailView(environment: environment)
             case .stress: StressDetailView(environment: environment)
             case .calories: CaloriesDetailView(environment: environment)
-            case .sync: SyncView(environment: environment)
+            case .sleep: SleepView(environment: environment)
             }
         }
         .task {
@@ -59,9 +61,46 @@ struct TodayView: View {
                 snapshot = nil
             }
         }
+        .task {
+            let clock = environment.clock
+            do {
+                for try await value in environment.database.observe({ try Dashboard.sleep($0, nowMs: clock.nowMs) }) {
+                    sleep = value
+                }
+            } catch {
+                sleep = nil
+            }
+        }
     }
 
     // MARK: Cards
+
+    private var sleepCard: some View {
+        NavigationLink(value: TodayDestination.sleep) {
+            DashboardCard(
+                title: "Sleep",
+                symbol: "moon.zzz.fill",
+                tint: Palette.sleep,
+                showsChevron: true
+            ) {
+                if let latest = sleep?.latest {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(Format.duration(latest.durationS))
+                            .font(.metricValue)
+                            .monospacedDigit()
+                        Spacer(minLength: Spacing.s8)
+                        Text(Format.sleepQuality(latest.quality))
+                            .foregroundStyle(Palette.sleepQuality(latest.quality))
+                    }
+                } else {
+                    Text("No data yet")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
 
     private var repairCard: some View {
         NavigationLink {
@@ -92,7 +131,7 @@ struct TodayView: View {
     private var heroCard: some View {
         NavigationLink(value: TodayDestination.heartRate) {
             DashboardCard(
-                title: "Heart rate",
+                title: "Heart Rate",
                 symbol: "heart.fill",
                 tint: Palette.heartRate,
                 showsChevron: true,
@@ -269,39 +308,6 @@ struct TodayView: View {
         .buttonStyle(.plain)
     }
 
-    private var statusCard: some View {
-        NavigationLink(value: TodayDestination.sync) {
-            DashboardCard(
-                title: "Band and sync",
-                symbol: "antenna.radiowaves.left.and.right",
-                tint: .blue,
-                showsChevron: true
-            ) {
-                HStack(spacing: Spacing.s8) {
-                    StatusPill.link(liveState)
-                    if let battery = liveState.batteryPercent {
-                        StatusPill(text: Format.percent(battery), symbol: Format.batterySymbol(battery))
-                    }
-                    Spacer()
-                }
-                TimelineView(.periodic(from: .now, by: 30)) { context in
-                    HStack(spacing: Spacing.s8) {
-                        Text("Last sync")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Spacer(minLength: Spacing.s8)
-                        StatusPill(
-                            text: lastSyncText(now: context.date),
-                            symbol: "arrow.triangle.2.circlepath",
-                            tint: Palette.sync(environment.sync.status.phase)
-                        )
-                    }
-                }
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
     // MARK: Values
 
     private var sparklinePoints: [HRPoint] {
@@ -377,12 +383,5 @@ struct TodayView: View {
     private var activeText: String {
         guard let active = snapshot?.today?.kcalActive else { return "Active --" }
         return "Active \(Int(active.rounded())) kcal"
-    }
-
-    private func lastSyncText(now: Date) -> String {
-        let status = environment.sync.status
-        if status.phase == .notPaired { return "Not paired" }
-        guard let last = status.lastSuccessAt else { return "Not synced" }
-        return DataAge.text(seconds: now.timeIntervalSince(last))
     }
 }

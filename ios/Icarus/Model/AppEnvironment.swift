@@ -1,4 +1,6 @@
 import AlarmKitBridge
+import BandKit
+import BandProtocol
 import Foundation
 import GRDB
 import Metrics
@@ -84,6 +86,16 @@ final class AppEnvironment {
             )
         }
         if let url = storeURL(), let file = try? AppDatabase.file(at: url) {
+            #if DEBUG
+            // Band log capture (BandLogger): the durable record of handshakes and offload drains.
+            if !config.isUITest, let directory = appSupportDirectory() {
+                BandLog.startCapture(
+                    at: directory
+                        .appendingPathComponent("Icarus", isDirectory: true)
+                        .appendingPathComponent("band_log.txt")
+                )
+            }
+            #endif
             return AppEnvironment(
                 database: file, clock: clock, storageFailed: false, ingestsLiveData: true,
                 sync: makeSync(database: file, mode: .durable), isSyncFixture: false, livesAlarms: true
@@ -120,6 +132,125 @@ final class AppEnvironment {
     /// Writes pending readings now. Called when the app leaves the foreground (PLAN.md 7.2).
     func flushIngestion() {
         inputContinuation.yield(.flush)
+    }
+
+    /// Wires the band's history offload into the store (PLAN.md 5.3.4, 7.3). Records flow out of
+    /// LiveState through `onHistoricalRecords`; like live readings, they are attributed to the
+    /// remembered band, else the first band seen. Nothing is wired when the launch does not ingest.
+    func connectHistoricalRecords(band: LiveState) {
+        guard ingestsLiveData else { return }
+        band.onHistoricalRecords = { [weak self, weak band] records in
+            guard let bandID = band?.rememberedID ?? band?.bands.first?.id else {
+                BandLog.tierB(.error, "app: no band ID for \(records.count) historical record(s)")
+                return
+            }
+            self?.offload(records, from: bandID)
+        }
+    }
+
+    /// Hands the batch to the store off the main actor; the main actor only converts and yields.
+    private func offload(_ records: [BandProtocol.HistoricalRecord], from bandUUID: UUID) {
+        guard !records.isEmpty else { return }
+        BandLog.tierB(.info, "app: offload starting for \(records.count) record(s)")
+        let database = database
+        let nowMs = clock.nowMs
+        Task.detached(priority: .utility) {
+            await Self.storeHistoricalRecords(records, from: bandUUID, in: database, computedAtMs: nowMs)
+        }
+    }
+
+    /// One write transaction per batch: insert the records (`INSERT OR IGNORE`, so a replayed batch
+    /// dedups), then re-derive sleep for the drained window so the sessions replace their partial
+    /// selves (PLAN.md 5.3.4, 8.1). Nonisolated, so the store work runs off the main actor.
+    private nonisolated static func storeHistoricalRecords(
+        _ records: [BandProtocol.HistoricalRecord],
+        from bandUUID: UUID,
+        in database: AppDatabase,
+        computedAtMs: Int64
+    ) async {
+        let samples = records.map { record in
+            Database.HistoricalSample(
+                peripheralUUID: bandUUID,
+                tsMs: Int64(record.unixSeconds) * 1000,
+                version: Int(record.version),
+                bpm: record.heartRate == 0 ? nil : record.heartRate,
+                contact: record.skinContact,
+                rrMs: record.rrIntervalsMs.map(Double.init),
+                ppgGreen: raw(record.ppgGreen),
+                ppgRedIr: raw(record.ppgRedIr),
+                spo2Red: raw(record.spo2Red),
+                spo2Ir: raw(record.spo2Ir),
+                skinTempRaw: raw(record.skinTempRaw),
+                respRateRaw: raw(record.respRateRaw),
+                signalQuality: raw(record.signalQuality)
+            )
+        }
+        let fromMs = samples.map(\.tsMs).min() ?? 0
+        let toMs = samples.map(\.tsMs).max() ?? 0
+        do {
+            try await database.writer.write { db in
+                try db.insertHistoricalSamples(samples)
+                guard let bandID = try String.fetchOne(
+                    db, sql: "SELECT id FROM band WHERE peripheral_uuid = ?",
+                    arguments: [bandUUID.uuidString]
+                ) else {
+                    BandLog.tierB(.error, "app: no band row for \(bandUUID.uuidString); records dropped")
+                    return
+                }
+                let zone = try db.profile()?.timeZone ?? Dashboard.fallbackZone
+                // Half-open to the millisecond past the last record, so it is included (PLAN.md 10.1).
+                try db.deriveSleepSessions(
+                    from: fromMs,
+                    to: toMs + 1,
+                    bandID: bandID,
+                    in: zone,
+                    computedAtMs: computedAtMs
+                )
+                BandLog.tierB(.info, "app: stored batch; sleep derivation succeeded")
+            }
+        } catch {
+            // A failed batch is safe to drop: the strap replays it until its ack lands, and the
+            // insert dedups on (band, timestamp) (PLAN.md 5.3.4).
+            BandLog.tierB(.error, "app: storeHistoricalRecords failed: \(String(describing: error))")
+        }
+        #if DEBUG
+        await Self.writeDebugDump(from: fromMs, to: toMs, in: database)
+        #endif
+    }
+
+    #if DEBUG
+    /// A consistent snapshot of the just-drained window plus the latest sessions, written as one
+    /// JSON file. File copies of a live WAL database race with checkpoints, so a computer pulls
+    /// this instead of `icarus.sqlite` to see what the app really stored.
+    private nonisolated static func writeDebugDump(from fromMs: Int64, to toMs: Int64, in database: AppDatabase) async {
+        struct Dump: Codable, Sendable {
+            let fromMs: Int64
+            let toMs: Int64
+            let records: [HistoricalRecordRow]
+            let sessions: [SleepSessionRow]
+        }
+        guard let url = debugDumpURL() else { return }
+        let dump: Dump? = try? await database.writer.read { db in
+            Dump(
+                fromMs: fromMs,
+                toMs: toMs,
+                records: try HistoricalRecordRow.fetchAll(db, sql: """
+                SELECT * FROM historical_record WHERE ts_ms >= ? AND ts_ms <= ? ORDER BY ts_ms
+                """, arguments: [fromMs, toMs]),
+                sessions: try SleepSessionRow.fetchAll(db, sql: """
+                SELECT * FROM sleep_session ORDER BY start_ms DESC LIMIT 50
+                """)
+            )
+        }
+        if let dump, let data = try? JSONEncoder().encode(dump) {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+    #endif
+
+    /// A sensor raw byte for the store: 0 means the strap recorded nothing (PLAN.md 10.2 v2).
+    private nonisolated static func raw(_ value: UInt16) -> Int? {
+        value == 0 ? nil : Int(value)
     }
 
     /// Sync on launch, then on the foreground timer at the chosen interval (PLAN.md 11.2).
@@ -210,6 +341,16 @@ final class AppEnvironment {
             create: true
         )
     }
+
+    #if DEBUG
+    /// Nonisolated, for debug write paths that run off the main actor.
+    private nonisolated static func debugDumpURL() -> URL? {
+        FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("Icarus", isDirectory: true)
+            .appendingPathComponent("debug_dump.json")
+    }
+    #endif
 
     private enum SyncMode {
         /// Keychain token, files in Application Support, the real network.

@@ -20,12 +20,20 @@ final class LiveState {
     private(set) var latestBPM: Int?
     private(set) var batteryPercent: Int?
     private(set) var tierBState: TierBState = .disabled
+    /// The last Tier B failure reason from the transport. The Device screen shows it while the
+    /// state is `.unavailable` (PLAN.md 7.2 debugging).
+    private(set) var tierBFailure: String?
     /// The last EVENT from the band, such as wrist on or a double tap, and when it arrived here (PLAN.md 5.3.4).
     private(set) var lastBandEvent: BandEventKind?
     private(set) var lastBandEventAt: Date?
+    /// Best-effort identity strings decoded from the last GET_HELLO reply (PLAN.md 5.3.4).
+    private(set) var bandInfo: BandInfo?
     /// Set by `AlarmCoordinator`. Called on the main actor when Tier B changes, or when a band event arrives.
     @ObservationIgnored var onTierBChange: (@MainActor (TierBState) -> Void)?
     @ObservationIgnored var onBandEvent: (@MainActor (BandEventKind) -> Void)?
+    /// Called on the main actor when a history offload drain completes. The records are NOT stored
+    /// here — the consumer owns their persistence (PLAN.md 5.3.4).
+    @ObservationIgnored var onHistoricalRecords: (@MainActor ([HistoricalRecord]) -> Void)?
     private(set) var lastDataAt: Date?
     /// Bands seen while scanning, plus the connected band, in the order first seen.
     private(set) var bands: [DiscoveredBand] = []
@@ -198,11 +206,21 @@ final class LiveState {
             batteryPercent = percent
         case let .tierB(newState):
             tierBState = newState
+            if newState != .unavailable {
+                tierBFailure = nil
+            }
             onTierBChange?(newState)
+        case let .tierBFailure(reason):
+            tierBFailure = reason
         case let .bandEvent(kind):
             lastBandEvent = kind
             lastBandEventAt = clock.now
             onBandEvent?(kind)
+        case let .bandInfo(info):
+            bandInfo = info
+        case let .historical(records):
+            BandLog.tierB(.info, "app: historical records arrived (\(records.count))")
+            onHistoricalRecords?(records)
         }
     }
 

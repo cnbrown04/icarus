@@ -50,6 +50,15 @@ enum Palette {
         }
     }
 
+    /// Sleep-quality words, green to red like the stress bands (PLAN.md 8.1's sleep detection proxy).
+    static func sleepQuality(_ quality: SleepQuality) -> Color {
+        switch quality {
+        case .good: Palette.syncOK
+        case .fair: Palette.warn
+        case .poor: Palette.error
+        }
+    }
+
     static func sync(_ phase: SyncPhase) -> Color {
         switch phase {
         case .notPaired: Palette.neutral

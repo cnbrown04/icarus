@@ -234,6 +234,58 @@ enum Dashboard {
         )
     }
 
+    // MARK: Sleep
+
+    /// Derived sleep sessions for the last 7 local nights (PLAN.md 8.1, 10.2 v2). Sessions come from
+    /// the band's offloaded history (PLAN.md 5.3.4), so a launch with no offload shows none.
+    struct SleepSnapshot: Sendable {
+        /// One derived session, reshaped for the UI.
+        struct Night: Sendable, Identifiable {
+            /// Session start in epoch ms, also the row's identity.
+            let id: Int64
+            let startMs: Int64
+            let durationS: Int64
+            /// Median heart rate over the session's contact-on records.
+            let restingHR: Double?
+            let rmssdMs: Double?
+            let quality: SleepQuality
+        }
+
+        let context: Context
+        /// Sessions overlapping the last 7 local days, newest first.
+        let nights: [Night]
+
+        /// The most recently derived session, for Today's card.
+        var latest: Night? {
+            nights.first
+        }
+    }
+
+    /// Sessions overlapping the last 7 local days for every band in the store, newest first. One band
+    /// is the norm; the read is band-scoped because the sleep queries are (PLAN.md 10.2 v2).
+    static func sleep(_ db: Database, nowMs: Int64) throws -> SleepSnapshot {
+        let context = try Context.load(db, nowMs: nowMs)
+        let from = LocalTime.localTime(
+            LocalTime.adding(days: -6, to: context.today), hour: 0, in: context.timeZone
+        )
+        let rows = try BandRow.fetchAll(db).map(\.id).flatMap { bandID in
+            try db.sleepSessionRows(bandID: bandID, from: from, to: nowMs)
+        }
+        let nights = rows
+            .sorted { $0.startMs > $1.startMs }
+            .map { row in
+                SleepSnapshot.Night(
+                    id: row.startMs,
+                    startMs: row.startMs,
+                    durationS: row.durationS,
+                    restingHR: row.restingHr,
+                    rmssdMs: row.rmssdMs,
+                    quality: row.qualityValue
+                )
+            }
+        return SleepSnapshot(context: context, nights: nights)
+    }
+
     // MARK: Trends
 
     struct TrendsSnapshot: Sendable {
