@@ -5,12 +5,19 @@ import UniformTypeIdentifiers
 /// Hidden debug screen (PLAN.md §14 row 18). Opened by five taps on the version row in Settings.
 struct DebugView: View {
     let liveState: LiveState
+    let environment: AppEnvironment
 
     private static let listLimit = 200
+
+    @State private var serverRunning = false
+    @State private var serverURL: String?
+    @State private var serverError: String?
 
     var body: some View {
         let frames = liveState.frameLog.latest(Self.listLimit)
         List {
+            dataServerSection
+
             Section {
                 LabeledContent("Source", value: liveState.sourceName)
                 LabeledContent("Frames kept", value: "\(liveState.frameLog.count)")
@@ -40,6 +47,41 @@ struct DebugView: View {
             }
         }
         .navigationTitle("Debug")
+    }
+
+    private var dataServerSection: some View {
+        Section {
+            LabeledContent("Status", value: serverRunning ? "Running" : "Stopped")
+            if let serverURL {
+                Text(serverURL)
+                    .font(.system(.footnote, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+            Button(serverRunning ? "Stop server" : "Start server") {
+                if serverRunning {
+                    DebugServer.shared.stop()
+                } else {
+                    DebugServer.shared.start(database: environment.database)
+                }
+                refreshServerState()
+            }
+            if let serverError {
+                Text(serverError)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Data server")
+        } footer: {
+            Text("Serves the store's rows as JSON to computers on this Wi-Fi. Debug builds only.")
+        }
+        .onAppear { refreshServerState() }
+    }
+
+    private func refreshServerState() {
+        serverRunning = DebugServer.shared.isRunning
+        serverURL = DebugServer.shared.url
+        serverError = DebugServer.shared.lastError
     }
 
     private var sessionExport: SessionExport {

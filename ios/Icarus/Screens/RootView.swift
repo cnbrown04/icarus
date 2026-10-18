@@ -67,7 +67,7 @@ struct RootView: View {
             MainTabView(environment: environment, liveState: liveState, pairingLink: $pairingLink)
         case .debug:
             NavigationStack {
-                DebugView(liveState: liveState)
+                DebugView(liveState: liveState, environment: environment)
             }
         }
     }
