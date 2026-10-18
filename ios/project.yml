@@ -14,9 +14,12 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
-    CODE_SIGNING_ALLOWED: NO
-    CODE_SIGNING_REQUIRED: NO
-    CODE_SIGN_IDENTITY: ""
+    # Signed automatically with the personal team. CI stays unsigned because it
+    # passes CODE_SIGNING_ALLOWED=NO on the xcodebuild command line (PLAN.md 1263),
+    # which overrides these project-level settings.
+    DEVELOPMENT_TEAM: 6SQC826XN4
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_IDENTITY: "Apple Development"
 
 packages:
   BandProtocol:
@@ -58,7 +61,9 @@ targets:
       # Push alerts and silent pushes (PLAN.md 12.5). Generated at this path by XcodeGen.
       path: Entitlements/Icarus.entitlements
       properties:
-        aps-environment: development
+        # [push disabled] Re-enable to send push alerts again (needs the Push Notifications
+        # capability on the signing team):
+        # aps-environment: development
     info:
       path: Icarus/Info.plist
       properties:
@@ -67,11 +72,14 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSBluetoothAlwaysUsageDescription: "Icarus uses Bluetooth to read heart rate from your band."
         NSAlarmKitUsageDescription: "Icarus uses alarms to wake you at the times you set."
+        # Debug builds listen on port 8087 so a computer on this Wi-Fi can read the store.
+        NSLocalNetworkUsageDescription: "Icarus can share its locally stored data with a computer on this network for debugging."
         UIBackgroundModes:
           - bluetooth-central
           - processing
           - fetch
-          - remote-notification
+          # [push disabled] Re-enable together with aps-environment for silent pushes:
+          # - remote-notification
         UILaunchScreen: {}
         # Pairing links from the website QR code: icarus://pair?code=...&server=...
         CFBundleURLTypes:
@@ -89,6 +97,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.cnbrown04.icarus
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
+        # Overrides XcodeGen's legacy "iPhone Developer" target default so the
+        # modern "Apple Development" cert is matched.
+        CODE_SIGN_IDENTITY: "Apple Development"
 
   IcarusTests:
     type: bundle.unit-test

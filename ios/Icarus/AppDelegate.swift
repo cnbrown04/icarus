@@ -11,33 +11,34 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         UNUserNotificationCenter.current().delegate = notificationRouter
         AlarmNotifier().registerCategory()
-        // UI tests run with no push token. Registering would only add a system call that does nothing there.
-        if !LaunchConfig.current.isUITest {
-            application.registerForRemoteNotifications()
-        }
+        // [push disabled] Re-enable for PLAN.md 12.5 (remote push registration).
+        // // UI tests run with no push token. Registering would only add a system call that does nothing there.
+        // if !LaunchConfig.current.isUITest {
+        //     application.registerForRemoteNotifications()
+        // }
         return true
     }
 
-    func application(
-        _ application: UIApplication,
-        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
-    ) {
-        let hex = deviceToken.map { String(format: "%02x", $0) }.joined()
-        Task { @MainActor in
-            PushRouter.shared.receiveToken(hex)
-        }
-    }
+    // [push disabled] Re-enable for PLAN.md 12.5 (APNs token upload).
+    // func application(
+    //     _ application: UIApplication,
+    //     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    // ) {
+    //     let hex = deviceToken.map { String(format: "%02x", $0) }.joined()
+    //     Task { @MainActor in
+    //         PushRouter.shared.receiveToken(hex)
+    //     }
+    // }
 
-    /// Silent pushes wake the app for an alarm dispatch or a config change (PLAN.md 12.5). The payload is read here,
-    /// and only the Bool crosses to the main actor.
-    // [Unverified] The async form of this delegate method is the one the iOS 26 SDK offers.
-    func application(
-        _ application: UIApplication,
-        didReceiveRemoteNotification userInfo: [AnyHashable: Any]
-    ) async -> UIBackgroundFetchResult {
-        let configChanged = (userInfo["config_changed"] as? Bool) == true
-        return await PushRouter.shared.backgroundPush(configChanged: configChanged)
-    }
+    // [push disabled] Silent pushes wake the app for an alarm dispatch or a config change (PLAN.md 12.5).
+    // // [Unverified] The async form of this delegate method is the one the iOS 26 SDK offers.
+    // func application(
+    //     _ application: UIApplication,
+    //     didReceiveRemoteNotification userInfo: [AnyHashable: Any]
+    // ) async -> UIBackgroundFetchResult {
+    //     let configChanged = (userInfo["config_changed"] as? Bool) == true
+    //     return await PushRouter.shared.backgroundPush(configChanged: configChanged)
+    // }
 
     func application(
         _ application: UIApplication,
