@@ -84,11 +84,12 @@ struct BandCommandTests {
         #expect(hex(command.frame(seq: 0x10)) == "aa0c00fc23104f020300000025627ee3")
     }
 
-    @Test func stopHapticsIsCommand122WithEmptyPayload() {
+    /// STOP_HAPTICS (cmd 122) carries the standard `[0x00]` command byte (NOOP, verified on 4.0).
+    @Test func stopHapticsIsCommand122WithTheStandardCommandByte() {
         let command = BandCommand.stopHaptics()
         #expect(command.command.rawValue == 122)
-        #expect(command.payload.isEmpty)
-        #expect(hex(command.frame(seq: 0x11)) == "aa07006b23117a999a4326")
+        #expect(command.payload == [0x00])
+        #expect(hex(command.frame(seq: 0x11)) == "aa0800a823117a00f787f75b")
     }
 
     @Test func setAlarmTimeEncodesUnixSecondsLittleEndian() {
@@ -97,14 +98,18 @@ struct BandCommandTests {
         #expect(hex(command.frame(seq: 0x12)) == "aa10005723124201d036656600000000c38b31ec")
     }
 
-    @Test func emptyPayloadReadsEncodeWithTheirOpcodes() {
-        #expect(hex(BandCommand.getBatteryLevel().frame(seq: 0x12)) == "aa07006b23121a02a8dc40")
-        #expect(hex(BandCommand.getClock().frame(seq: 0x13)) == "aa07006b23130bb1b97733")
+    /// Every GET-style read carries at least one payload byte: a truly empty payload is ACKed by
+    /// the strap but silently discarded by its command processor (NOOP). GET_ALARM_TIME carries
+    /// `[0x01]`; the rest carry the standard `[0x00]` command byte.
+    @Test func readsEncodeWithTheirOpcodesAndAPayloadByte() {
+        #expect(hex(BandCommand.getBatteryLevel().frame(seq: 0x12)) == "aa0800a823121a0009524c3c")
+        #expect(hex(BandCommand.getClock().frame(seq: 0x13)) == "aa0800a823130b002e1b576e")
         #expect(BandCommand.getAlarmTime().command.rawValue == 67)
         #expect(BandCommand.getDataRange().command.rawValue == 34)
         #expect(BandCommand.getAllHapticsPatterns().command.rawValue == 80)
-        for command in [BandCommand.getAlarmTime(), .getDataRange(), .getAllHapticsPatterns(), .getClock(), .getBatteryLevel()] {
-            #expect(command.payload.isEmpty)
+        #expect(BandCommand.getAlarmTime().payload == [0x01])
+        for command in [BandCommand.getDataRange(), .getAllHapticsPatterns(), .getClock(), .getBatteryLevel()] {
+            #expect(command.payload == [0x00])
         }
     }
 
@@ -124,8 +129,11 @@ struct BandCommandTests {
     // MARK: Battery reply
 
     @Test func batteryReplyIsU16TenthsOfAPercent() {
-        #expect(BatteryLevel.percent(payload: [0x69, 0x03]) == 87.3)
-        #expect(BatteryLevel.percent(payload: [0xE8, 0x03]) == 100)
+        // Replies lead with a response counter + status byte; the u16 sits at offset 2
+        // (verified live: `03 01 D8 03 …` → 984 → 98.4 %).
+        #expect(BatteryLevel.percent(payload: [0x00, 0x01, 0x69, 0x03]) == 87.3)
+        #expect(BatteryLevel.percent(payload: [0x01, 0x01, 0xE8, 0x03]) == 100)
+        #expect(BatteryLevel.percent(payload: [0x69, 0x03]) == nil)
         #expect(BatteryLevel.percent(payload: [0x69]) == nil)
         #expect(BatteryLevel.percent(payload: []) == nil)
     }

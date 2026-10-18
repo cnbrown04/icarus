@@ -28,6 +28,6 @@ struct SafeCommandTests {
 
     @Test func whitelistMatchesPlanOpcodes() {
         let raw = Set(SafeCommand.allCases.map(\.rawValue))
-        #expect(raw == [3, 10, 11, 14, 22, 23, 26, 34, 66, 67, 79, 80, 122])
+        #expect(raw == [3, 10, 11, 14, 22, 23, 26, 34, 35, 66, 67, 79, 80, 122])
     }
 }

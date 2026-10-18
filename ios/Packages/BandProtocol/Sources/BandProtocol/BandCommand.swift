@@ -25,15 +25,21 @@ public struct BandCommand: Sendable, Equatable {
         BandCommand(.runHapticsPattern, payload: [patternId, loops, 0, 0, 0])
     }
 
-    /// STOP_HAPTICS (cmd 122). PLAN.md 5.3.4 names the command but not a payload. Empty is assumed. [Unverified]
+    /// STOP_HAPTICS (cmd 122). Carries the standard `[0x00]` command byte (NOOP, verified on 4.0).
     public static func stopHaptics() -> BandCommand {
-        BandCommand(.stopHaptics)
+        BandCommand(.stopHaptics, payload: [0x00])
     }
 
     /// GET_ALL_HAPTICS_PATTERN (cmd 80). PLAN.md 5.3.4 says NOOP has never sent it, so the reply is unknown.
-    /// Empty payload is assumed. [Unverified]
+    /// Carries the standard `[0x00]` command byte.
     public static func getAllHapticsPatterns() -> BandCommand {
-        BandCommand(.getAllHapticsPatterns)
+        BandCommand(.getAllHapticsPatterns, payload: [0x00])
+    }
+
+    /// GET_HELLO (cmd 35). The identity hello the official app sends first on every link. The strap
+    /// replies with a version/name frame. Carries the standard `[0x00]` command byte.
+    public static func getHello() -> BandCommand {
+        BandCommand(.getHello, payload: [0x00])
     }
 
     // MARK: Alarm and clock
@@ -45,31 +51,46 @@ public struct BandCommand: Sendable, Equatable {
         BandCommand(.setAlarmTime, payload: [0x01] + littleEndian(unix) + [0, 0, 0, 0])
     }
 
-    /// GET_ALARM_TIME (cmd 67). Empty payload assumed. [Unverified]
+    /// GET_ALARM_TIME (cmd 67). Carries `[0x01]` (NOOP, verified on 4.0). [Unverified]
     public static func getAlarmTime() -> BandCommand {
-        BandCommand(.getAlarmTime)
+        BandCommand(.getAlarmTime, payload: [0x01])
     }
 
-    /// GET_CLOCK (cmd 11). Empty payload assumed. [Unverified]
+    /// GET_CLOCK (cmd 11). Carries `[0x00]` — a command with an empty payload is ACKed by the
+    /// strap but silently discarded by its command processor (NOOP and captured official-app
+    /// frames all carry at least one payload byte). [Unverified]
     public static func getClock() -> BandCommand {
-        BandCommand(.getClock)
+        BandCommand(.getClock, payload: [0x00])
     }
 
-    // TODO(PLAN.md 5.3.4, 7.2): SET_CLOCK (cmd 10). The payload is 8 or 9 bytes depending on firmware,
-    // but PLAN.md does not document its layout, so no builder exists yet. Until it does, the
-    // handshake skips SET_CLOCK and only reads the clock.
+    /// SET_CLOCK (cmd 10). Sets the strap's RTC, which alarms and history timestamps rely on
+    /// (PLAN.md 5.3.4). 8-byte form: `[secs u32 LE][subsecs u32 LE]` (NOOP). A wrong-length
+    /// SET_CLOCK is ACKed but not latched per community findings, and some firmware never replies,
+    /// so callers write it as a confirmed write without awaiting a response.
+    public static func setClock(unix: UInt32, subseconds: UInt32 = 0) -> BandCommand {
+        BandCommand(.setClock, payload: littleEndian(unix) + littleEndian(subseconds))
+    }
+
+    /// SET_CLOCK's legacy 9-byte form: `[secs u32 LE][5 zero]`. WHOOP 4 firmware 41.17.x latches
+    /// ONLY this form — the 8-byte body draws no command response and the RTC stays lost, which
+    /// also stops the strap from banking sensor history (NOOP, hardware-verified on fw 41.17.6.0;
+    /// newer firmware is the reverse). Callers send both forms with the same seconds; double-
+    /// latching is harmless.
+    public static func setClockLegacy(unix: UInt32) -> BandCommand {
+        BandCommand(.setClock, payload: littleEndian(unix) + [0, 0, 0, 0, 0])
+    }
 
     // MARK: Battery and data
 
-    /// GET_BATTERY_LEVEL (cmd 26). Empty request payload assumed. [Unverified]
+    /// GET_BATTERY_LEVEL (cmd 26). Carries `[0x00]` (NOOP, verified on 4.0).
     /// The same frame, written with response, is the bonding write on 61080002 (PLAN.md 5.3.2).
     public static func getBatteryLevel() -> BandCommand {
-        BandCommand(.getBatteryLevel)
+        BandCommand(.getBatteryLevel, payload: [0x00])
     }
 
-    /// GET_DATA_RANGE (cmd 34). Empty payload assumed. [Unverified]
+    /// GET_DATA_RANGE (cmd 34). Carries `[0x00]` (NOOP, verified on 4.0). [Unverified]
     public static func getDataRange() -> BandCommand {
-        BandCommand(.getDataRange)
+        BandCommand(.getDataRange, payload: [0x00])
     }
 
     // MARK: Heart rate
@@ -93,11 +114,12 @@ public struct BandCommand: Sendable, Equatable {
 
 /// The GET_BATTERY_LEVEL reply (PLAN.md 5.3.4): the level is `u16 / 10` percent.
 public enum BatteryLevel {
-    /// Percent from a COMMAND_RESPONSE payload. Reads a little-endian u16 at offset 0. [Unverified]
-    /// PLAN.md 5.3.4 gives the scaling but not the offset.
+    /// Percent from a COMMAND_RESPONSE payload. Replies lead with a response counter and a
+    /// status byte (verified live on a WHOOP 4.0: `03 01 D8 03 …` → 0x03D8 = 984 → 98.4 %),
+    /// so the little-endian u16 sits at offset 2, not 0. [Unverified] across firmware revisions.
     public static func percent(payload: [UInt8]) -> Double? {
-        guard payload.count >= 2 else { return nil }
-        let raw = UInt16(payload[0]) | (UInt16(payload[1]) << 8)
+        guard payload.count >= 4 else { return nil }
+        let raw = UInt16(payload[2]) | (UInt16(payload[3]) << 8)
         return Double(raw) / 10
     }
 }

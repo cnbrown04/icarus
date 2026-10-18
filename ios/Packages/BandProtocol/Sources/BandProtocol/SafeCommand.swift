@@ -13,6 +13,9 @@ public enum SafeCommand: UInt8, Sendable, CaseIterable {
     case getAlarmTime = 67
     case runHapticsPattern = 79
     case getAllHapticsPatterns = 80
+    /// GET_HELLO (cmd 35). The identity/version hello the official app sends first on each link.
+    /// Verified as part of the working connect handshake by the NOOP project (iOS/CoreBluetooth).
+    case getHello = 35
     case stopHaptics = 122
 
     /// Never sent (PLAN.md 5.3.5): FORCE_TRIM 25, REBOOT_STRAP 29, TOGGLE_PERSISTENT_R21 154,
