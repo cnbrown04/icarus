@@ -37,6 +37,20 @@ extension Database {
         return RestingHR.lowestWindowMean(rows.compactMap(\.minuteAggregate), in: night)
     }
 
+    /// One band's offloaded historical records in the range, ascending (PLAN.md 5.3.4, 10.2 v2).
+    public func historicalRecordRows(bandID: String, from fromMs: Int64, to toMs: Int64) throws -> [HistoricalRecordRow] {
+        try HistoricalRecordRow.fetchAll(self, sql: """
+        SELECT * FROM historical_record WHERE band_id = ? AND ts_ms >= ? AND ts_ms < ? ORDER BY ts_ms, rowid
+        """, arguments: [bandID, fromMs, toMs])
+    }
+
+    /// Derived sleep sessions overlapping the range, ascending (PLAN.md 8.1, 10.2 v2).
+    public func sleepSessionRows(bandID: String, from fromMs: Int64, to toMs: Int64) throws -> [SleepSessionRow] {
+        try SleepSessionRow.fetchAll(self, sql: """
+        SELECT * FROM sleep_session WHERE band_id = ? AND end_ms >= ? AND start_ms < ? ORDER BY start_ms, rowid
+        """, arguments: [bandID, fromMs, toMs])
+    }
+
     /// Local-day rollups for `days`, computed from the minute rows (PLAN.md 10.3 `daily_summaries`, derived here).
     public func daySummaries(_ days: [LocalDay], in timeZone: TimeZone) throws -> [DaySummary] {
         let ordered = DailyRollup.sortedUnique(days)

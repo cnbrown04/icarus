@@ -6,6 +6,9 @@ enum Schema {
         migrator.registerMigration("v1") { db in
             try db.execute(sql: v1)
         }
+        migrator.registerMigration("v2") { db in
+            try db.execute(sql: v2)
+        }
     }
 
     /// Migration v1, copied from PLAN.md 10.2. Times are epoch ms UTC.
@@ -43,5 +46,34 @@ enum Schema {
     CREATE TABLE sync_batch_log (batch_id TEXT PRIMARY KEY, created_at INTEGER NOT NULL, rows INTEGER NOT NULL,
       status TEXT NOT NULL /* pending|sent|acked|rejected */, http_status INTEGER, error TEXT);
     CREATE TABLE raw_frame (rowid INTEGER PRIMARY KEY, ts_ms INTEGER NOT NULL, char TEXT NOT NULL, hex TEXT NOT NULL);
+    """
+    /// Migration v2, sleep-tracking foundation (history offload, PLAN.md 5.3.4). Additive.
+    ///
+    /// `historical_record` holds the strap's offloaded 1 Hz records (type 47, version 24), deduped
+    /// by (band, timestamp) because the strap replays a batch until its ack lands. The scalar
+    /// sensor bytes (SpO₂, skin temp, resp rate, PPG, signal quality) are stored raw: no
+    /// raw-to-value mapping is verified yet (PLAN.md 5.5 non-goals). R-R lives in the row as a
+    /// JSON array so a record stays one atomic row; the derivation for `sleep_session` reads whole
+    /// records (Metrics `SleepDeriver`), not per-interval joins.
+    ///
+    /// `sleep_session` holds the derived nightly sessions (PLAN.md 8.1's night, extended by sleep
+    /// detection). Sessions are keyed by (band, start) and rewritten on recompute, so a session
+    /// that later records extend replaces its earlier partial self.
+    static let v2 = """
+    CREATE TABLE historical_record (rowid INTEGER PRIMARY KEY, band_id TEXT NOT NULL REFERENCES band(id),
+      ts_ms INTEGER NOT NULL /* record unix seconds, in ms per PLAN.md 10.1 */, version INTEGER NOT NULL /* record layout version (frame seq) */,
+      bpm INTEGER /* raw u8, 0 = no reading, stored NULL */, contact INTEGER /* 1 on-wrist, 0 off */,
+      rr_ms TEXT /* JSON array of u16 ms */,
+      ppg_green INTEGER, ppg_red_ir INTEGER, spo2_red INTEGER, spo2_ir INTEGER,
+      skin_temp_raw INTEGER, resp_rate_raw INTEGER, signal_quality INTEGER,
+      UNIQUE (band_id, ts_ms));
+    CREATE INDEX historical_record_ts ON historical_record(ts_ms);
+    CREATE TABLE sleep_session (rowid INTEGER PRIMARY KEY, band_id TEXT NOT NULL REFERENCES band(id),
+      start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, duration_s INTEGER NOT NULL,
+      resting_hr REAL, rmssd_ms REAL, resp_rate_raw REAL, skin_temp_raw REAL,
+      contact_fraction REAL NOT NULL, quality TEXT NOT NULL /* good|fair|poor */, record_count INTEGER NOT NULL,
+      algo_version INTEGER NOT NULL, computed_at INTEGER NOT NULL,
+      UNIQUE (band_id, start_ms));
+    CREATE INDEX sleep_session_start ON sleep_session(start_ms);
     """
 }

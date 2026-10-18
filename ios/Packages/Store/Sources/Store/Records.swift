@@ -70,7 +70,7 @@ public struct ProfileRow: Codable, Equatable, Sendable, FetchableRecord, Persist
     }
 }
 
-public struct BandRow: Codable, Equatable, Sendable, FetchableRecord {
+public struct BandRow: Codable, Equatable, Sendable, FetchableRecord, TableRecord {
     public static let databaseTableName = "band"
 
     public var id: String
