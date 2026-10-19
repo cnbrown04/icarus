@@ -10,6 +10,7 @@ struct DeviceView: View {
 
     @State private var bandChannelEnabled = BandChannel.isEnabled
     @AppStorage(AlarmCoordinator.opportunisticPullKey) private var opportunisticPull = false
+    @AppStorage(BandChannel.floodDisabledKey) private var floodDisabled = false
     @State private var showsExplainer = false
     @State private var confirmsForget = false
 
@@ -138,10 +139,17 @@ struct DeviceView: View {
                     Label("Opportunistic alarm pull", systemImage: "bell.badge")
                 }
                 .accessibilityIdentifier("device.opportunisticPull")
+                Toggle(isOn: $floodDisabled) {
+                    Label("Disable raw sensor flood", systemImage: "antenna.radiowaves.left.and.right.slash")
+                }
+                .accessibilityIdentifier("device.floodDisabled")
+                .onChange(of: floodDisabled) { _, disabled in
+                    Task { await liveState.setHandshakeRealtimeRawFloodDisabled(disabled) }
+                }
             } header: {
                 Text("Experimental")
             } footer: {
-                Text("Band alarms depend on the band clock. The phone alarm is always armed too. The alarm pull checks the server for pending alarms while the band is awake; it only matters while alarm push is unavailable.")
+                Text("Band alarms depend on the band clock. The phone alarm is always armed too. The alarm pull checks the server for pending alarms while the band is awake; it only matters while alarm push is unavailable. Disabling the raw sensor flood speeds up history drains, but the off form of that command is unverified and may affect the strap's own history banking — leave it off unless debugging.")
             }
         }
         .sheet(isPresented: $showsExplainer) {

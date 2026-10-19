@@ -5,6 +5,7 @@ import Foundation
 /// that turns Tier B on at launch, so an unset or off switch sends no custom-service traffic.
 enum BandChannel {
     static let storageKey = "band.tierB.enabled"
+    static let floodDisabledKey = "band.floodDisabled"
 
     static var isEnabled: Bool {
         UserDefaults.standard.bool(forKey: storageKey)
@@ -12,6 +13,13 @@ enum BandChannel {
 
     static func set(_ enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: storageKey)
+    }
+
+    /// Whether handshakes disable the strap's raw accel/PPG flood (0x3F `[0x00]`). Default false:
+    /// OpenStrap's verified reference never sends it, the off form is unverified, and on this strap
+    /// the disable coincided with hours of missing banked history (2026-10-18/19).
+    static var floodDisabled: Bool {
+        UserDefaults.standard.bool(forKey: floodDisabledKey)
     }
 }
 
@@ -23,6 +31,7 @@ enum BandChannel {
 /// build break.
 protocol RealtimeRawFloodTransport: BandTransport {
     func setRealtimeRawFlood(enabled: Bool) async throws
+    func setHandshakeRealtimeRawFloodDisabled(_ disabled: Bool) async throws
 }
 
 // The transport-level bridge lives in BandKit (`CoreBluetoothTransport.setRealtimeRawFlood`),

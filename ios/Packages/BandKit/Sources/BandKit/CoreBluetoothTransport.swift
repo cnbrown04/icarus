@@ -45,7 +45,7 @@ public final class CoreBluetoothTransport: NSObject, BandTransport, CBCentralMan
     /// One reassembler per notify characteristic, because frames may span notifications (PLAN.md 5.3.3).
     private var reassemblers: [String: FrameReassembler] = [:]
 
-    public init(store: any BandIdentityStore, tierBEnabled: Bool = false) {
+    public init(store: any BandIdentityStore, tierBEnabled: Bool = false, handshakeDisablesRealtimeRawFlood: Bool = false) {
         let (stream, continuation) = AsyncStream<BandEvent>.makeStream()
         let (frames, frameContinuation) = AsyncStream<Frame>.makeStream()
         let queue = DispatchQueue(label: "icarus.bandkit.central")
@@ -54,7 +54,8 @@ public final class CoreBluetoothTransport: NSObject, BandTransport, CBCentralMan
             writer: writer,
             clock: SystemTierBClock(),
             enabled: tierBEnabled,
-            emit: { continuation.yield($0) }
+            emit: { continuation.yield($0) },
+            handshakeDisablesRealtimeRawFlood: handshakeDisablesRealtimeRawFlood
         )
         let remembered = store.load()
         self.events = stream
@@ -170,6 +171,15 @@ public final class CoreBluetoothTransport: NSObject, BandTransport, CBCentralMan
     /// new connection. Throws when Tier B is off or the link is down.
     public func setRealtimeRawFlood(enabled: Bool) async throws {
         try await tierB.setRealtimeRawFlood(enabled: enabled)
+    }
+
+    /// App-facing handshake policy setter: whether future handshakes disable the raw flood. Also
+    /// applies to the current link immediately (enable the stream again when the policy is lifted).
+    public func setHandshakeRealtimeRawFloodDisabled(_ disabled: Bool) async throws {
+        await tierB.setHandshakeRealtimeRawFloodDisabled(disabled)
+        if !disabled {
+            try await tierB.setRealtimeRawFlood(enabled: true)
+        }
     }
 
     // MARK: Machine plumbing (queue only)

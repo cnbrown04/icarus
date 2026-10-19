@@ -16,8 +16,8 @@ struct TierBControllerTests {
         await h.controller.connectionOpened()
         // The handshake writes SET_CLOCK in BOTH forms (8-byte and legacy 9-byte: which one a given
         // firmware latches is firmware-specific), then hello, clock, the realtime-raw disable
-        // (cmd 63, PLAN.md 7.2 step 4), range, battery, realtime, drain.
-        #expect(h.band.opcodes == [10, 10, 35, 11, 63, 34, 26, 3, 22])
+        // range, battery, realtime, drain.
+        #expect(h.band.opcodes == [10, 10, 35, 11, 34, 26, 3, 22])
         #expect(h.band.opcodes.filter { $0 == 10 }.count == 2, "both SET_CLOCK forms per connection")
         #expect(await h.controller.state == .ready)
         #expect(h.events.all.contains(.battery(87)))
@@ -30,7 +30,7 @@ struct TierBControllerTests {
         await h.controller.connectionClosed()
         #expect(await h.controller.state == .awaitingLink)
         await h.controller.connectionOpened()
-        #expect(h.band.opcodes == [10, 10, 35, 11, 63, 34, 26, 3, 22, 10, 10, 35, 11, 63, 34, 3, 22])
+        #expect(h.band.opcodes == [10, 10, 35, 11, 34, 26, 3, 22, 10, 10, 35, 11, 34, 3, 22])
     }
 
     @Test func aSilentBandFailsTheHandshakeAfterRetriesAndStaysUnavailable() async {
@@ -61,16 +61,16 @@ struct TierBControllerTests {
 
         let first = Task { try await h.controller.send(.getAlarmTime()) }
         let second = Task { try await h.controller.send(.getDataRange()) }
-        await settle { h.band.count == 10 }
+        await settle { h.band.count == 9 }
         await flush()
-        #expect(h.band.count == 10, "the second command must wait for the first reply")
+        #expect(h.band.count == 9, "the second command must wait for the first reply")
         #expect(h.band.last?.cmd == 67)
 
         await h.controller.receive(reply(to: h.band.last!))
         let firstReply = try await first.value
         #expect(firstReply.cmd == 67)
 
-        await settle { h.band.count == 11 }
+        await settle { h.band.count == 10 }
         #expect(h.band.last?.cmd == 34)
         await h.controller.receive(reply(to: h.band.last!))
         _ = try await second.value
@@ -225,7 +225,7 @@ struct TierBControllerTests {
         #expect(await h.controller.state == .awaitingLink)
         #expect(h.band.count == 0)
         await h.controller.connectionOpened()
-        #expect(h.band.opcodes == [10, 10, 35, 11, 63, 34, 26, 3, 22])
+        #expect(h.band.opcodes == [10, 10, 35, 11, 34, 26, 3, 22])
     }
 
     /// The Device checkbox becomes the way to retry from the red triangle: enabling while
@@ -329,7 +329,7 @@ struct TierBControllerTests {
         await h.controller.armAlarms([h.clock.now().addingTimeInterval(300)])
         #expect(h.band.count == 0)
         await h.controller.connectionOpened()
-        #expect(h.band.opcodes == [10, 10, 35, 11, 63, 34, alarmOpcode, batteryOpcode, 3, 22])
+        #expect(h.band.opcodes == [10, 10, 35, 11, 34, alarmOpcode, batteryOpcode, 3, 22])
     }
 
     @Test func alarmTimesOutsideTheUInt32RangeAreNotSent() async {
@@ -389,11 +389,20 @@ struct TierBControllerTests {
 
     // MARK: Realtime-raw flood (PLAN.md 7.2 step 4)
 
-    /// The handshake disables the strap's raw accel/PPG flood (cmd 63 `[0x00]`) right after
-    /// GET_CLOCK and before GET_DATA_RANGE, as a fire-and-forget confirmed write (PLAN.md 7.2
-    /// step 4, whoop-parity §3.4). The plain realtime HR stream (cmd 3) is untouched.
-    @Test func theHandshakeDisablesTheRealtimeRawFloodBetweenClockAndRange() async {
+    /// Default handshake does NOT touch the raw flood: OpenStrap's verified reference never
+    /// disables it and the off form is unverified (see `handshakeDisablesRealtimeRawFlood`).
+    @Test func theDefaultHandshakeLeavesTheRealtimeRawFloodAlone() async {
         let h = Harness()
+        await h.controller.connectionOpened()
+        #expect(h.band.commands.filter { $0.cmd == 63 }.isEmpty, "no flood write unless opted in")
+        #expect(h.band.opcodes.filter { $0 == 3 }.count == 1, "the realtime HR arm still happens per connection")
+    }
+
+    /// With the policy on, the handshake disables the strap's raw accel/PPG flood (cmd 63 `[0x00]`)
+    /// right after GET_CLOCK and before GET_DATA_RANGE, as a fire-and-forget confirmed write.
+    @Test func theOptInHandshakeDisablesTheRealtimeRawFloodBetweenClockAndRange() async {
+        let h = Harness()
+        await h.controller.setHandshakeRealtimeRawFloodDisabled(true)
         await h.controller.connectionOpened()
         await h.controller.connectionClosed()
         await h.controller.connectionOpened()

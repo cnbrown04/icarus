@@ -113,14 +113,23 @@ public actor TierBController {
     private var offloadWatchdog: Task<Void, Never>?
     /// The quiet deadline the watchdog is parked on, so a stale wake-up is ignored.
     private var offloadWatchdogDeadline: Date?
+    /// Whether the handshake also sends SEND_R10_R11_REALTIME (0x3F) `[0x00]` to stop the raw
+    /// accel/PPG flood. Default **false**: OpenStrap's hardware-verified reference never disables
+    /// the stream (OpenStrap PROTOCOL.md §2–3; their 0x3F is documented as the *enable* verb, with
+    /// the off form unverified), NOOP's R22Disable is a WHOOP 5/MG feature-flag system (opcode 120),
+    /// not this command, and on this strap sending cmd 63 in the handshake (2026-10-18 17:33)
+    /// coincided with a multi-hour window that left no banked history. Opt-in only until that is
+    /// explained on hardware.
+    public private(set) var handshakeDisablesRealtimeRawFlood = false
 
-    public init(writer: any CommandWriter, clock: any TierBClock, enabled: Bool, emit: @escaping @Sendable (BandEvent) -> Void) {
+    public init(writer: any CommandWriter, clock: any TierBClock, enabled: Bool, emit: @escaping @Sendable (BandEvent) -> Void, handshakeDisablesRealtimeRawFlood: Bool = false) {
         self.writer = writer
         self.clock = clock
         self.emit = emit
         self.enabled = enabled
         self.state = enabled ? .awaitingLink : .disabled
         self.offload = HistoricalOffloadHandler(clock: clock)
+        self.handshakeDisablesRealtimeRawFlood = handshakeDisablesRealtimeRawFlood
     }
 
     // MARK: Link and toggle
@@ -193,13 +202,14 @@ public actor TierBController {
                     BandLog.tierB(.info, "strap RTC reads back \(rtc) (SET_CLOCK sent \(unix))")
                 }
             }
-            // Disable the realtime-raw flood (PLAN.md 7.2 step 4): a strap that had the stream on
-            // from a previous app's session would flood the link with REALTIME_RAW_DATA (type 0x2B,
-            // ~1.9 KB/s) right after we subscribe. Fire-and-forget confirmed write like SET_CLOCK,
-            // so the handshake never hangs on a cmd-63 reply the firmware may not send.
-            step = "SEND_R10_R11_REALTIME"
-            try await writeConfirmedWithoutReply(.toggleRealtimeRaw(on: false))
-            BandLog.tierB(.info, "realtime-raw flood disabled (cmd 63 [0x00])")
+            // Disable the realtime-raw flood only when opted in (see the property's doc): OpenStrap
+            // never sends it and the off form is unverified. Fire-and-forget confirmed write like
+            // SET_CLOCK, so the handshake never hangs on a cmd-63 reply the firmware may not send.
+            if handshakeDisablesRealtimeRawFlood {
+                step = "SEND_R10_R11_REALTIME"
+                try await writeConfirmedWithoutReply(.toggleRealtimeRaw(on: false))
+                BandLog.tierB(.info, "realtime-raw flood disabled (cmd 63 [0x00])")
+            }
             step = "GET_DATA_RANGE"
             _ = try await send(BandCommand.getDataRange())
         } catch {
@@ -282,6 +292,13 @@ public actor TierBController {
     }
 
     // MARK: Realtime-raw flood (PLAN.md 7.2 step 4)
+
+    /// Sets the handshake flood policy for this and future connections. No write goes out; the
+    /// next handshake applies it. For an immediate effect on the current link use
+    /// `setRealtimeRawFlood(enabled:)`.
+    public func setHandshakeRealtimeRawFloodDisabled(_ disabled: Bool) {
+        handshakeDisablesRealtimeRawFlood = disabled
+    }
 
     /// Re-enables or disables the strap's realtime-raw flood at runtime: REALTIME_RAW_DATA (type
     /// 0x2B) raw accel/PPG samples, ~1.9 KB/s (whoop-parity §3.4). The handshake already disables

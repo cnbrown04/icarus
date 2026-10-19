@@ -89,7 +89,8 @@ final class LiveState {
         return LiveState(
             transport: CoreBluetoothTransport(
                 store: UserDefaultsBandIdentityStore(),
-                tierBEnabled: BandChannel.isEnabled
+                tierBEnabled: BandChannel.isEnabled,
+                handshakeDisablesRealtimeRawFlood: BandChannel.floodDisabled
             ),
             sourceName: "Bluetooth",
             clock: clock,
@@ -196,6 +197,21 @@ final class LiveState {
             BandLog.tierB(.info, "app: raw flood \(enabled ? "on" : "off")")
         } catch {
             BandLog.tierB(.error, "app: raw flood \(enabled ? "on" : "off") failed: \(String(describing: error))")
+        }
+    }
+
+    /// Sets whether future handshakes disable the raw flood, applying the change to the current
+    /// link immediately (lifting the policy re-enables the stream now; imposing it disables now).
+    func setHandshakeRealtimeRawFloodDisabled(_ disabled: Bool) async {
+        guard let flood = transport as? any RealtimeRawFloodTransport else {
+            BandLog.tierB(.info, "app: flood policy skipped: transport has no flood control")
+            return
+        }
+        do {
+            try await flood.setHandshakeRealtimeRawFloodDisabled(disabled)
+            BandLog.tierB(.info, "app: flood policy \(disabled ? "off (handshake will disable)" : "on (flood left running)")")
+        } catch {
+            BandLog.tierB(.error, "app: flood policy \(disabled) failed: \(String(describing: error))")
         }
     }
 
