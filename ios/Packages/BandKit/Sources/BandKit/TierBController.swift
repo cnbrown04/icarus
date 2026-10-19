@@ -165,7 +165,10 @@ public actor TierBController {
         // which stops the strap from banking history); newer firmware wants the 8-byte form — so both
         // go out with the same seconds (NOOP, hardware-verified; double-latching is harmless).
         // GET_HELLO mirrors the official app's per-link hello (NOOP, verified); GET_CLOCK reads the
-        // RTC back (its reply confirms the link); GET_DATA_RANGE confirms the record range.
+        // RTC back (its reply confirms the link); SEND_R10_R11_REALTIME [0x00] then kills the
+        // strap's realtime-raw flood (PLAN.md 7.2 step 4), whose ~1.9 KB/s of raw accel/PPG would
+        // otherwise steal BLE throughput from the ack-driven history drain; GET_DATA_RANGE
+        // confirms the record range.
         var step = "SET_CLOCK"
         var helloReply: Frame?
         do {
@@ -176,7 +179,7 @@ public actor TierBController {
             } else {
                 BandLog.tierB(.info, "SET_CLOCK skipped: the wall clock is outside the u32 range")
             }
-            for command in [BandCommand.getHello(), BandCommand.getClock(), BandCommand.getDataRange()] {
+            for command in [BandCommand.getHello(), BandCommand.getClock()] {
                 step = "\(command.command)"
                 let reply = try await send(command)
                 if command.command == .getHello {
@@ -190,6 +193,15 @@ public actor TierBController {
                     BandLog.tierB(.info, "strap RTC reads back \(rtc) (SET_CLOCK sent \(unix))")
                 }
             }
+            // Disable the realtime-raw flood (PLAN.md 7.2 step 4): a strap that had the stream on
+            // from a previous app's session would flood the link with REALTIME_RAW_DATA (type 0x2B,
+            // ~1.9 KB/s) right after we subscribe. Fire-and-forget confirmed write like SET_CLOCK,
+            // so the handshake never hangs on a cmd-63 reply the firmware may not send.
+            step = "SEND_R10_R11_REALTIME"
+            try await writeConfirmedWithoutReply(.toggleRealtimeRaw(on: false))
+            BandLog.tierB(.info, "realtime-raw flood disabled (cmd 63 [0x00])")
+            step = "GET_DATA_RANGE"
+            _ = try await send(BandCommand.getDataRange())
         } catch {
             guard enabled else { return }
             if linkOpen {
@@ -267,6 +279,21 @@ public actor TierBController {
     private func rearmRealtime() async {
         guard enabled, state == .ready, linkOpen else { return }
         _ = try? await send(.toggleRealtimeHR(on: true))
+    }
+
+    // MARK: Realtime-raw flood (PLAN.md 7.2 step 4)
+
+    /// Re-enables or disables the strap's realtime-raw flood at runtime: REALTIME_RAW_DATA (type
+    /// 0x2B) raw accel/PPG samples, ~1.9 KB/s (whoop-parity §3.4). The handshake already disables
+    /// the stream on every connection; this is the on-demand path, e.g. to record raw data for one
+    /// session and turn it off again. Unlike `send`, the write goes out directly as a
+    /// fire-and-forget confirmed write (like SET_CLOCK), so it is never blocked behind the
+    /// one-command-at-a-time queue's in-flight command — a history drain or a timed-out command
+    /// cannot hold it back. Throws `.disabled` when the channel is off and `.notConnected` when the
+    /// link is down. Does not touch the plain realtime HR stream (type 0x28, cmd 3).
+    public func setRealtimeRawFlood(enabled: Bool) async throws {
+        try await writeConfirmedWithoutReply(.toggleRealtimeRaw(on: enabled))
+        BandLog.tierB(.info, "realtime-raw flood \(enabled ? "on" : "off") (cmd 63 [\(enabled ? "01" : "00")])")
     }
 
     // MARK: Historical offload (PLAN.md 5.3.4)

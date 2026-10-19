@@ -15,8 +15,9 @@ struct TierBControllerTests {
         await h.controller.connectionOpened()
         await h.controller.connectionOpened()
         // The handshake writes SET_CLOCK in BOTH forms (8-byte and legacy 9-byte: which one a given
-        // firmware latches is firmware-specific), then hello, clock, range, battery, realtime, drain.
-        #expect(h.band.opcodes == [10, 10, 35, 11, 34, 26, 3, 22])
+        // firmware latches is firmware-specific), then hello, clock, the realtime-raw disable
+        // (cmd 63, PLAN.md 7.2 step 4), range, battery, realtime, drain.
+        #expect(h.band.opcodes == [10, 10, 35, 11, 63, 34, 26, 3, 22])
         #expect(h.band.opcodes.filter { $0 == 10 }.count == 2, "both SET_CLOCK forms per connection")
         #expect(await h.controller.state == .ready)
         #expect(h.events.all.contains(.battery(87)))
@@ -29,7 +30,7 @@ struct TierBControllerTests {
         await h.controller.connectionClosed()
         #expect(await h.controller.state == .awaitingLink)
         await h.controller.connectionOpened()
-        #expect(h.band.opcodes == [10, 10, 35, 11, 34, 26, 3, 22, 10, 10, 35, 11, 34, 3, 22])
+        #expect(h.band.opcodes == [10, 10, 35, 11, 63, 34, 26, 3, 22, 10, 10, 35, 11, 63, 34, 3, 22])
     }
 
     @Test func aSilentBandFailsTheHandshakeAfterRetriesAndStaysUnavailable() async {
@@ -60,16 +61,16 @@ struct TierBControllerTests {
 
         let first = Task { try await h.controller.send(.getAlarmTime()) }
         let second = Task { try await h.controller.send(.getDataRange()) }
-        await settle { h.band.count == 9 }
+        await settle { h.band.count == 10 }
         await flush()
-        #expect(h.band.count == 9, "the second command must wait for the first reply")
+        #expect(h.band.count == 10, "the second command must wait for the first reply")
         #expect(h.band.last?.cmd == 67)
 
         await h.controller.receive(reply(to: h.band.last!))
         let firstReply = try await first.value
         #expect(firstReply.cmd == 67)
 
-        await settle { h.band.count == 10 }
+        await settle { h.band.count == 11 }
         #expect(h.band.last?.cmd == 34)
         await h.controller.receive(reply(to: h.band.last!))
         _ = try await second.value
@@ -224,7 +225,7 @@ struct TierBControllerTests {
         #expect(await h.controller.state == .awaitingLink)
         #expect(h.band.count == 0)
         await h.controller.connectionOpened()
-        #expect(h.band.opcodes == [10, 10, 35, 11, 34, 26, 3, 22])
+        #expect(h.band.opcodes == [10, 10, 35, 11, 63, 34, 26, 3, 22])
     }
 
     /// The Device checkbox becomes the way to retry from the red triangle: enabling while
@@ -328,7 +329,7 @@ struct TierBControllerTests {
         await h.controller.armAlarms([h.clock.now().addingTimeInterval(300)])
         #expect(h.band.count == 0)
         await h.controller.connectionOpened()
-        #expect(h.band.opcodes == [10, 10, 35, 11, 34, alarmOpcode, batteryOpcode, 3, 22])
+        #expect(h.band.opcodes == [10, 10, 35, 11, 63, 34, alarmOpcode, batteryOpcode, 3, 22])
     }
 
     @Test func alarmTimesOutsideTheUInt32RangeAreNotSent() async {
@@ -384,6 +385,78 @@ struct TierBControllerTests {
             return nil
         }
         #expect(infos == [BandInfo(firmwareVersion: nil, hardwareRevision: nil, serial: nil)])
+    }
+
+    // MARK: Realtime-raw flood (PLAN.md 7.2 step 4)
+
+    /// The handshake disables the strap's raw accel/PPG flood (cmd 63 `[0x00]`) right after
+    /// GET_CLOCK and before GET_DATA_RANGE, as a fire-and-forget confirmed write (PLAN.md 7.2
+    /// step 4, whoop-parity §3.4). The plain realtime HR stream (cmd 3) is untouched.
+    @Test func theHandshakeDisablesTheRealtimeRawFloodBetweenClockAndRange() async {
+        let h = Harness()
+        await h.controller.connectionOpened()
+        await h.controller.connectionClosed()
+        await h.controller.connectionOpened()
+        let disables = h.band.commands.filter { $0.cmd == 63 }
+        #expect(disables.count == 2, "one disable per connection")
+        #expect(disables[0].payload == [0x00])
+        #expect(disables[1].payload == [0x00])
+        let opcodes = h.band.opcodes
+        if let index = opcodes.firstIndex(of: 63) {
+            #expect(index > 0, "the disable is not the first write")
+            #expect(opcodes[index - 1] == 11, "the disable rides between GET_CLOCK and GET_DATA_RANGE")
+            #expect(opcodes[index + 1] == 34)
+        } else {
+            Issue.record("the handshake never disabled the realtime-raw flood")
+        }
+        #expect(h.band.opcodes.filter { $0 == 3 }.count == 2, "the realtime HR arm still happens per connection")
+    }
+
+    /// The runtime toggle bypasses the one-command-at-a-time queue: with a command wedged on the
+    /// queue waiting for a reply that never comes, the flood toggle still reaches the wire.
+    @Test func theRuntimeFloodToggleIsNotBlockedByABusyQueue() async {
+        let h = Harness()
+        await h.controller.connectionOpened()
+        h.band.setResponder(nil)
+        let base = h.band.count
+        let wedged = Task { try await h.controller.send(.getAlarmTime()) }
+        await settle { h.band.count == base + 1 }
+
+        try? await h.controller.setRealtimeRawFlood(enabled: true)
+        #expect(h.band.count == base + 2, "the toggle must not wait behind the wedged command")
+        #expect(h.band.last?.cmd == 63)
+        #expect(h.band.last?.payload == [0x01])
+
+        try? await h.controller.setRealtimeRawFlood(enabled: false)
+        #expect(h.band.count == base + 3)
+        #expect(h.band.last?.payload == [0x00])
+
+        await h.controller.connectionClosed()
+        _ = await wedged.result
+    }
+
+    @Test func theRuntimeFloodToggleThrowsWhenDisabledOrUnlinked() async {
+        let h = Harness(enabled: false)
+        await h.controller.connectionOpened()
+        do {
+            try await h.controller.setRealtimeRawFlood(enabled: false)
+            Issue.record("must throw while the channel is disabled")
+        } catch {
+            #expect((error as? TierBError) == .disabled)
+        }
+        #expect(h.band.count == 0)
+
+        await h.controller.setEnabled(true)
+        // Drop the link flag the disabled connectionOpened set, so the channel is back to
+        // .awaitingLink without a live link (the transport reopens it on the next connection).
+        await h.controller.connectionClosed()
+        do {
+            try await h.controller.setRealtimeRawFlood(enabled: true)
+            Issue.record("must throw before the link opens")
+        } catch {
+            #expect((error as? TierBError) == .notConnected)
+        }
+        #expect(h.band.count == 0)
     }
 
     // MARK: Historical offload (PLAN.md 5.3.4)

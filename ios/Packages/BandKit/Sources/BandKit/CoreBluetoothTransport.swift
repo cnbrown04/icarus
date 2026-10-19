@@ -165,6 +165,13 @@ public final class CoreBluetoothTransport: NSObject, BandTransport, CBCentralMan
         await tierB.armAlarms(date.map { [$0] } ?? [])
     }
 
+    /// App-facing raw-flood toggle (PLAN.md 7.2 step 4): re-enable the 0x2B flood while the raw
+    /// band data viewer is open, disable again on close. The handshake disables the flood on every
+    /// new connection. Throws when Tier B is off or the link is down.
+    public func setRealtimeRawFlood(enabled: Bool) async throws {
+        try await tierB.setRealtimeRawFlood(enabled: enabled)
+    }
+
     // MARK: Machine plumbing (queue only)
 
     private func startIfPowered() {
