@@ -54,6 +54,53 @@ public actor MetricsWorker {
         return result
     }
 
+    /// Recomputes every closed minute of the last `days` local days, oldest day first, one day per
+    /// chunk so each chunk's stress baseline is built from the rows already recomputed for the days
+    /// before it. Used by the Debug screen's force recompute; the regular ingest path keeps using
+    /// `recompute(nowMs:)` with its short lookback. Sleep sessions and daily rollups are separate:
+    /// rollups are read-time (`DailyRollup`), sleep is `deriveSleepSessions`.
+    public func recomputeBackfill(days: Int, nowMs: Int64) async throws -> Result {
+        let clamped = max(1, min(days, 60))
+        let cache = baseline
+        let (result, newBaseline) = try await database.writer.write { db -> (Result, BaselineCache?) in
+            guard let profileRow = try db.profile() else {
+                return (Result(changedRows: 0, ran: false), nil)
+            }
+            let zone = profileRow.timeZone
+            let closedThrough = LocalTime.roundDown(nowMs, to: LocalTime.msPerMinute)
+            let today = LocalTime.localDay(containing: closedThrough, in: zone)
+            var total = 0
+            var ran = false
+            var cache = cache
+            for offset in stride(from: clamped - 1, through: 0, by: -1) {
+                let day = LocalTime.adding(days: -offset, to: today)
+                let dayStart = LocalTime.localTime(day, hour: 0, in: zone)
+                // A ms inside the chunk, so `run` rounds to the day's own minutes and keeps the
+                // baseline keyed to `day` rather than to the next midnight.
+                let chunkNow = min(closedThrough, LocalTime.localTime(LocalTime.adding(days: 1, to: day), hour: 0, in: zone) - 1)
+                let chunkClosed = LocalTime.roundDown(chunkNow, to: LocalTime.msPerMinute)
+                // One minute more than the chunk spans, so the last minute of the day (just before
+                // the next midnight, outside this chunk's closed minutes) lands in the next chunk.
+                let lookback = (chunkClosed - dayStart) / LocalTime.msPerMinute + 1
+                guard lookback > 0 else { continue }
+                let (chunk, newCache) = try Self.run(db, nowMs: chunkNow, lookbackMinutes: lookback, cache: cache)
+                total += chunk.changedRows
+                ran = ran || chunk.ran
+                if let newCache {
+                    cache = newCache
+                }
+            }
+            return (Result(changedRows: total, ran: ran), cache)
+        }
+        if result.ran {
+            hasRunOnce = true
+        }
+        if let newBaseline {
+            baseline = newBaseline
+        }
+        return result
+    }
+
     private static func run(
         _ db: Database,
         nowMs: Int64,
