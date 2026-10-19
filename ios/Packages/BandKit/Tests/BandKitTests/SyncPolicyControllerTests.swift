@@ -83,6 +83,10 @@ struct SyncPolicyControllerTests {
         let lines = BandLog.capturedLines(2000)
         #expect(lines.contains { $0.contains("data range: banked") }, "the oldest/newest decode is logged")
         #expect(lines.contains { $0.contains("83 pages behind") }, "the #791 capture's ring backlog")
+        // The same reply surfaces the full decoded ring state for the app-deleted restore:
+        let ring = await h.controller.ringState
+        #expect(ring == RingState(write: 67_491, read: 67_408, capacity: 131_072))
+        #expect(ring?.pagesBehind == 83)
     }
 
     @Test func aFutureDatedRangeMarksTheClockUntrusted() async {
@@ -187,28 +191,22 @@ struct SyncPolicyControllerTests {
     @Test func thePeriodicRedrainKeepsTheFifteenMinuteFloor() async {
         let h = Harness()
         await h.controller.connectionOpened()
-        await settle { h.clock.sleeperCount == 3 }   // watchdogs park lazily — wait for them
-        h.clock.advance(by: 899)
-        await settle { await h.controller.drainPhase != .draining }  // the connect drain ends (run cap; no records → no quiet deadline), empty → streak 1
+        await endRunningDrain(h)   // the connect drain ends (run cap; no records → no quiet deadline), empty → streak 1
         #expect(h.band.opcodes.filter { $0 == 22 }.count == 1)
-        h.clock.advance(by: 1)                       // t=900: the cadence sleeper fires; the floor elapses
+        h.clock.advance(by: 841)   // past t=900: the cadence sleeper fires; the floor elapses
         await settle { h.band.opcodes.filter { $0 == 22 }.count == 2 }
     }
 
     @Test func emptyDrainsStretchThePeriodicFloor() async {
         let h = Harness()
         await h.controller.connectionOpened()
-        await settle { h.clock.sleeperCount == 3 }   // watchdogs park lazily — wait for them
-        h.clock.advance(by: 60)                 // drain 1 ends on its run cap, empty → streak 1
-        await settle { await h.controller.drainPhase != .draining }
-        h.clock.advance(by: 840)                // t=900: cadence fires → drain 2
+        await endRunningDrain(h)                // drain 1 ends on its run cap, empty → streak 1
+        h.clock.advance(by: 841)                // past t=900: cadence fires → drain 2
         await settle { h.band.opcodes.filter { $0 == 22 }.count == 2 }
-        h.clock.advance(by: 60)                 // drain 2 ends empty → streak 2
-        await settle { await h.controller.drainPhase != .draining }
-        h.clock.advance(by: 840)                // t=1800: cadence fires → drain 3
+        await endRunningDrain(h)                // drain 2 ends empty → streak 2
+        h.clock.advance(by: 841)                // past t=1800: cadence fires → drain 3
         await settle { h.band.opcodes.filter { $0 == 22 }.count == 3 }
-        h.clock.advance(by: 60)                 // drain 3 ends empty → streak 3
-        await settle { await h.controller.drainPhase != .draining }
+        await endRunningDrain(h)                // drain 3 ends empty → streak 3
         #expect(await h.controller.emptyStreak == 3)
 
         // The streak of 3 stretches the floor to 2×: the cadence wake parked since drain 3 began

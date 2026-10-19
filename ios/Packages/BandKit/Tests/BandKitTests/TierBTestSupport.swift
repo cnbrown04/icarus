@@ -74,10 +74,14 @@ final class ManualClock: TierBClock, @unchecked Sendable {
 /// delivers it to the controller the way the notify path would.
 final class FakeBand: CommandWriter, @unchecked Sendable {
     typealias Responder = @Sendable (_ request: Frame, _ index: Int) -> Frame?
+    typealias MultiResponder = @Sendable (_ request: Frame, _ index: Int) -> [Frame]
 
     private let lock = NSLock()
     private var written: [[UInt8]] = []
     private var responder: Responder?
+    /// Delivers ZERO OR MORE reply frames per write, in order (a scripted band's batch: records
+    /// then metadata). When set, it replaces `responder` entirely.
+    private var multiResponder: MultiResponder?
     private var controller: TierBController?
 
     init(responder: Responder?) {
@@ -90,6 +94,10 @@ final class FakeBand: CommandWriter, @unchecked Sendable {
 
     func setResponder(_ responder: Responder?) {
         lock.withLock { self.responder = responder }
+    }
+
+    func setMultiResponder(_ responder: MultiResponder?) {
+        lock.withLock { self.multiResponder = responder }
     }
 
     var count: Int {
@@ -118,9 +126,14 @@ final class FakeBand: CommandWriter, @unchecked Sendable {
             return written.count - 1
         }
         let request = try FrameCodec.decode(frame)
+        let multiResponder = lock.withLock { self.multiResponder }
         let responder = lock.withLock { self.responder }
         let controller = lock.withLock { self.controller }
-        if let reply = responder?(request, index), let controller {
+        if let multiResponder, let controller {
+            for reply in multiResponder(request, index) {
+                await controller.receive(reply)
+            }
+        } else if let reply = responder?(request, index), let controller {
             await controller.receive(reply)
         }
     }
@@ -198,6 +211,32 @@ struct Harness {
         self.events = events
         self.controller = controller
     }
+}
+
+/// A thread-safe incrementing counter, for scripted-band responder closures that must vary by
+/// how many times a given command was written (a `@Sendable` closure cannot capture a mutable local).
+final class AtomicCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func increment() -> Int {
+        lock.withLock { value += 1; return value }
+    }
+}
+
+/// Ends the drain that is running (if any) by advancing the clock until `drainPhase` leaves
+/// `.draining`, one run-cap step at a time. Watchdog Tasks park their `clock.sleep` lazily (a
+/// `Task` body runs after its creation, and the sleep's deadline is relative to that moment), so a
+/// single `clock.advance` can race past before the sleeper is registered — an empty drain then
+/// never ends. A record-ful drain ends on the FIRST of its quiet deadline / the run cap that the
+/// steps reach, which is exactly the shape the restore loop continues on.
+func endRunningDrain(_ h: Harness) async {
+    for _ in 0 ..< 8 {
+        guard await h.controller.drainPhase == .draining else { return }
+        h.clock.advance(by: OffloadStateMachine.runCap)
+        await flush()
+    }
+    Issue.record("the drain did not end")
 }
 
 /// Lets queued tasks run until `condition` holds. Bounded, so a broken condition fails instead of hanging.

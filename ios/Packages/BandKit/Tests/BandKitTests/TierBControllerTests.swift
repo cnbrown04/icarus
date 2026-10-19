@@ -530,6 +530,153 @@ struct TierBControllerTests {
         #expect(historical == [[record]])
         #expect(await h.controller.state == .awaitingLink)
     }
+
+    // MARK: Full-history restore (app-deleted repopulation)
+
+    /// The #791 capture's GET_DATA_RANGE reply payload (the envelope minus its [AA][size][crc8]
+    /// head), with the ring words patched: W sits at payload offset 11, U at 15, T at 23 (and stays
+    /// at the capture's 131072). Word offsets per NOOP's ring layout.
+    private func ringPayload(write: UInt32, read: UInt32) -> [UInt8] {
+        let capture = "aa4c00a7247e220a01010000000050070100a307010050070100000000000000020035030000" +
+            "c2fc13008046394b00000000bbe1636aa02d0000bbe1636aa02d0000c6e4636ac07c000000000447ea04"
+        var payload: [UInt8] = stride(from: 0, to: capture.count, by: 2).map { off in
+            let start = capture.index(capture.startIndex, offsetBy: off)
+            return UInt8(capture[start ..< capture.index(start, offsetBy: 2)], radix: 16)!
+        }
+        payload.removeFirst(7)
+        payload.replaceSubrange(11 ..< 15, with: littleEndian(write))
+        payload.replaceSubrange(15 ..< 19, with: littleEndian(read))
+        return payload
+    }
+
+    private func historicalEvents(_ events: [BandEvent]) -> [[HistoricalRecord]] {
+        events.compactMap { event -> [HistoricalRecord]? in
+            if case let .historical(records) = event { return records }
+            return nil
+        }
+    }
+
+    /// Sets a scripted band up and starts `drainFullHistory`, returning (task, cmd-22 baseline).
+    /// The connect drain is ended first (see `endRunningDrain`). The scripted band answers the
+    /// range read and the realtime re-arm, stays silent on the rewind write and the batch ack
+    /// (mirroring OpenStrap's reference client: confirmed writes, no replies awaited), and hands
+    /// each drain kick to `respondToKick` (1-based) so a test can script a batch — the scripted
+    /// records then arrive through the notify path.
+    private func startScriptedRestore(_ h: Harness, ring: [UInt8],
+                                      respondToKick: @escaping @Sendable (_ kick: Int) -> [Frame] = { _ in [] }) async -> (task: Task<Void, Never>, cmd22Baseline: Int) {
+        await h.controller.connectionOpened()
+        await endRunningDrain(h)
+        let cmd22Baseline = h.band.opcodes.filter { $0 == 22 }.count
+        let kicks = AtomicCounter()
+        h.band.setMultiResponder { request, _ in
+            switch request.cmd {
+            case 34: return [reply(to: request, payload: ring)]
+            case 22: return respondToKick(kicks.increment())
+            case 3: return [reply(to: request, payload: [])]
+            default: return []
+            }
+        }
+        let task = Task { await h.controller.drainFullHistory() }
+        await settle { h.band.opcodes.filter { $0 == 22 }.count == cmd22Baseline + 1 }
+        return (task, cmd22Baseline)
+    }
+
+    /// The restore's spine: GET_DATA_RANGE reads U behind W → the cursor is rewound to the ring
+    /// start, then drains run back to back, continuing while records arrive and stopping on the
+    /// first empty drain. Every acked batch flushes exactly once.
+    @Test func drainFullHistoryRewindsTheCursorAndDrainsUntilEmpty() async throws {
+        let h = Harness()
+        // Drain 1's kick streams nothing (the records arrive below via the notify path); the
+        // SECOND drain's kick is answered with an immediate HISTORY_COMPLETE — an EMPTY drain
+        // (kept 0) — so the restore stops there.
+        let complete = Frame(type: PacketType.metadata.rawValue, seq: 24, cmd: 3, payload: [])
+        let (task, cmd22Baseline) = await startScriptedRestore(h, ring: ringPayload(write: 100, read: 40)) {
+            $0 == 1 ? [] : [complete]
+        }
+        let older = historicalRecordFrame(unix: UInt32(ManualClock.origin.timeIntervalSince1970) - 7200)
+        let newer = historicalRecordFrame(unix: UInt32(ManualClock.origin.timeIntervalSince1970) - 3600)
+        await h.controller.receive(older)
+        await h.controller.receive(newer)
+        await h.controller.receive(metadataFrame(token: [0x2E, 0x47, 0x01, 0x00, 0x04, 0x00, 0x00, 0x00]))
+        #expect(h.band.last?.cmd == 23, "the batch token is echoed")
+        let record1 = try HistoricalRecord.parse(older)
+        let record2 = try HistoricalRecord.parse(newer)
+        #expect(historicalEvents(h.events.all) == [[record1, record2]])
+
+        // Drain 1 ends (its quiet deadline is armed by the batch; the run cap is the fallback)
+        // having KEPT records → the restore kicks the next drain, which completes empty and stops
+        // the restore.
+        await endRunningDrain(h)
+        await task.value
+
+        #expect(h.band.opcodes.filter { $0 == 33 }.count == 1, "exactly one rewind")
+        #expect(h.band.opcodes.filter { $0 == 22 }.count == cmd22Baseline + 2, "the restore stopped after the empty drain")
+        #expect(historicalEvents(h.events.all) == [[record1, record2]], "the batch flushed exactly once")
+        let lines = BandLog.capturedLines(2000)
+        #expect(lines.contains { $0.contains("rewinding read cursor 40→0") })
+        #expect(lines.contains { $0.contains("full-history restore finished: 2 drain(s), 2 record(s) re-drained") })
+        #expect(await h.controller.ringState == RingState(write: 100, read: 40, capacity: 131_072))
+    }
+
+    /// HISTORY_COMPLETE is the strap's "the whole store is drained" marker: the restore stops even
+    /// though the last drain kept records.
+    @Test func drainFullHistoryStopsOnHistoryComplete() async throws {
+        let h = Harness()
+        let (task, cmd22Baseline) = await startScriptedRestore(h, ring: ringPayload(write: 100, read: 40))
+
+        let frame = historicalRecordFrame(unix: UInt32(ManualClock.origin.timeIntervalSince1970) - 3600)
+        await h.controller.receive(frame)
+        await h.controller.receive(metadataFrame(token: [1, 0, 0, 0, 1, 0, 0, 0]))
+        await h.controller.receive(Frame(type: PacketType.metadata.rawValue, seq: 24, cmd: 3, payload: []))
+        await task.value
+
+        #expect(h.band.opcodes.filter { $0 == 33 }.count == 1)
+        #expect(h.band.opcodes.filter { $0 == 22 }.count == cmd22Baseline + 1, "the restore kicked exactly one drain")
+        #expect(historicalEvents(h.events.all).count == 1)
+        #expect(BandLog.capturedLines(2000).contains { $0.contains("HISTORY_COMPLETE after 1 record(s)") })
+    }
+
+    /// The cursor already at the rewind target needs no SET_READ_POINTER write; the restore just
+    /// drains the backlog (the plain connect path's shape, now also available on demand).
+    @Test func drainFullHistorySkipsTheRewindWhenTheCursorIsAlreadyAtTheTarget() async throws {
+        let h = Harness()
+        let (task, cmd22Baseline) = await startScriptedRestore(h, ring: ringPayload(write: 100, read: 0))
+
+        await h.controller.receive(historicalRecordFrame(unix: UInt32(ManualClock.origin.timeIntervalSince1970) - 3600))
+        await h.controller.receive(Frame(type: PacketType.metadata.rawValue, seq: 24, cmd: 3, payload: []))
+        await task.value
+
+        #expect(!h.band.opcodes.contains(33), "U == target → no rewind write")
+        #expect(h.band.opcodes.filter { $0 == 22 }.count == cmd22Baseline + 1)
+        #expect(BandLog.capturedLines(2000).contains { $0.contains("full-history restore finished: 1 drain(s), 1 record(s) re-drained") })
+    }
+
+    /// An unreadable range aborts the restore before anything is written: without the ring state
+    /// there is no honest rewind target, and guessing 0 could desync a healthy cursor.
+    @Test func drainFullHistoryAbortsWhenTheRingStateIsUnreadable() async {
+        let h = Harness()
+        await h.controller.connectionOpened()
+        await endRunningDrain(h) // end the connect drain before the restore's first kick
+        let cmd22Baseline = h.band.opcodes.filter { $0 == 22 }.count
+
+        await h.controller.drainFullHistory()
+
+        #expect(!h.band.opcodes.contains(33))
+        #expect(h.band.opcodes.filter { $0 == 22 }.count == cmd22Baseline, "no drain was kicked")
+        #expect(await h.controller.ringState == nil)
+        #expect(BandLog.capturedLines(2000).contains { $0.contains("full-history restore aborted: the GET_DATA_RANGE reply's ring state is unreadable") })
+    }
+
+    /// The guards: a disabled channel and an unopened link are no-ops that send nothing.
+    @Test func drainFullHistoryIsANoOpWhenTheChannelIsOffOrTheLinkIsDown() async {
+        let disabled = Harness(enabled: false)
+        await disabled.controller.drainFullHistory()
+        #expect(disabled.band.count == 0)
+
+        let unlinked = Harness(responder: nil)
+        await unlinked.controller.drainFullHistory()
+        #expect(unlinked.band.count == 0, "state is .awaitingLink — never .ready")
+    }
 }
 
 @Suite("Rhythm playback (PLAN.md 9.2)")

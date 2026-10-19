@@ -130,6 +130,15 @@ public actor TierBController {
     private var drainKeptRecords = 0
     /// Future-dated records dropped this drain (the record-timestamp gate tally).
     private var drainDroppedFutureRecords = 0
+    /// The decoded ring-buffer state of the strap's GET_DATA_RANGE reply (NOOP's DataRange words):
+    /// write pointer, persistent read pointer, ring capacity, and the page backlog. Set from every
+    /// decoded GET_DATA_RANGE reply (the handshake's and `drainFullHistory`'s); nil until the first
+    /// readable reply. The app reads it for diagnostics and the full-history restore reads it to
+    /// compute the rewind target.
+    public private(set) var ringState: RingState?
+    /// Waiters resumed when the running drain ends (`drainFullHistory` parks here between the
+    /// back-to-back kicks).
+    private var drainEndWaiters: [CheckedContinuation<Void, Never>] = []
     /// Logged-once-per-drain flags for the two HISTORY_END diagnostics (NOOP logs each once per
     /// session, never per chunk).
     private var loggedNoCursorSentinel = false
@@ -325,6 +334,116 @@ public actor TierBController {
         await runDrain(trigger)
     }
 
+    // MARK: Full-history restore (OpenStrap §4.3: drain the entire stored history)
+
+    /// Runaway guard for `drainFullHistory`: the most back-to-back drains one restore may kick.
+    /// Each drain is already bounded by the ~60 s run cap, so the cap only stops a pathological
+    /// loop (a strap that keeps trickling one record per drain forever).
+    public static let maxFullHistoryDrains = 64
+
+    /// Positions the strap's persistent read cursor (SET_READ_POINTER, cmd 33). OpenStrap §4.3:
+    /// the cursor survives connections and acks, and repositioning it makes the strap re-stream
+    /// history it already drained — the mechanism behind the app-deleted restore.
+    ///
+    /// The write goes out as a confirmed (with-response) GATT write without awaiting a command
+    /// response: OpenStrap's reference client sends every command that way
+    /// (`research_playground.py:send` — a `write_gatt_char(response=True)` and move on), and no
+    /// capture shows a cmd-33 COMMAND_RESPONSE. Whether some firmware echoes one is
+    /// [Unverified]; a reply, if it ever comes, is ignored like any other unsolicited response.
+    public func rewindReadPointer(to offset: UInt32) async throws {
+        try await writeConfirmedWithoutReply(.setReadPointer(offset: offset))
+        BandLog.tierB(.info, "read pointer set to \(offset) (cmd 33, no reply awaited)")
+    }
+
+    /// Re-reads the strap's ENTIRE stored history: the app-deleted restore. After the app's
+    /// database is wiped, the strap's persistent read cursor still sits at the last-acked batch,
+    /// so a plain connect would only re-read what came after it. This rewinds the cursor to the
+    /// ring's oldest banked extent first (OpenStrap PROTOCOL.md §4.3: "you can drain the same band
+    /// as many times as you like"), then kicks drains back to back (NOOP's `.autoContinue` flow)
+    /// until the backlog is gone: a drain that kept records is followed by another, and the loop
+    /// stops on an empty drain, HISTORY_COMPLETE, the live edge, or a lost link/channel. Each
+    /// drain's ~60 s run cap slices it, so even a full ~36 h ring (131072 pages) drains in bounded
+    /// slices. Never throws: every failure is logged and leaves the normal drain machinery intact.
+    public func drainFullHistory() async {
+        guard enabled, state == .ready, linkOpen else {
+            BandLog.tierB(.info, "full-history restore skipped: the channel is off or the link is not ready")
+            return
+        }
+        BandLog.tierB(.info, "full-history restore begins")
+        do {
+            // The reply's ring state is ALSO decoded into `ringState` by `handleDataRangeReply`
+            // when the notification lands; decoding the resolved frame here keeps the rewind
+            // decision independent of that event's ordering.
+            let rangeFrame = try await send(BandCommand.getDataRange())
+            guard let ring = DataRange.ringState(from: FrameCodec.reencode(rangeFrame), cmdOff: 6) else {
+                BandLog.tierB(.error, "full-history restore aborted: the GET_DATA_RANGE reply's ring state is unreadable")
+                return
+            }
+            ringState = ring
+            // The oldest banked extent: once the write pointer has passed the capacity (a
+            // monotonic counter, [Unverified] — every capture so far reads W < T), the ring's
+            // oldest surviving page is `W − T`; otherwise the ring start (0) is the oldest.
+            let target = ring.write >= ring.capacity ? ring.write - ring.capacity : 0
+            if target != ring.read {
+                BandLog.tierB(.info, "rewinding read cursor \(ring.read)→\(target): re-draining the entire stored history")
+                do {
+                    try await rewindReadPointer(to: UInt32(target))
+                } catch {
+                    BandLog.tierB(.error, "full-history restore aborted: the SET_READ_POINTER write failed (\(String(describing: error)))")
+                    return
+                }
+            }
+            // NOOP's .autoContinue flow: back-to-back drains, un-floored (the runaway protection
+            // is this loop's own stop conditions and `maxFullHistoryDrains`). `runDrain`'s quiet
+            // and run-cap watchdogs bound each slice; the acked batches flush as they always do.
+            var totalKept = 0
+            var drains = 0
+            while drains < Self.maxFullHistoryDrains {
+                guard enabled, state == .ready, linkOpen else { break }
+                guard await runDrain(.autoContinue) else {
+                    BandLog.tierB(.info, "full-history restore: the next drain was denied — stopping")
+                    break
+                }
+                drains += 1
+                await waitForDrainEnd()
+                // Read the tally and the stop reason in one actor turn (no await between them, so
+                // another drain cannot start and reset the counters in between).
+                let kept = drainKeptRecords
+                let phase = offload.phase
+                totalKept += kept
+                if kept == 0 {
+                    BandLog.tierB(.info, "full-history restore: the last drain completed empty — stopping")
+                    break
+                }
+                if case .stopped(.drainCompleted) = phase {
+                    BandLog.tierB(.info, "full-history restore: HISTORY_COMPLETE after \(totalKept) record(s) — stopping")
+                    break
+                }
+                if case .stopped(.reachedLiveEdge) = phase {
+                    BandLog.tierB(.info, "full-history restore: caught up to the live edge after \(totalKept) record(s) — stopping")
+                    break
+                }
+            }
+            if drains == Self.maxFullHistoryDrains {
+                BandLog.tierB(.error, "full-history restore hit the \(Self.maxFullHistoryDrains)-drain cap")
+            }
+            BandLog.tierB(.info, "full-history restore finished: \(drains) drain(s), \(totalKept) record(s) re-drained")
+        } catch {
+            // `send` failures land here (disabled / notConnected / timedOut after retries).
+            BandLog.tierB(.error, "full-history restore aborted: \(String(describing: error))")
+        }
+    }
+
+    /// Resumes when the running drain ends (its `.stop` effect ran `finishDrain`). A drain that
+    /// already ended resumes immediately, so a drain finishing between the kick and this call
+    /// cannot hang the restore loop.
+    private func waitForDrainEnd() async {
+        if case .draining = offload.phase {} else { return }
+        await withCheckedContinuation { continuation in
+            drainEndWaiters.append(continuation)
+        }
+    }
+
     // MARK: GET_DATA_RANGE (NOOP's #695 response processing)
 
     /// Decodes a GET_DATA_RANGE COMMAND_RESPONSE with NOOP's hardware-verified `DataRange`
@@ -348,7 +467,9 @@ public actor TierBController {
         let oldest = DataRange.oldestUnix(from: payload)
         // pagesBehind's word offsets are anchored to the cmd byte's frame offset (6 on WHOOP 4.0),
         // so it keeps scanning the full envelope; a too-short reply is nil ("backlog unreadable").
-        let pages = DataRange.pagesBehind(from: raw, cmdOff: 6) // WHOOP 4: the cmd byte sits at raw offset 6
+        let ring = DataRange.ringState(from: raw, cmdOff: 6) // WHOOP 4: the cmd byte sits at raw offset 6
+        ringState = ring
+        let pages = ring?.pagesBehind
         if let oldest, let newest {
             BandLog.tierB(.info, "data range: banked \(oldest)…\(newest) (\((newest - oldest) / 86_400) day(s)), \(pages.map { "\($0) pages behind" } ?? "backlog unreadable")")
         } else if let newest {
@@ -585,10 +706,13 @@ public actor TierBController {
     /// drains in bounded slices so the link stays responsive to live HR). One park per drain.
     private func scheduleRunCapWatchdog() {
         offloadRunCapTask?.cancel()
-        guard case .draining = offload.phase, offload.runCapDeadline != nil else { return }
+        guard case .draining = offload.phase, let deadline = offload.runCapDeadline else { return }
         let clock = clock
         offloadRunCapTask = Task {
-            try? await clock.sleep(seconds: OffloadStateMachine.runCap)
+            // Sleep to the drain's ABSOLUTE run-cap deadline: the Task body starts after its
+            // creation (lazy scheduling), and a relative `runCap` sleep would drift the cap later
+            // by that scheduling delay. `runCapElapsed`'s deadline guard still drops stale fires.
+            try? await clock.sleep(seconds: max(0, deadline.timeIntervalSince(clock.now())))
             await self.runCapElapsed()
         }
     }
@@ -630,6 +754,13 @@ public actor TierBController {
         BandLog.tierB(.info, "historical offload ended (\(offload.phase)): \(offload.recordCount) record(s) total, \(historicalRecords.count) unflushed"
             + (dropped > 0 ? ", \(dropped) future-dated record(s) dropped" : ""))
         flushRecords()
+        // The full-history restore parks one waiter per drain here; resume them all (the restore
+        // loop re-checks the phase itself, so a stale resume is harmless).
+        let waiters = drainEndWaiters
+        drainEndWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 
     /// Hands the accumulated records to the app and clears the buffer. Called after each acked
