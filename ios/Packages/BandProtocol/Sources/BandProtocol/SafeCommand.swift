@@ -9,6 +9,10 @@ public enum SafeCommand: UInt8, Sendable, CaseIterable {
     case historicalDataResult = 23
     case getBatteryLevel = 26
     case getDataRange = 34
+    /// SEND_R10_R11_REALTIME (cmd 63). Toggles the strap's realtime-raw flood: REALTIME_RAW_DATA
+    /// (type 0x2B) raw accel/PPG samples at ~1.9 KB/s on `61080005` (PLAN.md 7.2 step 4,
+    /// whoop-parity §3.4). Sourced from NOOP [S12]; no Icarus capture shows a cmd-63 frame yet.
+    case sendR10R11Realtime = 63
     case setAlarmTime = 66
     case getAlarmTime = 67
     case runHapticsPattern = 79

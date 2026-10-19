@@ -101,6 +101,16 @@ public struct BandCommand: Sendable, Equatable {
         BandCommand(.toggleRealtimeHR, payload: [on ? 1 : 0])
     }
 
+    /// SEND_R10_R11_REALTIME (cmd 63). Enables or disables the REALTIME_RAW_DATA (type 0x2B) raw
+    /// accel/PPG flood on `61080005`, ~1.9 KB/s (PLAN.md 7.2 step 4, whoop-parity §3.4). Payload
+    /// `[0x01]` on / `[0x00]` off (NOOP [S12]). The flood competes with the ack-driven history
+    /// drain for BLE throughput, so the handshake sends it `[0x00]` after the clock exchange, as a
+    /// confirmed write without awaiting a reply — no Icarus capture shows a cmd-63
+    /// COMMAND_RESPONSE. Payload forms are [Unverified] beyond the NOOP source.
+    public static func toggleRealtimeRaw(on: Bool) -> BandCommand {
+        BandCommand(.sendR10R11Realtime, payload: [on ? 1 : 0])
+    }
+
     /// Standard HR broadcast toggle (cmd 14, PLAN.md 5.3.1 and 5.3.4). The payload `[1]` or `[0]`
     /// reproduces the golden frames `hr_broadcast_on_*` and `hr_broadcast_off_*` (S8) byte for byte.
     public static func hrBroadcast(on: Bool) -> BandCommand {

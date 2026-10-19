@@ -75,6 +75,21 @@ struct BandCommandTests {
         }
     }
 
+    /// SEND_R10_R11_REALTIME (cmd 63): `[0x01]` turns the REALTIME_RAW_DATA (type 0x2B) raw
+    /// accel/PPG flood on, `[0x00]` off (NOOP [S12], whoop-parity §3.4). No golden frame exists and
+    /// no Icarus capture shows a cmd-63 frame, so the envelope vector below fixes the encoding but
+    /// the payload forms are [Unverified] beyond the NOOP source.
+    @Test func realtimeRawToggleEncodesItsPayloadForms() {
+        let off = BandCommand.toggleRealtimeRaw(on: false)
+        let on = BandCommand.toggleRealtimeRaw(on: true)
+        #expect(off.command == .sendR10R11Realtime)
+        #expect(off.command.rawValue == 63)
+        #expect(off.payload == [0x00])
+        #expect(on.payload == [0x01])
+        #expect(hex(off.frame(seq: 0x14)) == "aa0800a823143f005cfe32d0")
+        #expect(hex(on.frame(seq: 0x15)) == "aa0800a823153f01fda4f7a6")
+    }
+
     // MARK: Envelope vectors (no captured band frame exists for these)
 
     @Test func runHapticsPatternPayloadIsPatternLoopsAndZeros() {
@@ -117,13 +132,13 @@ struct BandCommandTests {
         let commands: [BandCommand] = [
             .runHapticsPattern(patternId: 2, loops: 1), .stopHaptics(), .setAlarmTime(unix: 1), .getAlarmTime(),
             .getClock(), .getBatteryLevel(), .getDataRange(), .toggleRealtimeHR(on: true),
-            .hrBroadcast(on: false), .getAllHapticsPatterns(),
+            .toggleRealtimeRaw(on: false), .hrBroadcast(on: false), .getAllHapticsPatterns(),
         ]
         for command in commands {
             #expect(SafeCommand(rawValue: command.command.rawValue) == command.command)
             #expect(!SafeCommand.deniedOpcodes.contains(command.command.rawValue))
         }
-        #expect(Set(commands.map(\.command.rawValue)) == [3, 11, 14, 26, 34, 66, 67, 79, 80, 122])
+        #expect(Set(commands.map(\.command.rawValue)) == [3, 11, 14, 26, 34, 63, 66, 67, 79, 80, 122])
     }
 
     // MARK: Battery reply
