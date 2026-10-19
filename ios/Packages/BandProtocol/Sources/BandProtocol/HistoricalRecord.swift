@@ -267,4 +267,32 @@ public enum HistoricalMetadata {
         guard payload.count >= tokenRange.upperBound else { return nil }
         return Array(payload[tokenRange])
     }
+
+    /// The metadata struct's field layout for a HISTORY_END (NOOP PostHooks `metadata` hook,
+    /// hardware-verified): `struct '<LHLL'` starting at payload byte 0 — unix u32 @ 0, subsec u16
+    /// @ 4, an unverified u32 @ 6 (OpenStrap calls it the batch counter), trim cursor u32 @ 10.
+    /// The trim cursor is the FIRST u32 of the 8-byte ack token (payload[10:14]).
+    ///
+    /// `0xFFFFFFFF` is the strap's "no valid flash cursor" sentinel (NOOP): on an END with no
+    /// banked rows it means the strap has no history to offload; after a run that persisted rows
+    /// it means "caught up". Callers must distinguish the two.
+    public static func trimCursor(fromPayload payload: [UInt8]) -> UInt32? {
+        guard payload.count >= 14 else { return nil }
+        return u32(payload, 10)
+    }
+
+    /// The HISTORY_END's own unix timestamp (u32 LE @ payload 0): the strap's RTC reading when the
+    /// batch closed. A genuine offload is always PAST-dated (banked history); an END dated days
+    /// into the FUTURE is a corrupt strap clock. Nil when the payload is too short.
+    public static func endUnix(fromPayload payload: [UInt8]) -> UInt32? {
+        guard payload.count >= 4 else { return nil }
+        return u32(payload, 0)
+    }
+
+    private static func u32(_ payload: [UInt8], _ offset: Int) -> UInt32 {
+        UInt32(payload[offset])
+            | (UInt32(payload[offset + 1]) << 8)
+            | (UInt32(payload[offset + 2]) << 16)
+            | (UInt32(payload[offset + 3]) << 24)
+    }
 }

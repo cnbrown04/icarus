@@ -68,6 +68,16 @@ public enum FrameCodec {
         return Frame(type: body[0], seq: body[1], cmd: body[2], payload: Array(body.dropFirst(3)))
     }
 
+    /// Rebuilds the raw `[0xAA]…` bytes of a decoded frame. Byte-exact: the length bytes, CRC-8,
+    /// body and CRC-32 are all recomputed over the same values `decode` read, so
+    /// `decode(reencode(f)) == f` holds. Used by consumers that must scan the RAW frame — e.g.
+    /// `DataRange.newestUnix`/`oldestUnix`, whose offset grids are aligned to the envelope (the
+    /// oldest grid starts at raw offset 7, which is payload offset 0) — from a `Frame` handed over
+    /// by the notify path.
+    public static func reencode(_ frame: Frame) -> [UInt8] {
+        encode(type: frame.type, seq: frame.seq, cmd: frame.cmd, payload: frame.payload)
+    }
+
     /// Internal so that only `encodeCommand` can produce COMMAND frames outside tests.
     static func encode(type: UInt8, seq: UInt8, cmd: UInt8, payload: [UInt8]) -> [UInt8] {
         let length = payload.count + 7
