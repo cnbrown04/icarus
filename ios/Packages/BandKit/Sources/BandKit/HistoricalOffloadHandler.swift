@@ -21,6 +21,8 @@ public struct HistoricalOffloadHandler {
     public var phase: OffloadStateMachine.Phase { stateMachine.phase }
     /// When to fire `quietElapsed()` — nil while idle or stopped (see `OffloadStateMachine`).
     public var quietDeadline: Date? { stateMachine.quietDeadline }
+    /// When to fire `runCapElapsed()` — nil while idle or stopped.
+    public var runCapDeadline: Date? { stateMachine.runCapDeadline }
     public var recordCount: Int { stateMachine.recordCount }
 
     /// Starts a drain: returns the SEND_HISTORICAL_DATA write to perform.
@@ -36,6 +38,11 @@ public struct HistoricalOffloadHandler {
     /// The quiet deadline passed with no traffic.
     public mutating func quietElapsed() -> [OffloadStateMachine.Effect] {
         stateMachine.handle(.quietElapsed)
+    }
+
+    /// The run cap (`OffloadStateMachine.runCap`, ~60 s) passed since the drain started.
+    public mutating func runCapElapsed() -> [OffloadStateMachine.Effect] {
+        stateMachine.handle(.runCapElapsed)
     }
 
     /// The caller declared the end of data (e.g. an empty GET_DATA_RANGE reply).

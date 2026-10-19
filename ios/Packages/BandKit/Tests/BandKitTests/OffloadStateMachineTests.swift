@@ -113,6 +113,43 @@ struct OffloadStateMachineTests {
         #expect(machine.phase == .stopped(.drainCompleted))
     }
 
+    // MARK: Run cap (NOOP's ~60 s offload cap)
+
+    @Test func startParksTheRunCapDeadline() {
+        var (machine, clock) = makeMachine()
+        machine.handle(.sendHistoricalStarted)
+        #expect(machine.runCapDeadline == clock.now().addingTimeInterval(OffloadStateMachine.runCap))
+        #expect(machine.quietDeadline == nil)
+    }
+
+    @Test func theRunCapStopsTheDrainAtSixtySeconds() {
+        var (machine, clock) = makeMachine()
+        machine.handle(.sendHistoricalStarted)
+        machine.handle(.record(unixSeconds: oldUnix))   // pushes the quiet deadline out at 8 s
+
+        clock.advance(by: OffloadStateMachine.runCap - 0.001)
+        #expect(machine.handle(.runCapElapsed) == [], "an early fire is stale")
+        #expect(machine.phase == .draining, "the pushed quiet deadline does not stop the cap")
+
+        clock.advance(by: 0.001)
+        #expect(machine.handle(.runCapElapsed) == [.stop(.runCap)])
+        #expect(machine.phase == .stopped(.runCap))
+        #expect(machine.runCapDeadline == nil)
+        #expect(machine.quietDeadline == nil)
+    }
+
+    @Test func aRunCapFireAfterTheDrainEndedIsIgnored() {
+        var (machine, clock) = makeMachine()
+        machine.handle(.sendHistoricalStarted)
+        machine.handle(.record(unixSeconds: oldUnix))
+        clock.advance(by: OffloadStateMachine.quietTimeout)
+        machine.handle(.quietElapsed)   // stops on quiet first
+
+        clock.advance(by: OffloadStateMachine.runCap)
+        #expect(machine.handle(.runCapElapsed) == [])
+        #expect(machine.phase == .stopped(.quietTimeout))
+    }
+
     @Test func eventsAfterStopAreIgnored() {
         var (machine, clock) = makeMachine()
         machine.handle(.sendHistoricalStarted)
@@ -230,6 +267,15 @@ struct HistoricalOffloadHandlerTests {
 
         clock.advance(by: OffloadStateMachine.quietTimeout)
         #expect(handler.quietElapsed() == [.stop(.quietTimeout)])
+    }
+
+    @Test func runCapElapsedIsForwarded() {
+        var (handler, clock) = makeHandler()
+        handler.start()
+        #expect(handler.runCapDeadline == clock.now().addingTimeInterval(OffloadStateMachine.runCap))
+
+        clock.advance(by: OffloadStateMachine.runCap)
+        #expect(handler.runCapElapsed() == [.stop(.runCap)])
     }
 
     @Test func otherFrameTypesAreIgnored() {

@@ -21,6 +21,12 @@ public struct OffloadStateMachine {
     /// would re-offload the newest second forever. Assumes the band RTC is kept correct by
     /// SET_CLOCK (PLAN.md 5.3.4), which the handshake reads.
     public static let liveEdgeTolerance: TimeInterval = 15
+    /// Hard cap on one drain run (~60 s, NOOP's offload-session bound). A deep backlog drains in
+    /// ~60 s slices instead of holding the link for minutes: the cap keeps the link responsive to
+    /// the live HR stream (NOOP's stated reason for the ~60 s offload cap — "so live HR never
+    /// starves"). The strap keeps everything past the last acked batch, so the next drain resumes
+    /// where this one stopped; nothing is lost.
+    public static let runCap: TimeInterval = 60
 
     /// Why the offload ended.
     public enum StopReason: Sendable, Equatable {
@@ -32,6 +38,9 @@ public struct OffloadStateMachine {
         case linkDropped
         /// The caller declared the end of data, e.g. an empty GET_DATA_RANGE reply. [Unverified]
         case drainCompleted
+        /// The drain ran for `runCap` seconds (backlog slices, so the link stays responsive to
+        /// live HR; NOOP's ~60 s offload cap).
+        case runCap
     }
 
     /// Why the offload is not running.
@@ -62,6 +71,9 @@ public struct OffloadStateMachine {
         case quietElapsed
         /// The caller declared the end of data. [Unverified] signal source.
         case drainCompleted
+        /// The run cap (`runCap` seconds since the drain started) passed. The driver fires this
+        /// when its wake-up at the run-cap deadline runs.
+        case runCapElapsed
     }
 
     /// One thing the driver should do.
@@ -78,6 +90,9 @@ public struct OffloadStateMachine {
     /// When the drain should be declared quiet. Nil while idle or stopped. The driver schedules a
     /// wake-up at this instant and fires `.quietElapsed`.
     public private(set) var quietDeadline: Date?
+    /// When the drain hits the `runCap` bound. Set when the drain starts, nil while idle or
+    /// stopped. The driver schedules a wake-up at this instant and fires `.runCapElapsed`.
+    public private(set) var runCapDeadline: Date?
     /// Records seen in the current (or last) drain.
     public private(set) var recordCount = 0
     /// Token of the most recent metadata, echoed exactly once.
@@ -96,6 +111,7 @@ public struct OffloadStateMachine {
             recordCount = 0
             lastToken = nil
             quietDeadline = nil
+            runCapDeadline = clock.now().addingTimeInterval(Self.runCap)
             phase = .draining
             return [.sendHistoricalData]
 
@@ -132,6 +148,15 @@ public struct OffloadStateMachine {
             else { return [] }
             return finish(.quietTimeout)
 
+        case .runCapElapsed:
+            // Same staleness shape as `.quietElapsed`: only a fire parked on this drain's cap
+            // stops it.
+            guard phase == .draining,
+                  let deadline = runCapDeadline,
+                  clock.now() >= deadline
+            else { return [] }
+            return finish(.runCap)
+
         case .linkDropped:
             guard phase == .draining else { return [] }
             return finish(.linkDropped)
@@ -145,6 +170,7 @@ public struct OffloadStateMachine {
     private mutating func finish(_ reason: StopReason) -> [Effect] {
         phase = .stopped(reason)
         quietDeadline = nil
+        runCapDeadline = nil
         return [.stop(reason)]
     }
 }
