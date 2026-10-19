@@ -121,14 +121,14 @@ public final class BandLogCapture: @unchecked Sendable {
         let rotated = url.deletingLastPathComponent()
             .appendingPathComponent("\(url.deletingPathExtension().lastPathComponent)_\(stamp).txt")
         try? manager.moveItem(atPath: url.path, toPath: rotated.path)
-        // Keep the newest few rotations; this is a debug aid, not a data store. The stamp is
-        // sortable, so name order is age order.
+        // Keep the newest rotations; this is a debug aid, but the OVERNIGHT session log is the one
+        // that answers the banked-while-disconnected question, so keep a full day's worth.
         let prefix = "\(url.deletingPathExtension().lastPathComponent)_"
         let siblings = (try? manager.contentsOfDirectory(atPath: url.deletingLastPathComponent().path)) ?? []
         let rotations = siblings
             .filter { $0.hasPrefix(prefix) && $0.hasSuffix(".txt") }
             .sorted(by: >)
-        for stale in rotations.dropFirst(5) {
+        for stale in rotations.dropFirst(24) {
             try? manager.removeItem(atPath: url.deletingLastPathComponent().appendingPathComponent(stale).path)
         }
     }
