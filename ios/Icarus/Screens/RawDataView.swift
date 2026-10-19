@@ -25,6 +25,22 @@ struct RawDataView: View {
             frameStream
         }
         .navigationTitle("Raw band data")
+        // The 0x2B flood is off after every Tier B handshake, so this viewer asks for it while it
+        // is open. `.task(id:)` runs on appear and again whenever Tier B moves — including to
+        // `.ready` after a handshake, which re-asserts the flood on the new link. `.onDisappear`
+        // turns it off, so the ~1.9 KB/s stream never runs unseen (PLAN.md 7.2 step 4). A viewer
+        // open while the band channel is off does nothing: the flood needs the channel.
+        .task(id: liveState.tierBState) {
+            guard liveState.tierBState == .ready else { return }
+            await liveState.setRealtimeRawFlood(true)
+        }
+        .onAppear {
+            guard liveState.tierBState == .ready else { return }
+            Task { await liveState.setRealtimeRawFlood(true) }
+        }
+        .onDisappear {
+            Task { await liveState.setRealtimeRawFlood(false) }
+        }
     }
 
     // MARK: Live values

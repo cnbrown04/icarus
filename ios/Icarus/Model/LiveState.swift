@@ -34,6 +34,10 @@ final class LiveState {
     /// Called on the main actor when a history offload drain completes. The records are NOT stored
     /// here — the consumer owns their persistence (PLAN.md 5.3.4).
     @ObservationIgnored var onHistoricalRecords: (@MainActor ([HistoricalRecord]) -> Void)?
+    /// Set by `AlarmCoordinator` for the opportunistic alarm pull (PLAN.md 9.3). Called on the main
+    /// actor at every band wake-up: the link entering streaming, and every realtime heart-rate
+    /// notification. The consumer throttles itself.
+    @ObservationIgnored var onLinkAlive: (@MainActor () -> Void)?
     /// The last record of the most recent history drain, for the raw-data viewer. Not persisted.
     private(set) var lastHistoricalRecord: HistoricalRecord?
     private(set) var lastDataAt: Date?
@@ -178,14 +182,35 @@ final class LiveState {
         await transport.armBandAlarm(at: at)
     }
 
+    /// Turns the REALTIME_RAW_DATA (0x2B) flood on or off, for the raw-data viewer. The viewer
+    /// enables it while open and disables it on disappear, so the flood never runs unseen. A
+    /// transport without flood control (fixture, synthetic, or a BandKit without the Tier B call
+    /// yet) logs and does nothing.
+    func setRealtimeRawFlood(_ enabled: Bool) async {
+        guard let flood = transport as? any RealtimeRawFloodTransport else {
+            BandLog.tierB(.info, "app: raw flood \(enabled ? "on" : "off") skipped: transport has no flood control")
+            return
+        }
+        do {
+            try await flood.setRealtimeRawFlood(enabled: enabled)
+            BandLog.tierB(.info, "app: raw flood \(enabled ? "on" : "off")")
+        } catch {
+            BandLog.tierB(.error, "app: raw flood \(enabled ? "on" : "off") failed: \(String(describing: error))")
+        }
+    }
+
     private func apply(_ event: BandEvent) {
         switch event {
         case let .state(newState):
+            let wasStreaming = state == .streaming
             if newState != state {
                 // Leaving streaming (disconnect, backoff) is a flush point (PLAN.md 7.2).
                 ingest?.yield(.flush)
             }
             state = newState
+            if newState == .streaming, !wasStreaming {
+                onLinkAlive?()
+            }
         case let .discovered(band):
             upsert(band)
         case let .remembered(id):
@@ -208,6 +233,7 @@ final class LiveState {
                     rrMs: measurement.rrIntervalsMs
                 )))
             }
+            onLinkAlive?()
         case let .battery(percent):
             batteryPercent = percent
         case let .tierB(newState):

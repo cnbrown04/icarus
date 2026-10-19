@@ -1,3 +1,4 @@
+import BandKit
 import Foundation
 
 /// The Experimental band channel switch (PLAN.md 6.2, 19 Phase 6). Off by default. The stored value is the only thing
@@ -13,3 +14,18 @@ enum BandChannel {
         UserDefaults.standard.set(enabled, forKey: storageKey)
     }
 }
+
+/// A transport whose Tier B controller can toggle the REALTIME_RAW_DATA (0x2B) flood, so the
+/// raw-data viewer can show "2B raw" rows. The intended implementation is BandKit's
+/// `TierBController.setRealtimeRawFlood(enabled:)`, reached through the transport. Declared in the
+/// app because BandKit does not know the viewer: the viewer feature-detects with an `as?`, so a
+/// transport without the capability (or before BandKit's call site lands) is a logged no-op, not a
+/// build break.
+protocol RealtimeRawFloodTransport: BandTransport {
+    func setRealtimeRawFlood(enabled: Bool) async throws
+}
+
+// The transport-level bridge lives in BandKit (`CoreBluetoothTransport.setRealtimeRawFlood`),
+// which delegates to `TierBController.setRealtimeRawFlood(enabled:)`. With this conformance the
+// `as?` in `LiveState.setRealtimeRawFlood` matches and RawDataView's flood wiring is live.
+extension CoreBluetoothTransport: RealtimeRawFloodTransport {}
