@@ -98,7 +98,7 @@ final class AppEnvironment {
             // One-time junk cleanup: launch with `-purge-junk-records` to delete the garbage
             // `historical_record` rows an old buggy parser wrote (see `purgeJunkRecords`).
             if ProcessInfo.processInfo.arguments.contains("purge-junk-records") {
-                purgeJunkRecords(in: file)
+                Task { await purgeJunkRecords(in: file, nowMs: clock.nowMs) }
             }
             #endif
             return AppEnvironment(
@@ -203,7 +203,7 @@ final class AppEnvironment {
         let toMs = samples.map(\.tsMs).max() ?? 0
         do {
             try await database.writer.write { db in
-                try db.insertHistoricalSamples(samples)
+                let inserted = try db.insertHistoricalSamples(samples)
                 guard let bandID = try String.fetchOne(
                     db, sql: "SELECT id FROM band WHERE peripheral_uuid = ?",
                     arguments: [bandUUID.uuidString]
@@ -211,11 +211,29 @@ final class AppEnvironment {
                     BandLog.tierB(.error, "app: no band row for \(bandUUID.uuidString); records dropped")
                     return
                 }
+                // Derivation runs over the band's WHOLE stored span, never the batch alone: the
+                // batch (or its ±margin) is a sliding window, so a long night would derive as a
+                // ~30-min clipped session whose start slides one key per batch, spamming
+                // sleep_session with a new row per flush instead of replacing one. With the full
+                // span, session start_ms keys are stable and ON CONFLICT replaces cleanly. Skipped
+                // entirely when the insert added nothing (replayed/duplicate batches).
+                guard inserted > 0 else {
+                    BandLog.tierB(.info, "app: batch deduped to 0 new rows; derivation skipped")
+                    return
+                }
                 let zone = try db.profile()?.timeZone ?? Dashboard.fallbackZone
+                let spanMin = try Int64.fetchOne(
+                    db, sql: "SELECT MIN(ts_ms) FROM historical_record WHERE band_id = ?",
+                    arguments: [bandID]
+                ) ?? fromMs
+                let spanMax = try Int64.fetchOne(
+                    db, sql: "SELECT MAX(ts_ms) FROM historical_record WHERE band_id = ?",
+                    arguments: [bandID]
+                ) ?? toMs
                 // Half-open to the millisecond past the last record, so it is included (PLAN.md 10.1).
                 try db.deriveSleepSessions(
-                    from: fromMs,
-                    to: toMs + 1,
+                    from: min(spanMin, fromMs),
+                    to: max(spanMax, toMs) + 1,
                     bandID: bandID,
                     in: zone,
                     computedAtMs: computedAtMs
@@ -368,22 +386,51 @@ final class AppEnvironment {
     /// Records older than this ts_ms (2026-01-01) predate anything the band can produce: the strap's
     /// banked history starts in June 2026 (stale-RTC era) and its store reaches back only days. The
     /// garbage rows were written in 2010–2014 by an old buggy parser.
-    private static let junkRecordCutoffMs: Int64 = 1_767_225_600_000
+    private nonisolated static let junkRecordCutoffMs: Int64 = 1_767_225_600_000
 
-    /// One-time cleanup of the 8 garbage `historical_record` rows from the old buggy parser:
-    /// launched with `-purge-junk-records`, it deletes every row with ts_ms before 2026-01-01 and
-    /// logs the count. Without the launch argument it does nothing, and once the rows are gone
-    /// running it again deletes nothing.
-    private static func purgeJunkRecords(in database: AppDatabase) {
+    /// One-time cleanup of the 8 garbage `historical_record` rows from the old buggy parser, and
+    /// of the `sleep_session` spam the sliding per-batch derivation window wrote (each flush
+    /// re-derived a ~30-min clipped session with a new start key): launched with
+    /// `-purge-junk-records`, it deletes every historical row with ts_ms before 2026-01-01, all
+    /// sleep_session rows, and logs the counts. Without the launch argument it does nothing. The
+    /// next stored batch re-derives the sessions over the full span.
+    private static func purgeJunkRecords(in database: AppDatabase, nowMs: Int64) async {
         do {
-            let deleted = try database.writer.write { db in
+            let counts = try await database.writer.write { db -> (junk: Int, sessions: Int, rederived: Int) in
                 try db.execute(
                     sql: "DELETE FROM historical_record WHERE ts_ms < ?",
                     arguments: [junkRecordCutoffMs]
                 )
-                return db.changesCount
+                let junk = db.changesCount
+                try db.execute(sql: "DELETE FROM sleep_session")
+                let sessions = db.changesCount
+                // Re-derive over each band's whole stored span right away, so correct sessions
+                // replace what was deleted instead of waiting for the next drain.
+                var rederived = 0
+                let zone = try db.profile()?.timeZone ?? Dashboard.fallbackZone
+                let bands = try String.fetchAll(db, sql: "SELECT id FROM band")
+                for bandID in bands {
+                    guard
+                        let spanMin = try Int64.fetchOne(
+                            db, sql: "SELECT MIN(ts_ms) FROM historical_record WHERE band_id = ?",
+                            arguments: [bandID]
+                        ),
+                        let spanMax = try Int64.fetchOne(
+                            db, sql: "SELECT MAX(ts_ms) FROM historical_record WHERE band_id = ?",
+                            arguments: [bandID]
+                        )
+                    else { continue }
+                    rederived += try db.deriveSleepSessions(
+                        from: spanMin,
+                        to: spanMax + 1,
+                        bandID: bandID,
+                        in: zone,
+                        computedAtMs: nowMs
+                    )
+                }
+                return (junk, sessions, rederived)
             }
-            BandLog.tierB(.info, "purge-junk-records: deleted \(deleted) junk row(s)")
+            BandLog.tierB(.info, "purge-junk-records: deleted \(counts.junk) junk record(s), \(counts.sessions) sleep_session row(s); re-derived \(counts.rederived) session(s)")
         } catch {
             BandLog.tierB(.error, "purge-junk-records failed: \(String(describing: error))")
         }
