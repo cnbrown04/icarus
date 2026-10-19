@@ -96,15 +96,40 @@ public final class BandLogCapture: @unchecked Sendable {
 
     private init() {}
 
-    /// Starts capturing to `url`, truncating it so one launch equals one file. No-op without a call.
+    /// Starts capturing to `url`. The previous capture is rotated to a timestamped sibling (keeping
+    /// the newest few), so an app restart overnight or the next morning still leaves every session's
+    /// log on disk for a computer to pull. No-op without a call.
     func start(at url: URL) {
         lock.lock()
         defer { lock.unlock() }
         guard handle == nil else { return }
+        Self.rotate(url)
         FileManager.default.createFile(atPath: url.path, contents: nil)
         handle = FileHandle(forWritingAtPath: url.path)
         if handle == nil {
             record("capture", "E", "could not open \(url.path)")
+        }
+    }
+
+    /// Renames an existing non-empty capture to `band_log_<stamp>.txt` and prunes old rotations.
+    private static func rotate(_ url: URL) {
+        let manager = FileManager.default
+        guard let attributes = try? manager.attributesOfItem(atPath: url.path),
+              let size = attributes[.size] as? Int, size > 0
+        else { return }
+        let stamp = DateFormatter.logStamp.string(from: Date()).replacingOccurrences(of: ":", with: "-").replacingOccurrences(of: " ", with: "_")
+        let rotated = url.deletingLastPathComponent()
+            .appendingPathComponent("\(url.deletingPathExtension().lastPathComponent)_\(stamp).txt")
+        try? manager.moveItem(atPath: url.path, toPath: rotated.path)
+        // Keep the newest few rotations; this is a debug aid, not a data store. The stamp is
+        // sortable, so name order is age order.
+        let prefix = "\(url.deletingPathExtension().lastPathComponent)_"
+        let siblings = (try? manager.contentsOfDirectory(atPath: url.deletingLastPathComponent().path)) ?? []
+        let rotations = siblings
+            .filter { $0.hasPrefix(prefix) && $0.hasSuffix(".txt") }
+            .sorted(by: >)
+        for stale in rotations.dropFirst(5) {
+            try? manager.removeItem(atPath: url.deletingLastPathComponent().appendingPathComponent(stale).path)
         }
     }
 
