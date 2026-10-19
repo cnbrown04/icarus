@@ -19,6 +19,13 @@ if [ $# -gt 0 ]; then PACKAGES=("$@"); else PACKAGES=("${ALL[@]}"); fi
 TIMEOUT_SECS=${TEST_TIMEOUT:-600}
 FAILED=0
 
+# Sweep orphans from previously aborted/killed runs FIRST: swift test spawns children
+# (swift-build, swift-frontend, swiftpm-testing-helper); killing only the parent orphans them
+# and every later run then stalls against the wedged helper holding the old test bundle.
+pkill -f "icarus/ios/Packages" 2>/dev/null
+pkill -f "swiftpm-testing-helper" 2>/dev/null
+sleep 1
+
 for PKG in "${PACKAGES[@]}"; do
   DIR="$PACKAGES_DIR/$PKG"
   [ -d "$DIR" ] || { echo "skip $PKG (no package)"; continue; }
@@ -33,11 +40,14 @@ for PKG in "${PACKAGES[@]}"; do
   done
   if [ $DONE -eq 0 ]; then
     kill -9 $PID 2>/dev/null
-    # A killed run leaves a stale test-helper holding the old bundle + a corrupt module cache
-    # that stalls the next run — recover both now.
-    pkill -f swiftpm-testing-helper 2>/dev/null
+    # Kill the whole tree, not just the parent: SwiftPM's children (swift-build, swift-frontend,
+    # swiftpm-testing-helper) survive a parent kill and wedge every later run. Any process whose
+    # command line references this package's path is ours; the helper's bundle path matches too.
+    pkill -9 -f "Packages/$PKG" 2>/dev/null
+    pkill -f "swiftpm-testing-helper" 2>/dev/null
+    # A killed run also leaves a corrupt module cache that stalls the next run — recover both.
     rm -rf "$DIR/.build"
-    echo "TIMEOUT after ${TIMEOUT_SECS}s (stalled; .build cleared for a clean retry)"
+    echo "TIMEOUT after ${TIMEOUT_SECS}s (stalled; process tree + .build cleared for a clean retry)"
     FAILED=1
   else
     RESULT=$(grep -E 'Test run with .* (passed|failed)' "$LOG" | tail -1 | sed 's/^✔ /PASS /; s/^✘ /FAIL /')
