@@ -17,7 +17,7 @@ struct TierBControllerTests {
         // The handshake writes SET_CLOCK in BOTH forms (8-byte and legacy 9-byte: which one a given
         // firmware latches is firmware-specific), then hello, clock, the realtime-raw disable
         // range, battery, realtime, drain.
-        #expect(h.band.opcodes == [10, 10, 35, 11, 34, 26, 3, 22])
+        #expect(h.band.opcodes == [35, 11, 10, 10, 11, 34, 26, 3, 22])
         #expect(h.band.opcodes.filter { $0 == 10 }.count == 2, "both SET_CLOCK forms per connection")
         #expect(await h.controller.state == .ready)
         #expect(h.events.all.contains(.battery(87)))
@@ -30,21 +30,20 @@ struct TierBControllerTests {
         await h.controller.connectionClosed()
         #expect(await h.controller.state == .awaitingLink)
         await h.controller.connectionOpened()
-        #expect(h.band.opcodes == [10, 10, 35, 11, 34, 26, 3, 22, 10, 10, 35, 11, 34, 3, 22])
+        #expect(h.band.opcodes == [35, 11, 10, 10, 11, 34, 26, 3, 22, 35, 11, 10, 10, 11, 34, 3, 22])
     }
 
     @Test func aSilentBandFailsTheHandshakeAfterRetriesAndStaysUnavailable() async {
         let h = Harness(responder: nil)
         let opening = Task { await h.controller.connectionOpened() }
         for attempt in 1 ... 4 {
-            // +2: the two SET_CLOCK writes precede the retried GET_HELLO.
-            await settle { h.band.count >= attempt + 2 }
+            await settle { h.band.count >= attempt }
             await settle { h.clock.sleeperCount == 1 }
             h.clock.advance(by: TierBController.responseTimeout)
         }
         await opening.value
         #expect(await h.controller.state == .unavailable)
-        #expect(h.band.opcodes == [10, 10, 35, 35, 35, 35])
+        #expect(h.band.opcodes == [35, 35, 35, 35], "GET_HELLO now leads the handshake")
         #expect(!h.events.all.contains(.tierB(.ready)))
 
         // A dropped link does not clear unavailable. Only a new connection tries again.
@@ -61,16 +60,16 @@ struct TierBControllerTests {
 
         let first = Task { try await h.controller.send(.getAlarmTime()) }
         let second = Task { try await h.controller.send(.getDataRange()) }
-        await settle { h.band.count == 9 }
+        await settle { h.band.count == 10 }
         await flush()
-        #expect(h.band.count == 9, "the second command must wait for the first reply")
+        #expect(h.band.count == 10, "the second command must wait for the first reply")
         #expect(h.band.last?.cmd == 67)
 
         await h.controller.receive(reply(to: h.band.last!))
         let firstReply = try await first.value
         #expect(firstReply.cmd == 67)
 
-        await settle { h.band.count == 10 }
+        await settle { h.band.count == 11 }
         #expect(h.band.last?.cmd == 34)
         await h.controller.receive(reply(to: h.band.last!))
         _ = try await second.value
@@ -225,7 +224,7 @@ struct TierBControllerTests {
         #expect(await h.controller.state == .awaitingLink)
         #expect(h.band.count == 0)
         await h.controller.connectionOpened()
-        #expect(h.band.opcodes == [10, 10, 35, 11, 34, 26, 3, 22])
+        #expect(h.band.opcodes == [35, 11, 10, 10, 11, 34, 26, 3, 22])
     }
 
     /// The Device checkbox becomes the way to retry from the red triangle: enabling while
@@ -329,7 +328,7 @@ struct TierBControllerTests {
         await h.controller.armAlarms([h.clock.now().addingTimeInterval(300)])
         #expect(h.band.count == 0)
         await h.controller.connectionOpened()
-        #expect(h.band.opcodes == [10, 10, 35, 11, 34, alarmOpcode, batteryOpcode, 3, 22])
+        #expect(h.band.opcodes == [35, 11, 10, 10, 11, 34, alarmOpcode, batteryOpcode, 3, 22])
     }
 
     @Test func alarmTimesOutsideTheUInt32RangeAreNotSent() async {

@@ -167,41 +167,43 @@ public actor TierBController {
         guard enabled, !handshakeStarted else { return }
         handshakeStarted = true
         setState(.handshaking)
-        // SET_CLOCK (cmd 10) first, as a confirmed write with no reply awaited (PLAN.md 5.3.4): a
-        // wrong-length SET_CLOCK is ACKed but not latched per community findings, and some firmware
-        // never replies, so the write's GATT ack is the only confirmation. WHOOP 4 fw 41.17.x latches
-        // ONLY the legacy 9-byte form (the 8-byte body is ignored outright and the RTC stays lost,
-        // which stops the strap from banking history); newer firmware wants the 8-byte form — so both
-        // go out with the same seconds (NOOP, hardware-verified; double-latching is harmless).
-        // GET_HELLO mirrors the official app's per-link hello (NOOP, verified); GET_CLOCK reads the
-        // RTC back (its reply confirms the link); SEND_R10_R11_REALTIME [0x00] then kills the
-        // strap's realtime-raw flood (PLAN.md 7.2 step 4), whose ~1.9 KB/s of raw accel/PPG would
-        // otherwise steal BLE throughput from the ack-driven history drain; GET_DATA_RANGE
-        // confirms the record range.
-        var step = "SET_CLOCK"
+        // Handshake order follows OpenStrap's verified session init (hello first) plus the clock
+        // sequence, instrumented to answer THE banking question: NOOP found unclocked straps bank
+        // no sensor history, and this strap banked only while connected overnight (2026-10-18/19).
+        // So GET_CLOCK runs BEFORE any SET_CLOCK and logs the RTC as the strap itself reports it:
+        // ≈ wall clock = the RTC persisted across the disconnected period; an uptime-like counter
+        // = the clock resets when idle, which would explain the missing overnight records.
+        var step = "GET_HELLO"
         var helloReply: Frame?
         do {
+            func logRTC(_ reply: Frame, phase: String) {
+                let p = reply.payload
+                guard p.count >= 6 else { return }
+                let rtc = UInt32(p[2]) | (UInt32(p[3]) << 8) | (UInt32(p[4]) << 16) | (UInt32(p[5]) << 24)
+                BandLog.tierB(.info, "strap RTC \(phase): \(rtc)")
+            }
+
+            let hello = try await send(BandCommand.getHello())
+            helloReply = hello
+            step = "GET_CLOCK"
+            logRTC(try await send(BandCommand.getClock()), phase: "before SET_CLOCK")
+            // SET_CLOCK (cmd 10), confirmed writes with no reply awaited (PLAN.md 5.3.4): a
+            // wrong-length SET_CLOCK is ACKed but not latched per community findings, and some
+            // firmware never replies, so the write's GATT ack is the only confirmation. WHOOP 4
+            // fw 41.17.x latches ONLY the legacy 9-byte form (the 8-byte body is ignored outright
+            // and the RTC stays lost, which stops the strap from banking history); newer firmware
+            // wants the 8-byte form — so both go out with the same seconds (NOOP,
+            // hardware-verified; double-latching is harmless).
             let unix = clock.now().timeIntervalSince1970.rounded(.down)
             if let unix = UInt32(exactly: unix) {
+                step = "SET_CLOCK"
                 try await writeConfirmedWithoutReply(.setClock(unix: unix))
                 try await writeConfirmedWithoutReply(.setClockLegacy(unix: unix))
             } else {
                 BandLog.tierB(.info, "SET_CLOCK skipped: the wall clock is outside the u32 range")
             }
-            for command in [BandCommand.getHello(), BandCommand.getClock()] {
-                step = "\(command.command)"
-                let reply = try await send(command)
-                if command.command == .getHello {
-                    helloReply = reply
-                }
-                if command.command == .getClock, reply.payload.count >= 6 {
-                    // Reply: [resp_seq][result][u32 clock …]. Logged so the capture shows whether a
-                    // SET_CLOCK form actually latched (a latched RTC reads back ≈ the seconds sent).
-                    let p = reply.payload
-                    let rtc = UInt32(p[2]) | (UInt32(p[3]) << 8) | (UInt32(p[4]) << 16) | (UInt32(p[5]) << 24)
-                    BandLog.tierB(.info, "strap RTC reads back \(rtc) (SET_CLOCK sent \(unix))")
-                }
-            }
+            step = "GET_CLOCK"
+            logRTC(try await send(BandCommand.getClock()), phase: "after SET_CLOCK (sent \(unix))")
             // Disable the realtime-raw flood only when opted in (see the property's doc): OpenStrap
             // never sends it and the off form is unverified. Fire-and-forget confirmed write like
             // SET_CLOCK, so the handshake never hangs on a cmd-63 reply the firmware may not send.
