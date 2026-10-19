@@ -356,12 +356,17 @@ public actor TierBController {
         } else {
             BandLog.tierB(.info, "data range: no plausible timestamps decoded, \(pages.map { "\($0) pages behind" } ?? "backlog unreadable")")
         }
-        // The corruption check uses the any-scan: a corrupt future-dated newest is excluded from
-        // `newestUnix`'s preferred result, which lets a plausible straddle word mask it.
-        let newestAny = DataRange.newestAnyUnix(from: payload)
-        if BackfillPolicy.isFutureDatedNewest(newestAny ?? newest, wallNowUnix: wallNow), let newestAny {
+        // The corruption check uses NOOP's `newestUnix` semantics exactly: it prefers the newest
+        // word that is NOT implausibly future, so a healthy strap's real (past) newest dominates
+        // any garbage/straddle words near the window ceiling. A genuinely future-dated strap
+        // (whose whole bank is future-dated) has no not-future word, so the any-scan fallback
+        // inside `newestUnix` surfaces the future word and the guard fires (NOOP #928/#1012).
+        // Checking the any-scan directly instead would latch `clockUntrusted` on HEALTHY straps
+        // whenever a reply carries a garbage word under the ceiling (observed live 2026-10-19:
+        // 26001h "ahead", pausing every automatic drain for the whole connection).
+        if BackfillPolicy.isFutureDatedNewest(newest, wallNowUnix: wallNow), let newest {
             if !clockUntrusted {
-                BandLog.tierB(.info, "data range: \(BackfillDiagnostics.futureDatedNewestLine(newest: newestAny, wallNowUnix: wallNow))")
+                BandLog.tierB(.info, "data range: \(BackfillDiagnostics.futureDatedNewestLine(newest: newest, wallNowUnix: wallNow))")
             }
             clockUntrusted = true
         }

@@ -35,26 +35,6 @@ public enum DataRange {
         return newestNotFuture ?? newestAny
     }
 
-    /// The newest plausible unix word regardless of the future cutoff — NOOP's scan without the
-    /// "prefer not-future" preference. The corruption check (`isFutureDatedNewest`) must use THIS:
-    /// with `newestUnix`, a corrupt future-dated newest word is excluded from the preferred
-    /// result, and a straddle word (record bytes under the CRC tail) can land in the plausible
-    /// window under the cutoff and mask the corruption entirely.
-    public static func newestAnyUnix(from frame: [UInt8]) -> Int? {
-        guard frame.count >= 4 else { return nil }
-        var newestAny: Int? = nil
-        var i = 0
-        while i + 4 <= frame.count {
-            let w = Int(frame[i]) | Int(frame[i + 1]) << 8 | Int(frame[i + 2]) << 16 | Int(frame[i + 3]) << 24
-            if w >= 1_700_000_000 && w <= 1_900_000_000 { newestAny = max(newestAny ?? 0, w) }
-            i += 1
-        }
-        return newestAny
-    }
-
-    /// The OLDEST plausible unix time banked by the strap (start of stored history), from a
-    /// GET_DATA_RANGE frame — the low end of the banked span (oldest…newest = the backlog DEPTH a
-    /// deep oldest-first drain must cover before recent nights land).
     ///
     /// Unlike `newestUnix`, this scans ONLY the 4-byte grid aligned from offset 7, NOT every
     /// offset — and that asymmetry is DELIBERATE. The minimum is fragile in a way the maximum is
