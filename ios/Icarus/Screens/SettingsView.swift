@@ -12,8 +12,61 @@ struct SettingsView: View {
     @State private var confirmsUnpair = false
     @StateObject private var units = UnitPreferences()
 
+    /// Retention windows, stored under the keys `RetentionPolicy` reads at purge time. The picker
+    /// selection is clamped on read so a stored out-of-range value still shows and gets replaced
+    /// with a valid one on the next change.
+    @AppStorage(RetentionPolicy.rawDaysKey) private var rawDaysStored = Int(RetentionPolicy.rawDaysDefault)
+    @AppStorage(RetentionPolicy.minuteDaysKey) private var minuteDaysStored = Int(RetentionPolicy.minuteDaysDefault)
+
     /// Five taps on the version row opens the hidden Debug screen (PLAN.md §14 row 18).
     private static let debugTapCount = 5
+
+    private struct RetentionChoice: Identifiable, Hashable {
+        let days: Int
+        let label: String
+        var id: Int { days }
+    }
+
+    /// Covers the whole configurable raw range (PLAN.md 10.2: 30 days by default, 1–90 here).
+    private static let rawRetentionChoices: [RetentionChoice] = [
+        .init(days: 1, label: "1 day"),
+        .init(days: 3, label: "3 days"),
+        .init(days: 7, label: "1 week"),
+        .init(days: 14, label: "2 weeks"),
+        .init(days: 30, label: "1 month"),
+        .init(days: 60, label: "2 months"),
+        .init(days: 90, label: "3 months"),
+    ]
+
+    /// Covers the whole configurable minute range (PLAN.md 10.2: 400 days by default, 7–730 here).
+    private static let minuteRetentionChoices: [RetentionChoice] = [
+        .init(days: 7, label: "1 week"),
+        .init(days: 14, label: "2 weeks"),
+        .init(days: 30, label: "1 month"),
+        .init(days: 90, label: "3 months"),
+        .init(days: 180, label: "6 months"),
+        .init(days: 365, label: "1 year"),
+        .init(days: Int(RetentionPolicy.minuteDaysDefault), label: "Default (400 days)"),
+        .init(days: 730, label: "2 years"),
+    ]
+
+    private var rawRetention: Binding<Int> {
+        Binding(
+            get: { Self.clamp(rawDaysStored, to: RetentionPolicy.rawDaysBounds) },
+            set: { rawDaysStored = $0 }
+        )
+    }
+
+    private var minuteRetention: Binding<Int> {
+        Binding(
+            get: { Self.clamp(minuteDaysStored, to: RetentionPolicy.minuteDaysBounds) },
+            set: { minuteDaysStored = $0 }
+        )
+    }
+
+    private static func clamp(_ value: Int, to bounds: ClosedRange<Int64>) -> Int {
+        min(max(value, Int(bounds.lowerBound)), Int(bounds.upperBound))
+    }
 
     var body: some View {
         Form {
@@ -85,9 +138,23 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Data") {
-                LabeledContent("Raw heart rate kept", value: "\(RetentionPolicy.rawDays) days")
-                LabeledContent("Minute metrics kept", value: "\(RetentionPolicy.minuteDays) days")
+            Section {
+                Picker("Raw heart rate kept", selection: rawRetention) {
+                    ForEach(Self.rawRetentionChoices) { choice in
+                        Text(choice.label).tag(choice.days)
+                    }
+                }
+                .pickerStyle(.menu)
+                Picker("Minute metrics kept", selection: minuteRetention) {
+                    ForEach(Self.minuteRetentionChoices) { choice in
+                        Text(choice.label).tag(choice.days)
+                    }
+                }
+                .pickerStyle(.menu)
+            } header: {
+                Text("Storage")
+            } footer: {
+                Text("Older rows are deleted on the nightly maintenance run. Purged data cannot be recovered; with sync on, the server keeps its own copy (raw samples 400 days, minute metrics indefinitely).")
             }
 
             Section("Advanced") {
