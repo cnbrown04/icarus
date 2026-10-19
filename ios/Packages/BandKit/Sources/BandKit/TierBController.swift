@@ -64,7 +64,9 @@ public actor TierBController {
     /// The live HR stream is re-armed this often while the link is ready (NOOP's keep-alive).
     public static let realtimeRearmInterval: TimeInterval = 30
     /// The history offload is restarted this often while the link is ready (NOOP's backfill cadence).
-    public static let historicalRedrainInterval: TimeInterval = 900
+    /// The BACKFILL POLICY floors (see `BackfillPolicy`) are the real gate; this constant survives as
+    /// the base periodic interval for callers that reference it.
+    public static let historicalRedrainInterval: TimeInterval = BackfillPolicy.periodicFloorSeconds
 
     private struct Job {
         let command: BandCommand
@@ -113,6 +115,25 @@ public actor TierBController {
     private var offloadWatchdog: Task<Void, Never>?
     /// The quiet deadline the watchdog is parked on, so a stale wake-up is ignored.
     private var offloadWatchdogDeadline: Date?
+    /// Sleeps until the active drain's run-cap deadline (~60 s, NOOP's offload cap: slices a deep
+    /// backlog so the link stays responsive to live HR), then fires `.runCapElapsed`.
+    private var offloadRunCapTask: Task<Void, Never>?
+    /// Wall time of the last kicked drain — the `BackfillPolicy` rate-limiter's `lastBackfillAt`.
+    private var lastBackfillAt: Date?
+    /// Consecutive completed drains that banked no records (the policy's empty-drain backoff
+    /// input). A drain that kept at least one record resets it. Exposed read-only for diagnostics.
+    public private(set) var emptyStreak = 0
+    /// The strap's clock is untrusted (future-dated history or range) — automatic drains skip
+    /// while true. Re-derived on every connection. Exposed read-only for diagnostics.
+    public private(set) var clockUntrusted = false
+    /// Records that passed the future gate this drain — the sentinel/summary tally.
+    private var drainKeptRecords = 0
+    /// Future-dated records dropped this drain (the record-timestamp gate tally).
+    private var drainDroppedFutureRecords = 0
+    /// Logged-once-per-drain flags for the two HISTORY_END diagnostics (NOOP logs each once per
+    /// session, never per chunk).
+    private var loggedNoCursorSentinel = false
+    private var loggedFutureEndRTC = false
     /// Whether the handshake also sends SEND_R10_R11_REALTIME (0x3F) `[0x00]` to stop the raw
     /// accel/PPG flood. Default **false**: OpenStrap's hardware-verified reference never disables
     /// the stream (OpenStrap PROTOCOL.md §2–3; their 0x3F is documented as the *enable* verb, with
@@ -163,47 +184,65 @@ public actor TierBController {
     public func connectionOpened() async {
         linkOpen = true
         armedAlarm = nil
+        // A fresh connection re-derives clock trust (the range/END checks below) and restarts the
+        // empty-drain backoff — a reconnect is a genuine new chance, and a policy streak must
+        // never starve a link that just came back.
+        clockUntrusted = false
+        emptyStreak = 0
         BandLog.tierB(.info, "link open; handshake begins")
         guard enabled, !handshakeStarted else { return }
         handshakeStarted = true
         setState(.handshaking)
-        // Handshake order follows OpenStrap's verified session init (hello first) plus the clock
-        // sequence, instrumented to answer THE banking question: NOOP found unclocked straps bank
+        // Handshake order: hello first (OpenStrap's verified session init), then the clock
+        // sequence — instrumented to answer THE banking question: NOOP found unclocked straps bank
         // no sensor history, and this strap banked only while connected overnight (2026-10-18/19).
-        // So GET_CLOCK runs BEFORE any SET_CLOCK and logs the RTC as the strap itself reports it:
+        // GET_CLOCK runs BEFORE any SET_CLOCK and logs the RTC as the strap itself reports it:
         // ≈ wall clock = the RTC persisted across the disconnected period; an uptime-like counter
-        // = the clock resets when idle, which would explain the missing overnight records.
+        // or a far-past value = the clock resets when idle, which would explain the missing
+        // overnight records. NOOP's ClockPolicy decides the SET_CLOCK.
         var step = "GET_HELLO"
         var helloReply: Frame?
         do {
-            func logRTC(_ reply: Frame, phase: String) {
-                let p = reply.payload
-                guard p.count >= 6 else { return }
-                let rtc = UInt32(p[2]) | (UInt32(p[3]) << 8) | (UInt32(p[4]) << 16) | (UInt32(p[5]) << 24)
-                BandLog.tierB(.info, "strap RTC \(phase): \(rtc)")
-            }
-
             let hello = try await send(BandCommand.getHello())
             helloReply = hello
+            // NOOP's RTC-persistence probe: read the strap's clock BEFORE any SET_CLOCK. The reply
+            // payload is [resp_seq, result, clock u32 LE] (bytes 2..6, little-endian).
             step = "GET_CLOCK"
-            logRTC(try await send(BandCommand.getClock()), phase: "before SET_CLOCK")
-            // SET_CLOCK (cmd 10), confirmed writes with no reply awaited (PLAN.md 5.3.4): a
-            // wrong-length SET_CLOCK is ACKed but not latched per community findings, and some
-            // firmware never replies, so the write's GATT ack is the only confirmation. WHOOP 4
-            // fw 41.17.x latches ONLY the legacy 9-byte form (the 8-byte body is ignored outright
-            // and the RTC stays lost, which stops the strap from banking history); newer firmware
-            // wants the 8-byte form — so both go out with the same seconds (NOOP,
-            // hardware-verified; double-latching is harmless).
-            let unix = clock.now().timeIntervalSince1970.rounded(.down)
-            if let unix = UInt32(exactly: unix) {
-                step = "SET_CLOCK"
-                try await writeConfirmedWithoutReply(.setClock(unix: unix))
-                try await writeConfirmedWithoutReply(.setClockLegacy(unix: unix))
+            let preClock = try await send(BandCommand.getClock())
+            let deviceClock = ClockPolicy.deviceClock(replyPayload: preClock.payload)
+            let wallNow = Int(clock.now().timeIntervalSince1970.rounded(.down))
+            if let deviceClock {
+                let drift = wallNow - deviceClock
+                BandLog.tierB(.info, "strap RTC before SET_CLOCK: \(deviceClock) (wall \(wallNow), drift \(drift)s)")
+                if ClockPolicy.shouldSetClock(deviceClock: deviceClock, wallNow: wallNow) {
+                    // SET_CLOCK (cmd 10), confirmed writes with no reply awaited (PLAN.md 5.3.4): a
+                    // wrong-length SET_CLOCK is ACKed but not latched per community findings, and some
+                    // firmware never replies, so the write's GATT ack is the only confirmation. WHOOP 4
+                    // fw 41.17.x latches ONLY the legacy 9-byte form (the 8-byte body is ignored outright
+                    // and the RTC stays lost, which stops the strap from banking history); newer firmware
+                    // wants the 8-byte form — so both go out with the same seconds (NOOP,
+                    // hardware-verified; double-latching is harmless).
+                    step = "SET_CLOCK"
+                    if let unix = UInt32(exactly: wallNow) {
+                        try await writeConfirmedWithoutReply(.setClock(unix: unix))
+                        try await writeConfirmedWithoutReply(.setClockLegacy(unix: unix))
+                        BandLog.tierB(.info, "clock drifted \(drift)s — SET_CLOCK sent (both forms, \(unix))")
+                    } else {
+                        BandLog.tierB(.info, "SET_CLOCK skipped: the wall clock is outside the u32 range")
+                    }
+                } else {
+                    BandLog.tierB(.info, "clock within threshold; not set")
+                }
             } else {
-                BandLog.tierB(.info, "SET_CLOCK skipped: the wall clock is outside the u32 range")
+                // NOOP never sets the clock without a decoded reading (its SET_CLOCK rides on the
+                // clockRef correlation landing). The next connection retries GET_CLOCK.
+                BandLog.tierB(.info, "GET_CLOCK reply carried no clock value — SET_CLOCK not sent this connection")
             }
-            step = "GET_CLOCK"
-            logRTC(try await send(BandCommand.getClock()), phase: "after SET_CLOCK (sent \(unix))")
+            // Post read-back (always): logs both values, so the strap log shows the before/after pair —
+            // the "before" reading is the RTC-persistence probe, the "after" one proves a set latched.
+            let postClock = try await send(BandCommand.getClock())
+            let postDeviceClock = ClockPolicy.deviceClock(replyPayload: postClock.payload)
+            BandLog.tierB(.info, "strap RTC after SET_CLOCK: \(postDeviceClock.map(String.init) ?? "unreadable") (before: \(deviceClock.map(String.init) ?? "unreadable"))")
             // Disable the realtime-raw flood only when opted in (see the property's doc): OpenStrap
             // never sends it and the off form is unverified. Fire-and-forget confirmed write like
             // SET_CLOCK, so the handshake never hangs on a cmd-63 reply the firmware may not send.
@@ -238,7 +277,7 @@ public actor TierBController {
         await refreshBattery()
         await rearmRealtime()
         startRealtime()
-        await startDrain()
+        await runDrain(.connect)
         startOffloadCadence()
     }
 
@@ -269,6 +308,62 @@ public actor TierBController {
         BandLog.tierB(.error, "link failed (enabled=\(enabled))")
         if enabled {
             setState(.unavailable)
+        }
+    }
+
+    // MARK: Sync triggers (NOOP's requestSync / syncNow)
+
+    /// The active drain's phase, for diagnostics and the app (a `.stopped` phase means the last
+    /// drain ended; `.draining` means one is running).
+    public var drainPhase: OffloadStateMachine.Phase { offload.phase }
+
+    /// The app-facing sync entry point: the foreground (scenePhase .active) and manual ("Sync
+    /// now") triggers are the app's to call. Both route through the same `BackfillPolicy` gate as
+    /// every other trigger — `.manual` is un-floored, `.foreground` keeps NOOP's 90-s event floor.
+    /// A no-op while the channel is off, the link is down, or a drain is already running.
+    public func syncNow(trigger: BackfillTrigger) async {
+        await runDrain(trigger)
+    }
+
+    // MARK: GET_DATA_RANGE (NOOP's #695 response processing)
+
+    /// Decodes a GET_DATA_RANGE COMMAND_RESPONSE with NOOP's hardware-verified `DataRange`
+    /// decoders and surfaces the range: the banked span (oldest…newest), the ring-buffer page
+    /// backlog, and the future-dated-newest check that marks the strap clock untrusted (which
+    /// pauses the automatic drains for this connection).
+    private func handleDataRangeReply(_ frame: Frame) {
+        // The timestamp decoders scan RAW frame bytes with the envelope's offsets: the oldest grid
+        // is aligned from raw offset 7 — which is exactly where the payload starts — so the scan
+        // domain is the payload itself, spliced out of the envelope. Feeding the FULL envelope
+        // instead also scans the header and CRC-32: an empty/unreadable reply then has ONLY those
+        // bytes to scan, and a header straddle word (0xAA + len `07 00` + crc8 `0x6B` →
+        // 0x6B0007AA ≈ 1050 h ahead of the wall clock) latches as a future-dated "newest" and
+        // wrongly marks a healthy strap's clock untrusted, pausing every automatic drain for the
+        // connection. The payload slice carries exactly the strap-reported words.
+        let raw = FrameCodec.reencode(frame)
+        let payload = frame.payload
+        let wallNow = Int(clock.now().timeIntervalSince1970)
+        let newest = DataRange.newestUnix(from: payload, wallNowUnix: wallNow,
+                                          futureSkewSeconds: BackfillPolicy.defaultFutureSkewSeconds)
+        let oldest = DataRange.oldestUnix(from: payload)
+        // pagesBehind's word offsets are anchored to the cmd byte's frame offset (6 on WHOOP 4.0),
+        // so it keeps scanning the full envelope; a too-short reply is nil ("backlog unreadable").
+        let pages = DataRange.pagesBehind(from: raw, cmdOff: 6) // WHOOP 4: the cmd byte sits at raw offset 6
+        if let oldest, let newest {
+            BandLog.tierB(.info, "data range: banked \(oldest)…\(newest) (\((newest - oldest) / 86_400) day(s)), \(pages.map { "\($0) pages behind" } ?? "backlog unreadable")")
+        } else if let newest {
+            BandLog.tierB(.info, "data range: newest \(newest), oldest unreadable, \(pages.map { "\($0) pages behind" } ?? "backlog unreadable")")
+        } else {
+            BandLog.tierB(.info, "data range: no plausible timestamps decoded, \(pages.map { "\($0) pages behind" } ?? "backlog unreadable")")
+        }
+        // The corruption check uses the any-scan: a corrupt future-dated newest is excluded from
+        // `newestUnix`'s preferred result, which lets a plausible straddle word mask it.
+        let newestAny = DataRange.newestAnyUnix(from: payload)
+        if BackfillPolicy.isFutureDatedNewest(newestAny ?? newest, wallNowUnix: wallNow), let newestAny {
+            if !clockUntrusted {
+                BandLog.tierB(.info, "data range: \(BackfillDiagnostics.futureDatedNewestLine(newest: newestAny, wallNowUnix: wallNow))")
+            }
+            clockUntrusted = true
         }
     }
 
@@ -317,29 +412,66 @@ public actor TierBController {
 
     // MARK: Historical offload (PLAN.md 5.3.4)
 
-    /// Starts one history drain: writes SEND_HISTORICAL_DATA (cmd 22) as a fire-and-forget
-    /// confirmed write and lets the strap stream its on-device history. A drain already running is
-    /// left alone — restarting it would drop the records collected so far without emitting them.
-    private func startDrain() async {
-        guard enabled, state == .ready, linkOpen else { return }
-        if case .draining = offload.phase { return }
-        BandLog.tierB(.info, "starting historical offload")
+    // MARK: Historical offload (PLAN.md 5.3.4, NOOP's backfill state machine)
+
+    /// Starts one history drain after the `BackfillPolicy` rate-limiter passes: the single gated
+    /// entry point for every kick (NOOP's `requestSync`). A drain already running is left alone —
+    /// restarting it would drop the records collected so far without emitting them. Returns false
+    /// when the gate or the policy denied the kick (logged, NOOP's "skipped (rate-limited)" line).
+    @discardableResult
+    private func runDrain(_ trigger: BackfillTrigger) async -> Bool {
+        guard enabled, state == .ready, linkOpen else { return false }
+        if case .draining = offload.phase { return false }
+        let now = clock.now()
+        guard BackfillPolicy.shouldRun(
+            trigger: trigger,
+            now: now.timeIntervalSince1970,
+            lastBackfillAt: lastBackfillAt?.timeIntervalSince1970,
+            emptyStreak: emptyStreak,
+            clockUntrusted: clockUntrusted)
+        else {
+            let last = lastBackfillAt.map { Int(now.timeIntervalSince($0)) } ?? -1
+            BandLog.tierB(.info, "drain \(trigger) skipped (rate-limited; last drain \(last)s ago, emptyStreak \(emptyStreak), clockUntrusted \(clockUntrusted))")
+            return false
+        }
+        BandLog.tierB(.info, "starting historical offload (\(trigger))")
+        lastBackfillAt = now
+        drainKeptRecords = 0
+        drainDroppedFutureRecords = 0
+        loggedNoCursorSentinel = false
+        loggedFutureEndRTC = false
         historicalRecords.removeAll()
         await runOffloadEffects(offload.start())
         scheduleQuietWatchdog()
+        scheduleRunCapWatchdog()
+        return true
     }
 
-    /// Restarts the offload every `historicalRedrainInterval` while the link is ready, mirroring
-    /// the realtime keep-alive's backfill cadence. Cancelled on toggle-off and link loss.
+    /// Re-kicks the offload on NOOP's `BackfillPolicy` cadence while the link is ready: the loop
+    /// sleeps until the earliest instant a `.periodic` trigger would pass the policy (15-min floor,
+    /// stretched by the empty-drain backoff), then routes through the same gated `runDrain` as
+    /// every other trigger. Cancelled on toggle-off and link loss.
     private func startOffloadCadence() {
         offloadCadenceTask?.cancel()
         let clock = clock
         offloadCadenceTask = Task {
             while !Task.isCancelled {
-                try? await clock.sleep(seconds: Self.historicalRedrainInterval)
-                await self.startDrain()
+                try? await clock.sleep(seconds: periodicCadenceDelay())
+                await self.runDrain(.periodic)
             }
         }
+    }
+
+    /// How long the periodic cadence should sleep before its next attempt: the time still owed on
+    /// the policy's periodic floor (multiplied out by the empty-drain backoff), at least 1 s so a
+    /// denied attempt can never busy-loop. While the strap clock is untrusted the policy denies
+    /// `.periodic` entirely, so the loop settles into a cheap re-check every minute.
+    private func periodicCadenceDelay() -> Double {
+        guard !clockUntrusted else { return 60 }
+        let now = clock.now().timeIntervalSince1970
+        guard let last = lastBackfillAt else { return 1 }
+        let floor = BackfillPolicy.periodicFloorSeconds * BackfillPolicy.backoffMultiplier(emptyStreak: emptyStreak)
+        return max(1, floor - (now - last.timeIntervalSince1970))
     }
 
     /// Feeds one reassembled frame into the offload handler and performs its effects. The handler
@@ -353,10 +485,48 @@ public actor TierBController {
         let record = try? HistoricalRecord.parse(frame)
         let effects = offload.handle(frame)
         if let record {
-            historicalRecords.append(record)
+            // Record-timestamp gate (NOOP's implausible-timestamp handling): a record whose own
+            // unix is implausibly far in the FUTURE is a corrupt-RTC strap — drop it BEFORE it can
+            // pollute the store, with a one-line log (the total is surfaced at drain end).
+            let wallNow = Int(clock.now().timeIntervalSince1970)
+            if BackfillDiagnostics.isCorruptFutureRtc(unix: Int(record.unixSeconds), wallNowUnix: wallNow) {
+                drainDroppedFutureRecords += 1
+                BandLog.tierB(.info, "history drain: \(BackfillDiagnostics.futureRecordDroppedLine(unix: Int(record.unixSeconds), wallNowUnix: wallNow))")
+                if !clockUntrusted {
+                    clockUntrusted = true
+                    BandLog.tierB(.info, "history drain: the strap's clock is untrusted — automatic re-drains pause until the next connection")
+                }
+            } else {
+                drainKeptRecords += 1
+                historicalRecords.append(record)
+            }
+        }
+        if frame.packetType == .metadata, frame.cmd == 2 {
+            noteEndMarker(frame)
         }
         await runOffloadEffects(effects)
         scheduleQuietWatchdog()
+    }
+
+    /// HISTORY_END diagnostics (NOOP's Backfiller, ported): the corrupt future-RTC guard on the
+    /// END's own timestamp, and the trim=0xFFFFFFFF "no valid flash cursor" sentinel — whose
+    /// meaning depends on whether this drain already kept rows. Each logs once per drain.
+    private func noteEndMarker(_ frame: Frame) {
+        let payload = frame.payload
+        let trim = HistoricalMetadata.trimCursor(fromPayload: payload)
+        let wallNow = Int(clock.now().timeIntervalSince1970)
+        // 0xFFFFFFFF is the sentinel, not a date — the future check skips it.
+        if let trim, trim != 0xFFFFFFFF, let endUnix = HistoricalMetadata.endUnix(fromPayload: payload),
+           BackfillDiagnostics.isCorruptFutureRtc(unix: Int(endUnix), wallNowUnix: wallNow),
+           !loggedFutureEndRTC {
+            loggedFutureEndRTC = true
+            clockUntrusted = true
+            BandLog.tierB(.info, "history drain: \(BackfillDiagnostics.futureRtcLine(unix: Int(endUnix), wallNowUnix: wallNow))")
+        }
+        if let trim, trim == 0xFFFFFFFF, !loggedNoCursorSentinel {
+            loggedNoCursorSentinel = true
+            BandLog.tierB(.info, "history drain: \(BackfillDiagnostics.noCursorLine(rowsKept: drainKeptRecords))")
+        }
     }
 
     /// Performs the effects a state-machine event produced: the cmd 22/23 writes are fire-and-
@@ -406,6 +576,25 @@ public actor TierBController {
         }
     }
 
+    /// Parks the run-cap watchdog on the drain's ~60 s bound (NOOP's offload cap: a deep backlog
+    /// drains in bounded slices so the link stays responsive to live HR). One park per drain.
+    private func scheduleRunCapWatchdog() {
+        offloadRunCapTask?.cancel()
+        guard case .draining = offload.phase, offload.runCapDeadline != nil else { return }
+        let clock = clock
+        offloadRunCapTask = Task {
+            try? await clock.sleep(seconds: OffloadStateMachine.runCap)
+            await self.runCapElapsed()
+        }
+    }
+
+    /// A run-cap wake-up. Stale ones (the drain already ended, or no cap is parked) are dropped —
+    /// the machine re-checks its own deadline too.
+    private func runCapElapsed() async {
+        guard case .draining = offload.phase else { return }
+        await runOffloadEffects(offload.runCapElapsed())
+    }
+
     /// A watchdog wake-up. Only the fire parked on the current deadline acts; a stale one,
     /// superseded by a pushed deadline or already finished, is dropped.
     private func quietWatchdogElapsed(_ deadline: Date) async {
@@ -422,7 +611,19 @@ public actor TierBController {
         offloadWatchdog?.cancel()
         offloadWatchdog = nil
         offloadWatchdogDeadline = nil
-        BandLog.tierB(.info, "historical offload ended (\(offload.phase)): \(offload.recordCount) record(s) total, \(historicalRecords.count) unflushed")
+        offloadRunCapTask?.cancel()
+        offloadRunCapTask = nil
+        // The BackfillPolicy empty-drain backoff input: a drain that banked nothing stretches the
+        // automatic floors; the first kept record resets the streak (NOOP's EmptySyncTracker /
+        // consecutiveEmptyOffloads idiom).
+        if drainKeptRecords == 0 {
+            emptyStreak += 1
+        } else {
+            emptyStreak = 0
+        }
+        let dropped = drainDroppedFutureRecords
+        BandLog.tierB(.info, "historical offload ended (\(offload.phase)): \(offload.recordCount) record(s) total, \(historicalRecords.count) unflushed"
+            + (dropped > 0 ? ", \(dropped) future-dated record(s) dropped" : ""))
         flushRecords()
     }
 
@@ -435,14 +636,16 @@ public actor TierBController {
         emit(.historical(records))
     }
 
-    /// Tears the offload down for a lost link: cancels the cadence and quiet watchdog and, if a
-    /// drain was running, ends it and emits the records decoded so far (PLAN.md 5.3.4).
+    /// Tears the offload down for a lost link: cancels the cadence, quiet and run-cap watchdogs
+    /// and, if a drain was running, ends it and emits the records decoded so far (PLAN.md 5.3.4).
     private func stopOffloadForLinkLoss() {
         offloadCadenceTask?.cancel()
         offloadCadenceTask = nil
         offloadWatchdog?.cancel()
         offloadWatchdog = nil
         offloadWatchdogDeadline = nil
+        offloadRunCapTask?.cancel()
+        offloadRunCapTask = nil
         for effect in offload.linkDropped() {
             if case .stop = effect {
                 finishDrain()
@@ -486,6 +689,9 @@ public actor TierBController {
         }
         await handleOffloadFrame(frame)
         if frame.packetType == .commandResponse {
+            if frame.cmd == SafeCommand.getDataRange.rawValue {
+                handleDataRangeReply(frame)
+            }
             guard let current = waiter else {
                 BandLog.tierB(.debug, "reply for cmd \(frame.cmd) ignored: nothing in flight")
                 return
@@ -524,6 +730,12 @@ public actor TierBController {
                 }
                 armedAlarm = nil
                 await rearmNext()
+            }
+            if frame.cmd == 96 {
+                // HIGH_FREQ_SYNC_PROMPT (NOOP event 96): the strap's flash is filling and it asks
+                // for a sync — route through the same gated entry as every other trigger, so the
+                // policy's `.strap` floor (and the clock-untrusted skip) still applies.
+                await runDrain(.strap)
             }
         } else if frame.packetType == .realtimeRawData {
             // The accel/PPG raw flood (PLAN.md 5.3.4, 1.9 KB/s): never parsed, only surfaced so

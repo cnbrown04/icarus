@@ -10,15 +10,16 @@ struct TierBControllerTests {
 
     // MARK: Handshake
 
-    @Test func handshakeSetsTheClockThenReadsTheClockAndRangeOncePerConnection() async {
+    /// The default harness' GET_CLOCK replies carry no clock value (empty payloads), so NOOP's
+    /// ClockPolicy has no decoded reading and SET_CLOCK is NOT sent: a healthy-or-unknown clock is
+    /// never gratuitously reset. Order: hello → clock-pre → clock-post → range → battery →
+    /// realtime → drain. The SET_CLOCK branch is pinned in `SyncPolicyControllerTests`.
+    @Test func handshakeReadsTheClockTwiceAndTheRangeOncePerConnection() async {
         let h = Harness()
         await h.controller.connectionOpened()
         await h.controller.connectionOpened()
-        // The handshake writes SET_CLOCK in BOTH forms (8-byte and legacy 9-byte: which one a given
-        // firmware latches is firmware-specific), then hello, clock, the realtime-raw disable
-        // range, battery, realtime, drain.
-        #expect(h.band.opcodes == [35, 11, 10, 10, 11, 34, 26, 3, 22])
-        #expect(h.band.opcodes.filter { $0 == 10 }.count == 2, "both SET_CLOCK forms per connection")
+        #expect(h.band.opcodes == [35, 11, 11, 34, 26, 3, 22])
+        #expect(h.band.opcodes.filter { $0 == 10 }.count == 0, "no clock value decoded → no SET_CLOCK")
         #expect(await h.controller.state == .ready)
         #expect(h.events.all.contains(.battery(87)))
         #expect(h.events.all.contains(.tierB(.ready)))
@@ -30,7 +31,10 @@ struct TierBControllerTests {
         await h.controller.connectionClosed()
         #expect(await h.controller.state == .awaitingLink)
         await h.controller.connectionOpened()
-        #expect(h.band.opcodes == [35, 11, 10, 10, 11, 34, 26, 3, 22, 35, 11, 10, 10, 11, 34, 3, 22])
+        // The connect trigger keeps NOOP's 90-s event floor against `lastBackfillAt`, so an
+        // immediate reconnect re-runs the handshake but NOT the drain (NOOP's
+        // "no second backfill on a same-process reconnect" behaviour).
+        #expect(h.band.opcodes == [35, 11, 11, 34, 26, 3, 22, 35, 11, 11, 34, 3])
     }
 
     @Test func aSilentBandFailsTheHandshakeAfterRetriesAndStaysUnavailable() async {
@@ -60,16 +64,16 @@ struct TierBControllerTests {
 
         let first = Task { try await h.controller.send(.getAlarmTime()) }
         let second = Task { try await h.controller.send(.getDataRange()) }
-        await settle { h.band.count == 10 }
+        await settle { h.band.count == 8 }
         await flush()
-        #expect(h.band.count == 10, "the second command must wait for the first reply")
+        #expect(h.band.count == 8, "the second command must wait for the first reply")
         #expect(h.band.last?.cmd == 67)
 
         await h.controller.receive(reply(to: h.band.last!))
         let firstReply = try await first.value
         #expect(firstReply.cmd == 67)
 
-        await settle { h.band.count == 11 }
+        await settle { h.band.count == 9 }
         #expect(h.band.last?.cmd == 34)
         await h.controller.receive(reply(to: h.band.last!))
         _ = try await second.value
@@ -84,8 +88,8 @@ struct TierBControllerTests {
         let task = Task { try await h.controller.send(.getAlarmTime()) }
         for attempt in 1 ... 4 {
             await settle { h.band.count == base + attempt }
-            // Attempt timer + realtime keep-alive + offload cadence.
-            await settle { h.clock.sleeperCount == 3 }
+            // Attempt timer + realtime keep-alive + offload cadence + drain run cap.
+            await settle { h.clock.sleeperCount == 4 }
             h.clock.advance(by: TierBController.responseTimeout)
         }
         guard case let .failure(error) = await task.result else {
@@ -108,7 +112,7 @@ struct TierBControllerTests {
 
         let task = Task { try await h.controller.send(.getAlarmTime()) }
         await settle { h.band.count == base + 1 }
-        await settle { h.clock.sleeperCount == 3 }
+        await settle { h.clock.sleeperCount == 4 }
         h.clock.advance(by: TierBController.responseTimeout)
         let frame = try await task.value
         #expect(frame.cmd == 67)
@@ -124,7 +128,7 @@ struct TierBControllerTests {
         await settle { h.band.count == base + 1 }
 
         await h.controller.receive(Frame(type: PacketType.commandResponse.rawValue, seq: h.band.last!.seq, cmd: 34, payload: []))
-        await settle { h.clock.sleeperCount == 3 }
+        await settle { h.clock.sleeperCount == 4 }
         h.clock.advance(by: TierBController.responseTimeout)
         await settle { h.band.count == base + 2 }
         #expect(h.band.last?.cmd == 67, "the timeout retried the original command")
@@ -143,7 +147,7 @@ struct TierBControllerTests {
 
         // The handshake replies echoed seq, so a mismatched seq is treated as stale and ignored.
         await h.controller.receive(Frame(type: PacketType.commandResponse.rawValue, seq: request.seq &+ 9, cmd: 67, payload: []))
-        await settle { h.clock.sleeperCount == 3 }
+        await settle { h.clock.sleeperCount == 4 }
         h.clock.advance(by: TierBController.responseTimeout)
         await settle { h.band.count == base + 2 }
 
@@ -224,7 +228,7 @@ struct TierBControllerTests {
         #expect(await h.controller.state == .awaitingLink)
         #expect(h.band.count == 0)
         await h.controller.connectionOpened()
-        #expect(h.band.opcodes == [35, 11, 10, 10, 11, 34, 26, 3, 22])
+        #expect(h.band.opcodes == [35, 11, 11, 34, 26, 3, 22])
     }
 
     /// The Device checkbox becomes the way to retry from the red triangle: enabling while
@@ -328,7 +332,7 @@ struct TierBControllerTests {
         await h.controller.armAlarms([h.clock.now().addingTimeInterval(300)])
         #expect(h.band.count == 0)
         await h.controller.connectionOpened()
-        #expect(h.band.opcodes == [35, 11, 10, 10, 11, 34, alarmOpcode, batteryOpcode, 3, 22])
+        #expect(h.band.opcodes == [35, 11, 11, 34, alarmOpcode, batteryOpcode, 3, 22])
     }
 
     @Test func alarmTimesOutsideTheUInt32RangeAreNotSent() async {
@@ -346,11 +350,15 @@ struct TierBControllerTests {
         0x00, 0x01, 0x04, 0xD8, 0x03, 0x00, 0x00, 0x00, 0xA2, 0x8F, 0xE2, 0x01, 0x28, 0x03, 0x00, 0x00,
     ] + Array("4C1551500".utf8) + [0x00] + Array("8e27cafe".utf8) + [0x00]
 
-    /// SET_CLOCK goes out in both forms per connection (8-byte and legacy 9-byte): which one a
-    /// given firmware latches is firmware-specific (NOOP hardware-verified), and double-latching
-    /// the same seconds is harmless.
-    @Test func setClockIsWrittenTwicePerConnectionInBothForms() async {
-        let h = Harness()
+    /// SET_CLOCK goes out in both forms ONLY when the decoded GET_CLOCK reading has drifted past
+    /// NOOP's 2 s threshold: this harness' strap RTC reads 100 s behind the wall clock. Order:
+    /// hello → clock-pre → SET_CLOCK ×2 → clock-post → range → battery → realtime → drain.
+    @Test func aDriftedClockIsSetInBothFormsPerConnection() async {
+        let h = Harness(responder: nil)
+        h.band.setResponder { request, _ in
+            if request.cmd == 11 { return reply(to: request, payload: [0x00, 0x01] + littleEndian(UInt32(ManualClock.origin.timeIntervalSince1970 - 100))) }
+            return reply(to: request, payload: request.cmd == 26 ? [0x00, 0x01, 0x69, 0x03] : [])
+        }
         await h.controller.connectionOpened()
         await h.controller.connectionClosed()
         await h.controller.connectionOpened()
@@ -361,6 +369,13 @@ struct TierBControllerTests {
         #expect(setClocks[1].payload == secs + [0, 0, 0, 0, 0], "then the legacy 9-byte form")
         #expect(setClocks[2].payload == secs + [0, 0, 0, 0])
         #expect(setClocks[3].payload == secs + [0, 0, 0, 0, 0])
+        let opcodes = h.band.opcodes
+        if let first = opcodes.firstIndex(of: 10) {
+            #expect(Array(opcodes[first - 1 ..< first + 3]) == [11, 10, 10, 11], "clock-pre, both forms, clock-post")
+            #expect(opcodes[first + 3] == 34, "the range follows the clock-post read")
+        } else {
+            Issue.record("a drifted clock must be set")
+        }
     }
 
     @Test func helloReplyPopulatesBandInfo() async {
@@ -532,13 +547,13 @@ struct RhythmPlaybackTests {
         #expect(h.band.last?.cmd == 79)
         #expect(h.band.last?.payload == [2, 2, 0, 0, 0])
 
-        await settle { h.clock.sleeperCount == 3 }
+        await settle { h.clock.sleeperCount == 4 }
         h.clock.advance(by: 1.5)
         await flush()
         #expect(h.band.count == base + 1, "the pause must not start before the buzz slot ends")
 
         h.clock.advance(by: 0.5)
-        await settle { h.clock.sleeperCount == 3 }
+        await settle { h.clock.sleeperCount == 4 }
         await flush()
         #expect(h.band.count == base + 1, "the pause runs for 500 ms before the next buzz")
 
@@ -546,7 +561,7 @@ struct RhythmPlaybackTests {
         await settle { h.band.count == base + 2 }
         #expect(h.band.last?.payload == [3, 1, 0, 0, 0])
 
-        await settle { h.clock.sleeperCount == 3 }
+        await settle { h.clock.sleeperCount == 4 }
         h.clock.advance(by: 1)
         try await task.value
         #expect(Array(h.band.opcodes.suffix(2)) == [79, 79])
@@ -561,7 +576,7 @@ struct RhythmPlaybackTests {
 
         await h.controller.startRhythm(rhythm)
         await settle { h.band.count == base + 1 }
-        await settle { h.clock.sleeperCount == 3 }
+        await settle { h.clock.sleeperCount == 4 }
 
         await h.controller.stopHaptics()
         #expect(Array(h.band.opcodes.suffix(2)) == [79, 122])
@@ -578,7 +593,7 @@ struct RhythmPlaybackTests {
         let base = h.band.count
         await h.controller.startRhythm(try Rhythm(steps: [.buzz(preset: 2, loops: 5)]))
         await settle { h.band.count == base + 1 }
-        await settle { h.clock.sleeperCount == 3 }
+        await settle { h.clock.sleeperCount == 4 }
 
         await h.controller.startRhythm(try Rhythm(steps: [.buzz(preset: 4, loops: 1)]))
         await settle { h.band.count == base + 3 }
