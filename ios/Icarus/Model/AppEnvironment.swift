@@ -230,6 +230,26 @@ final class AppEnvironment {
                     db, sql: "SELECT MAX(ts_ms) FROM historical_record WHERE band_id = ?",
                     arguments: [bandID]
                 ) ?? toMs
+                // Backfill the realtime tables from the drained history: the HR graph reads
+                // hr_sample, which only the realtime ingest writes, so a drained gap (app closed,
+                // strap kept banking) would otherwise stay invisible there forever. Same
+                // physiological gate as ReadingPreparer (PLAN.md 7.3); INSERT OR IGNORE dedupes
+                // against realtime samples and replayed drain batches.
+                let readings = samples.compactMap { sample -> Database.Reading? in
+                    guard let bpm = sample.bpm, (20...250).contains(bpm) else { return nil }
+                    return Database.Reading(
+                        peripheralUUID: bandUUID,
+                        tsMs: sample.tsMs,
+                        bpm: bpm,
+                        contact: sample.contact,
+                        rr: sample.rrMs.enumerated().map { index, ms in
+                            .init(seq: index, rrMs: ms, accepted: true)
+                        }
+                    )
+                }
+                if !readings.isEmpty {
+                    try db.insertReadings(readings)
+                }
                 // Half-open to the millisecond past the last record, so it is included (PLAN.md 10.1).
                 try db.deriveSleepSessions(
                     from: min(spanMin, fromMs),
@@ -240,6 +260,10 @@ final class AppEnvironment {
                 )
                 BandLog.tierB(.info, "app: stored batch; sleep derivation succeeded")
             }
+            // Recompute the minute metrics the drained batch covers — the same follow-up the
+            // realtime ingest does after every flush. Anchored at the batch's end, so a live
+            // drain and a backfilled June window both recompute their own minutes.
+            _ = try await MetricsWorker(database: database).recompute(nowMs: toMs)
         } catch {
             // A failed batch is safe to drop: the strap replays it until its ack lands, and the
             // insert dedups on (band, timestamp) (PLAN.md 5.3.4).
