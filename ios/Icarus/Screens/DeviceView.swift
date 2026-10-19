@@ -13,6 +13,9 @@ struct DeviceView: View {
     @AppStorage(BandChannel.floodDisabledKey) private var floodDisabled = false
     @State private var showsExplainer = false
     @State private var confirmsForget = false
+    @State private var showsRestore = false
+    @State private var drainingRestore = false
+    @State private var restoreSummary: String?
 
     private var bandName: String {
         liveState.bandName ?? "Paired band"
@@ -110,6 +113,36 @@ struct DeviceView: View {
             }
 
             Section {
+                Button("Drain full band history…") {
+                    showsRestore = true
+                }
+                .disabled(liveState.tierBState != .ready || drainingRestore)
+                .accessibilityIdentifier("device.drainFullHistory")
+                if drainingRestore {
+                    LabeledContent {
+                        HStack(spacing: Spacing.s8) {
+                            ProgressView()
+                            Text("Draining…")
+                        }
+                    } label: {
+                        Label("Restore", systemImage: "arrow.counterclockwise")
+                    }
+                } else if let restoreSummary {
+                    LabeledContent {
+                        Text(restoreSummary)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    } label: {
+                        Label("Restore", systemImage: "arrow.counterclockwise")
+                    }
+                }
+            } header: {
+                Text("History")
+            } footer: {
+                Text("Re-reads everything the band has in storage and rebuilds heart rate, sleep and the graphs from it. Use after deleting the app, or whenever history looks wrong. The band keeps roughly the last day and a half.")
+            }
+
+            Section {
                 Toggle(isOn: bandChannelBinding) {
                     Label("Band Channel", systemImage: "waveform")
                 }
@@ -169,7 +202,31 @@ struct DeviceView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+        .confirmationDialog(
+            "Drain the band's full history?",
+            isPresented: $showsRestore,
+            titleVisibility: .visible
+        ) {
+            Button("Drain full history") {
+                startRestore()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The band's stored history is re-read and everything already stored dedupes. Draining a full ring takes a few minutes; live readings keep flowing.")
+        }
         .navigationTitle("Band")
+    }
+
+    /// Runs the full-history restore with UI state: the button disables while it runs, and the
+    /// one-line controller summary lands when it finishes.
+    private func startRestore() {
+        drainingRestore = true
+        restoreSummary = nil
+        Task {
+            await liveState.drainFullHistory()
+            restoreSummary = await liveState.fullHistorySummary() ?? "finished"
+            drainingRestore = false
+        }
     }
 
     /// Off switches the channel at once. On only opens the explainer, and the switch moves when "Turn on" is tapped.

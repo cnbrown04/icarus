@@ -28,6 +28,8 @@ final class AppEnvironment {
     private let isSyncFixture: Bool
     private var ingestionStarted = false
     private var syncStarted = false
+    /// The auto-restore ran (or was checked) this launch (see `autoRestoreIfStoreEmpty`).
+    private var didAutoRestore = false
 
     private init(
         database: AppDatabase,
@@ -150,6 +152,32 @@ final class AppEnvironment {
                 return
             }
             self?.offload(records, from: bandID)
+        }
+        band.onTierBChange = { [weak self, weak band] state in
+            guard state == .ready else { return }
+            guard let self, let band else { return }
+            Task { await self.autoRestoreIfStoreEmpty(band: band) }
+        }
+    }
+
+    /// The app-deleted restore: when the channel first goes ready and the store holds no drained
+    /// history at all, rewind the strap's read cursor and re-drain its whole stored history (the
+    /// strap's flash is retained across app deletions; OpenStrap §4.3). Once per launch.
+    private func autoRestoreIfStoreEmpty(band: LiveState) async {
+        guard !didAutoRestore else { return }
+        didAutoRestore = true
+        do {
+            let count = try await database.writer.read { db in
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM historical_record") ?? 0
+            }
+            guard count == 0 else {
+                BandLog.tierB(.info, "app: store has \(count) historical row(s); no auto-restore")
+                return
+            }
+            BandLog.tierB(.info, "app: store is empty — auto-restoring the strap's full stored history")
+            await band.drainFullHistory()
+        } catch {
+            BandLog.tierB(.error, "app: auto-restore check failed: \(String(describing: error))")
         }
     }
 

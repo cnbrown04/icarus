@@ -34,7 +34,15 @@ protocol RealtimeRawFloodTransport: BandTransport {
     func setHandshakeRealtimeRawFloodDisabled(_ disabled: Bool) async throws
 }
 
+/// A transport whose Tier B controller can rewind its read cursor and re-drain the strap's whole
+/// stored history (the app-deleted restore). Feature-detected with an `as?`, so a transport
+/// without the capability is a logged no-op, not a build break.
+protocol FullHistoryDrainTransport: BandTransport {
+    func drainFullHistory() async
+    func fullHistorySummary() async -> String?
+}
+
 // The transport-level bridge lives in BandKit (`CoreBluetoothTransport.setRealtimeRawFlood`),
 // which delegates to `TierBController.setRealtimeRawFlood(enabled:)`. With this conformance the
 // `as?` in `LiveState.setRealtimeRawFlood` matches and RawDataView's flood wiring is live.
-extension CoreBluetoothTransport: RealtimeRawFloodTransport {}
+extension CoreBluetoothTransport: RealtimeRawFloodTransport, FullHistoryDrainTransport {}
