@@ -93,6 +93,20 @@ public struct BandCommand: Sendable, Equatable {
         BandCommand(.getDataRange, payload: [0x00])
     }
 
+    /// SET_READ_POINTER (cmd 33, 0x21). Rewinds/positions the strap's persistent read cursor: the
+    /// payload is the u32 offset, little-endian (OpenStrap PROTOCOL.md §2 "u32 offset — rewind/seek
+    /// the read cursor"; `research_playground.py:cmd_set_read_pointer` = a bare
+    /// `struct.pack("<I", off)`). OpenStrap §4.3: the cursor is persistent across connections, ACKs
+    /// advance it, and the same band can be drained as many times as you like — so after the app's
+    /// database is deleted, rewinding to the ring's oldest banked extent re-reads the strap's whole
+    /// stored history. The offset's unit is whatever GET_DATA_RANGE's write/read/capacity words
+    /// count (pages per NOOP's read of the ring words) — no capture pins a SET_READ_POINTER
+    /// round-trip yet, so both the unit and the reply behaviour are [Unverified]; the reference
+    /// client never awaits a reply for it.
+    public static func setReadPointer(offset: UInt32) -> BandCommand {
+        BandCommand(.setReadPointer, payload: littleEndian(offset))
+    }
+
     // MARK: Heart rate
 
     /// TOGGLE_REALTIME_HR (cmd 3). PLAN.md 5.3.4 gives no payload. The golden frames `health_monitor_on`

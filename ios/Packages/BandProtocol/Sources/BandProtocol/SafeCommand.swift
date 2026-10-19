@@ -8,6 +8,11 @@ public enum SafeCommand: UInt8, Sendable, CaseIterable {
     case sendHistoricalData = 22
     case historicalDataResult = 23
     case getBatteryLevel = 26
+    /// SET_READ_POINTER (cmd 33, 0x21). Rewinds/positions the strap's persistent read cursor
+    /// (OpenStrap PROTOCOL.md §2, §4.3: "the cursor can be repositioned with SET_READ_POINTER";
+    /// the cursor survives connections and acks, so a rewind enables re-reading the whole stored
+    /// history after the app's database is deleted). See `BandCommand.setReadPointer(offset:)`.
+    case setReadPointer = 33
     case getDataRange = 34
     /// SEND_R10_R11_REALTIME (cmd 63). Toggles the strap's realtime-raw flood: REALTIME_RAW_DATA
     /// (type 0x2B) raw accel/PPG samples at ~1.9 KB/s on `61080005` (PLAN.md 7.2 step 4,

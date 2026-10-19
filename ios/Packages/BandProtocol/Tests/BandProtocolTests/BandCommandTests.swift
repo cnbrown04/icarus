@@ -92,6 +92,25 @@ struct BandCommandTests {
 
     // MARK: Envelope vectors (no captured band frame exists for these)
 
+    /// SET_READ_POINTER (cmd 33, 0x21): the u32 offset, little-endian (OpenStrap §2/§4.3,
+    /// `research_playground.py:cmd_set_read_pointer` = `struct.pack("<I", off)`). The envelope
+    /// vectors below follow this repo's own envelope convention (PLAN.md 5.3.3: an unpadded inner,
+    /// unlike OpenStrap's /4-padded upstream form); no capture pins a cmd-33 frame yet, and the
+    /// offset's unit (pages vs bytes) is [Unverified].
+    @Test func setReadPointerEncodesTheOffsetLittleEndian() {
+        let command = BandCommand.setReadPointer(offset: 67_491)
+        #expect(command.command.rawValue == 33)
+        #expect(command.command == .setReadPointer)
+        #expect(command.payload == [0xA3, 0x07, 0x01, 0x00])
+        #expect(hex(command.frame(seq: 0x16)) == "aa0b0097231621a3070100628a9d09")
+        let zero = BandCommand.setReadPointer(offset: 0)
+        #expect(zero.payload == [0, 0, 0, 0])
+        #expect(hex(zero.frame(seq: 0x17)) == "aa0b009723172100000000e8c84b81")
+        let rewind = BandCommand.setReadPointer(offset: 5_000)
+        #expect(rewind.payload == [0x88, 0x13, 0x00, 0x00])
+        #expect(hex(rewind.frame(seq: 0x18)) == "aa0b009723182188130000c0f99046")
+    }
+
     @Test func runHapticsPatternPayloadIsPatternLoopsAndZeros() {
         let command = BandCommand.runHapticsPattern(patternId: 2, loops: 3)
         #expect(command.command == .runHapticsPattern)
@@ -133,12 +152,13 @@ struct BandCommandTests {
             .runHapticsPattern(patternId: 2, loops: 1), .stopHaptics(), .setAlarmTime(unix: 1), .getAlarmTime(),
             .getClock(), .getBatteryLevel(), .getDataRange(), .toggleRealtimeHR(on: true),
             .toggleRealtimeRaw(on: false), .hrBroadcast(on: false), .getAllHapticsPatterns(),
+            .setReadPointer(offset: 0),
         ]
         for command in commands {
             #expect(SafeCommand(rawValue: command.command.rawValue) == command.command)
             #expect(!SafeCommand.deniedOpcodes.contains(command.command.rawValue))
         }
-        #expect(Set(commands.map(\.command.rawValue)) == [3, 11, 14, 26, 34, 63, 66, 67, 79, 80, 122])
+        #expect(Set(commands.map(\.command.rawValue)) == [3, 11, 14, 26, 33, 34, 63, 66, 67, 79, 80, 122])
     }
 
     // MARK: Battery reply

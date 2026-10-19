@@ -129,6 +129,41 @@ struct DataRangeTests {
         }
     }
 
+    // MARK: ringState (the full W/U/T ring words behind pagesBehind)
+
+    /// The real captures above decode to the full ring state, not just the backlog: W/U/T land on
+    /// the same NOOP-confirmed offsets, and `pagesBehind` is the derived wraparound arithmetic.
+    @Test func ringStateDecodesTheRealCapturesWriteReadAndCapacity() {
+        let cases: [(String, Int, RingState)] = [
+            // WHOOP4, cmdOff 6 (#791): W − U = 67491 − 67408 = 83 pages behind.
+            ("aa4c00a7247e220a01010000000050070100a307010050070100000000000000020035030000" +
+             "c2fc13008046394b00000000bbe1636aa02d0000bbe1636aa02d0000c6e4636ac07c000000000447ea04", 6,
+             RingState(write: 67_491, read: 67_408, capacity: 131_072)),
+            // WHOOP 5.0/MG, cmdOff 10 (#815): W − U = 100790 − 100788 = 2 pages behind.
+            ("aa014c00010032d124cc22040101c0890100b4890100b6890100b4890100110000000000020012000000" +
+             "e2ff1d00785ac169707d0000edeb626a5c0f0000edeb626a5c0f0000feeb626a5c0f00000000a7c3ec16", 10,
+             RingState(write: 100_790, read: 100_788, capacity: 131_072)),
+        ]
+        for (h, cmdOff, expected) in cases {
+            #expect(DataRange.ringState(from: hex(h), cmdOff: cmdOff) == expected)
+        }
+    }
+
+    /// The wraparound shape the real captures have not crossed yet: `W < U` ⇒ W + (T − U).
+    @Test func ringStatePagesBehindAppliesTheWraparoundFormula() {
+        let state = RingState(write: 100, read: 800, capacity: 1000)
+        #expect(state.pagesBehind == 300)
+        #expect(DataRange.ringState(from: pagesFrame(cmdOff: 6, w: 100, u: 800, t: 1000), cmdOff: 6) == state)
+    }
+
+    @Test func ringStateRejectsTheSameImplausibleFramesAsPagesBehind() {
+        #expect(DataRange.ringState(from: [UInt8](repeating: 0, count: 20), cmdOff: 6) == nil)                                     // too short
+        #expect(DataRange.ringState(from: pagesFrame(cmdOff: 6, w: 1, u: 1, t: 0), cmdOff: 6) == nil)                              // capacity 0
+        #expect(DataRange.ringState(from: pagesFrame(cmdOff: 6, w: 1, u: 1, t: 1_783_785_625), cmdOff: 6) == nil)                  // T is a timestamp
+        #expect(DataRange.ringState(from: pagesFrame(cmdOff: 6, w: 5, u: 2000, t: 1000), cmdOff: 6) == nil)                        // U ≥ T
+        #expect(DataRange.ringState(from: pagesFrame(cmdOff: 6, w: 2000, u: 5, t: 1000), cmdOff: 6) == nil)                        // W ≥ T
+    }
+
     // MARK: FrameCodec.reencode (the raw-byte seam BandKit uses to reach the decoders)
 
     @Test func reencodeRebuildsTheExactRawBytes() throws {

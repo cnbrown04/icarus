@@ -29,7 +29,9 @@ struct SafeCommandTests {
     @Test func whitelistMatchesPlanOpcodes() {
         let raw = Set(SafeCommand.allCases.map(\.rawValue))
         // 63 (SEND_R10_R11_REALTIME) is a capability whitelist addition, not in PLAN.md 5.3.4's
-        // original table (whoop-parity §3.4, PLAN.md §1 ground rules).
-        #expect(raw == [3, 10, 11, 14, 22, 23, 26, 34, 35, 63, 66, 67, 79, 80, 122])
+        // original table (whoop-parity §3.4, PLAN.md §1 ground rules). 33 (SET_READ_POINTER) is
+        // the same kind of addition: OpenStrap PROTOCOL.md §2/§4.3's repositionable read cursor,
+        // which the app-deleted full-history restore needs.
+        #expect(raw == [3, 10, 11, 14, 22, 23, 26, 33, 34, 35, 63, 66, 67, 79, 80, 122])
     }
 }

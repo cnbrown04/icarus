@@ -1,5 +1,28 @@
 import Foundation
 
+/// The ring-buffer state a GET_DATA_RANGE reply reports. OpenStrap PROTOCOL.md §4.3 / NOOP's
+/// DataRange: the write pointer `W` (where the strap banks next), the read pointer `U` (the
+/// persistent drain cursor — SET_READ_POINTER repositions it), and the ring capacity `T`
+/// (131072 in every real capture so far). `pagesBehind` is the backlog with wraparound:
+/// `W < U ? W + (T − U) : W − U`.
+public struct RingState: Sendable, Equatable {
+    public let write: Int
+    public let read: Int
+    public let capacity: Int
+
+    /// The backlog the strap reports, with wraparound (`W < U` means the write pointer passed
+    /// capacity and resumed at 0 while the read pointer lagged behind).
+    public var pagesBehind: Int {
+        write < read ? write + (capacity - read) : write - read
+    }
+
+    public init(write: Int, read: Int, capacity: Int) {
+        self.write = write
+        self.read = read
+        self.capacity = capacity
+    }
+}
+
 /// GET_DATA_RANGE frame parsing. Ported byte-exactly from NOOP
 /// `Packages/WhoopProtocol/Sources/WhoopProtocol/DataRange.swift`
 /// (github.com/ryanbr/noop @ ef165de4), which is itself byte-identical to NOOP's Kotlin twin
@@ -75,7 +98,16 @@ public enum DataRange {
     /// Returns nil for a too-short frame or implausible values — a capacity that is 0 or above a
     /// sane ceiling (a misaligned read hitting a timestamp / `0xFFFFFFFF`), a pointer at/beyond
     /// capacity, or a backlog past capacity — so a garbage frame can never log a nonsense number.
-    public static func pagesBehind(from frame: [UInt8], cmdOff: Int) -> Int? {
+    /// Decodes the GET_DATA_RANGE reply's full ring state (`write`, `read`, `capacity`), not just
+    /// the backlog. The word offsets and the plausibility guards are exactly `pagesBehind`'s
+    /// (NOOP's hardware-confirmed layout: the words sit at `cmdOff + 12/16/24`, little-endian, and
+    /// a pointer at/beyond capacity or a nonsense capacity is a misaligned read, not a ring).
+    ///
+    /// [Unverified] guard consequence: a strap whose write pointer is a MONOTONIC counter (never
+    /// wrapped, `W ≥ T` after ~36 h of 1 Hz history) is rejected here just like in `pagesBehind`.
+    /// No real capture has crossed the wrap yet, so the conservative NOOP semantics stand; revisit
+    /// when a live capture shows `W ≥ T`.
+    public static func ringState(from frame: [UInt8], cmdOff: Int) -> RingState? {
         guard cmdOff >= 0 else { return nil }
         let payloadOffset = cmdOff + 1
         let wOff = payloadOffset + 11, uOff = payloadOffset + 15, tOff = payloadOffset + 23
@@ -85,8 +117,13 @@ public enum DataRange {
         }
         let w = u32(wOff), u = u32(uOff), t = u32(tOff)
         guard t > 0, t <= 0x00FF_FFFF, w < t, u < t else { return nil }
-        let behind = w < u ? w + (t - u) : w - u
-        guard behind >= 0, behind <= t else { return nil }
+        return RingState(write: w, read: u, capacity: t)
+    }
+
+    public static func pagesBehind(from frame: [UInt8], cmdOff: Int) -> Int? {
+        guard let state = ringState(from: frame, cmdOff: cmdOff) else { return nil }
+        let behind = state.pagesBehind
+        guard behind >= 0, behind <= state.capacity else { return nil }
         return behind
     }
 }
