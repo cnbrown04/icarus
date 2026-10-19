@@ -1,7 +1,9 @@
 import AlarmKitBridge
+import BandKit
 import Foundation
 import Observation
 import Store
+import SyncKit
 
 /// Keeps the phone and band alarms armed from the store (PLAN.md 9.5). It re-arms on every alarm change, at launch,
 /// when the app comes to the foreground, on a time zone change, when the band becomes ready, and after the band
@@ -76,6 +78,10 @@ final class AlarmCoordinator {
         band.onBandEvent = { [weak self] kind in
             guard kind == .strapDrivenAlarmExecuted, let self else { return }
             Task { await self.armBand() }
+        }
+        band.onLinkAlive = { [weak self] in
+            guard let self else { return }
+            self.bandWokeUp()
         }
     }
 
@@ -179,5 +185,75 @@ final class AlarmCoordinator {
         guard let band, band.tierBState == .ready else { return }
         let rules = items.filter { $0.enabled && $0.channels.contains(.band) }.compactMap(\.schedule)
         await band.armBandAlarm(AlarmPlanner.earliest(rules, after: clock.now))
+    }
+
+    // MARK: Opportunistic dispatch pull (PLAN.md 9.3 mitigation 1)
+
+    /// UserDefaults key for the Experimental toggle on the Device screen. Off by default: the pull
+    /// spends band wake-ups on unrelated network work, which the plan accepts only for a personal
+    /// TestFlight build.
+    static let opportunisticPullKey = "alarms.opportunisticPull"
+    /// At most one pull per 30 s of band wake-ups (PLAN.md 9.3).
+    private static let pullInterval: TimeInterval = 30
+
+    @ObservationIgnored private var lastPullAt: Date?
+    /// Dispatch ids played in this launch. A delivered dispatch never buzzes twice; one whose ack
+    /// failed is forgotten, so a later pull replays it (the server resends until it is acked).
+    @ObservationIgnored private var playedDispatches: Set<String> = []
+
+    /// A band wake-up arrived: the link came alive, or a realtime heart-rate notification was
+    /// delivered (`LiveState.onLinkAlive`). Alarm push is disabled, so this pull is how a webhook
+    /// dispatch still plays when the app happens to be awake. Skips when the toggle is off, no
+    /// server is paired, or the last pull was less than 30 s ago.
+    func bandWokeUp() {
+        guard UserDefaults.standard.bool(forKey: Self.opportunisticPullKey) else { return }
+        guard sync.status.phase != .notPaired else { return }
+        let now = clock.now
+        guard lastPullAt.map({ now.timeIntervalSince($0) >= Self.pullInterval }) ?? true else { return }
+        lastPullAt = now
+        BandLog.tierB(.info, "alarms: opportunistic pull triggered by a band wake-up")
+        Task { await deliverPulledDispatches() }
+    }
+
+    /// Plays and acks every dispatch the server still lists as unacked. The handling mirrors the
+    /// foreground push delivery (PLAN.md 9.3): the phone haptic and a local alert play, the band
+    /// buzzes when the channel allows it, and the ack reports what each side did. Each dispatch
+    /// plays once per launch.
+    private func deliverPulledDispatches() async {
+        let pending: [PendingDispatch]
+        do {
+            pending = try await sync.engine.pendingDispatches()
+        } catch {
+            BandLog.tierB(.info, "alarms: opportunistic pull failed: \(String(describing: error))")
+            return
+        }
+        let fresh = pending.filter { !playedDispatches.contains($0.id) }
+        BandLog.tierB(.info, "alarms: opportunistic pull: \(fresh.count) new of \(pending.count) pending dispatch(es)")
+        for dispatch in fresh {
+            playedDispatches.insert(dispatch.id)
+            let bandAck = await playOnBand(dispatch.rhythmJSON)
+            if let rhythm = try? RhythmSpec(jsonText: dispatch.rhythmJSON).rhythm() {
+                try? phonePlayer.play(rhythm)
+            }
+            try? await notifier?.post(title: "Alarm", body: dispatch.message ?? "Alarm from the server")
+            do {
+                try await sync.engine.ackDispatch(id: dispatch.id, phone: .shown, band: bandAck)
+            } catch {
+                playedDispatches.remove(dispatch.id)
+            }
+        }
+    }
+
+    /// The band's part of a dispatch, acked the same way the push router acks foreground delivery:
+    /// buzz when the band channel is on, the link streams and Tier B is ready; report why not otherwise.
+    private func playOnBand(_ rhythmJSON: String) async -> BandAck {
+        guard BandChannel.isEnabled else { return .disabled }
+        guard let band, band.state == .streaming else { return .notConnected }
+        guard band.tierBState == .ready,
+              let spec = try? RhythmSpec(jsonText: rhythmJSON),
+              let rhythm = try? spec.rhythm()
+        else { return .failed }
+        await band.runRhythm(rhythm)
+        return .ok
     }
 }

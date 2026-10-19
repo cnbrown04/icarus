@@ -9,6 +9,7 @@ struct DeviceView: View {
     let liveState: LiveState
 
     @State private var bandChannelEnabled = BandChannel.isEnabled
+    @AppStorage(AlarmCoordinator.opportunisticPullKey) private var opportunisticPull = false
     @State private var showsExplainer = false
     @State private var confirmsForget = false
 
@@ -133,10 +134,14 @@ struct DeviceView: View {
                 }
                 .disabled(liveState.tierBState != .ready)
                 .accessibilityIdentifier("device.testBuzz")
+                Toggle(isOn: $opportunisticPull) {
+                    Label("Opportunistic alarm pull", systemImage: "bell.badge")
+                }
+                .accessibilityIdentifier("device.opportunisticPull")
             } header: {
                 Text("Experimental")
             } footer: {
-                Text("Band alarms depend on the band clock. The phone alarm is always armed too.")
+                Text("Band alarms depend on the band clock. The phone alarm is always armed too. The alarm pull checks the server for pending alarms while the band is awake; it only matters while alarm push is unavailable.")
             }
         }
         .sheet(isPresented: $showsExplainer) {
