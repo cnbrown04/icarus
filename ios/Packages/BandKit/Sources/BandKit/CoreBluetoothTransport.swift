@@ -166,6 +166,17 @@ public final class CoreBluetoothTransport: NSObject, BandTransport, CBCentralMan
         await tierB.armAlarms(date.map { [$0] } ?? [])
     }
 
+    /// App-facing full-history restore (the app-deleted case): rewinds the strap's read cursor to
+    /// its oldest banked extent and drains back-to-back until caught up. The one-line state lands
+    /// in `fullHistorySummary` for the app's UI.
+    public func drainFullHistory() async {
+        await tierB.drainFullHistory()
+    }
+
+    public func fullHistorySummary() async -> String? {
+        await tierB.fullHistorySummary
+    }
+
     /// App-facing raw-flood toggle (PLAN.md 7.2 step 4): re-enable the 0x2B flood while the raw
     /// band data viewer is open, disable again on close. The handshake disables the flood on every
     /// new connection. Throws when Tier B is off or the link is down.

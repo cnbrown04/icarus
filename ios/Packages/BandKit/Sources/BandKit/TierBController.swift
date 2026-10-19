@@ -136,6 +136,8 @@ public actor TierBController {
     /// readable reply. The app reads it for diagnostics and the full-history restore reads it to
     /// compute the rewind target.
     public private(set) var ringState: RingState?
+    /// One-line state of the last (or running) full-history restore, for the app's UI.
+    public private(set) var fullHistorySummary: String?
     /// Waiters resumed when the running drain ends (`drainFullHistory` parks here between the
     /// back-to-back kicks).
     private var drainEndWaiters: [CheckedContinuation<Void, Never>] = []
@@ -366,9 +368,11 @@ public actor TierBController {
     /// slices. Never throws: every failure is logged and leaves the normal drain machinery intact.
     public func drainFullHistory() async {
         guard enabled, state == .ready, linkOpen else {
+            fullHistorySummary = "restore skipped: the channel is off or the link is not ready"
             BandLog.tierB(.info, "full-history restore skipped: the channel is off or the link is not ready")
             return
         }
+        fullHistorySummary = "draining…"
         BandLog.tierB(.info, "full-history restore begins")
         do {
             // The reply's ring state is ALSO decoded into `ringState` by `handleDataRangeReply`
@@ -425,11 +429,14 @@ public actor TierBController {
                 }
             }
             if drains == Self.maxFullHistoryDrains {
+                fullHistorySummary = "restore hit the \(Self.maxFullHistoryDrains)-drain cap"
                 BandLog.tierB(.error, "full-history restore hit the \(Self.maxFullHistoryDrains)-drain cap")
             }
+            fullHistorySummary = "finished: \(drains) drain(s), \(totalKept) record(s) re-drained"
             BandLog.tierB(.info, "full-history restore finished: \(drains) drain(s), \(totalKept) record(s) re-drained")
         } catch {
             // `send` failures land here (disabled / notConnected / timedOut after retries).
+            fullHistorySummary = "restore aborted: \(String(describing: error))"
             BandLog.tierB(.error, "full-history restore aborted: \(String(describing: error))")
         }
     }
