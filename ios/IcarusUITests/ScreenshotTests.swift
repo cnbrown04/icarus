@@ -20,6 +20,9 @@ final class ScreenshotTests: XCTestCase {
         ]
         app.launch()
 
+        // Home is the launch tab now; screenshots target Today's data screens.
+        XCTAssertTrue(app.navigationBars["Home"].waitForExistence(timeout: 30))
+        app.tabBars.buttons["Today"].tap()
         XCTAssertTrue(app.staticTexts["today.hrValue"].waitForExistence(timeout: 30))
         attachScreenshot(named: "07-today")
 
@@ -36,24 +39,22 @@ final class ScreenshotTests: XCTestCase {
         attachScreenshot(named: "10-calories")
         goBack(app)
 
-        let tabs: [(label: String, attachmentName: String)] = [
-            ("Alarms", "12-alarms"),
-            ("Settings", "17-settings"),
-        ]
-        for tab in tabs {
-            app.tabBars.buttons[tab.label].tap()
-            XCTAssertTrue(app.navigationBars[tab.label].waitForExistence(timeout: 10))
-            if tab.label == "Alarms" {
+        // Alarms and Settings are top-right toolbar sheets now.
+        for title in ["Alarms", "Settings"] {
+            app.buttons[title].tap()
+            XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 10))
+            if title == "Alarms" {
                 // The seed has three alarms (Store SeedData), so the list must show them before the capture.
                 XCTAssertTrue(element(app, "alarms.time").waitForExistence(timeout: 10))
             }
-            attachScreenshot(named: tab.attachmentName)
-            if tab.label == "Alarms" {
+            attachScreenshot(named: title == "Alarms" ? "12-alarms" : "17-settings")
+            if title == "Alarms" {
                 attachAlarmEditorScreens(app)
             }
+            app.buttons["Done"].tap()
         }
 
-        // Band left the tab bar; it now sits behind Settings → Band.
+        // Band sits behind Settings → Band.
         openBand(app)
         scrollToExperimental(app)
         attachScreenshot(named: "15-device")
@@ -146,7 +147,7 @@ final class ScreenshotTests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 30))
-        app.tabBars.buttons["Settings"].tap()
+        app.buttons["Settings"].tap()
         app.buttons["Server sync"].firstMatch.tap()
         XCTAssertTrue(app.navigationBars["Server sync"].waitForExistence(timeout: 10))
         attachScreenshot(named: "16-sync")
@@ -189,7 +190,7 @@ final class ScreenshotTests: XCTestCase {
 
     /// Opens Settings → Band, the screen that used to be the Device tab.
     private func openBand(_ app: XCUIApplication) {
-        app.tabBars.buttons["Settings"].tap()
+        app.buttons["Settings"].tap()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
         let band = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Band")).firstMatch
         XCTAssertTrue(band.waitForExistence(timeout: 10))

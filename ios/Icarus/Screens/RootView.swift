@@ -94,22 +94,46 @@ struct MainTabView: View {
     let liveState: LiveState
     @Binding var pairingLink: PairingLink?
 
+    @State private var chromeSheet: ChromeSheet?
+
+    /// Settings and alarms sit behind the nav bar's trailing buttons, not in the tab bar.
+    private enum ChromeSheet: String, Identifiable {
+        case alarms
+        case settings
+
+        var id: String { rawValue }
+    }
+
     var body: some View {
         TabView {
             NavigationStack {
+                HomeView(
+                    environment: environment,
+                    liveState: liveState,
+                    openAlarms: { chromeSheet = .alarms },
+                    openSettings: { chromeSheet = .settings }
+                )
+                .toolbar { chromeToolbar() }
+            }
+            .tabItem { Label("Home", systemImage: "house.fill") }
+
+            NavigationStack {
                 TodayView(environment: environment, liveState: liveState)
+                    .toolbar { chromeToolbar() }
             }
             .tabItem { Label("Today", systemImage: "heart.fill") }
-
+        }
+        .sheet(item: $chromeSheet) { sheet in
             NavigationStack {
-                AlarmsView(environment: environment, liveState: liveState)
+                chromeSheetContent(sheet)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") {
+                                chromeSheet = nil
+                            }
+                        }
+                    }
             }
-            .tabItem { Label("Alarms", systemImage: "alarm.fill") }
-
-            NavigationStack {
-                SettingsView(environment: environment, liveState: liveState)
-            }
-            .tabItem { Label("Settings", systemImage: "gearshape.fill") }
         }
         .sheet(isPresented: Binding(
             get: { pairingLink != nil },
@@ -117,7 +141,45 @@ struct MainTabView: View {
         )) {
             NavigationStack {
                 ServerView(sync: environment.sync, link: pairingLink)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Cancel") {
+                                pairingLink = nil
+                            }
+                        }
+                    }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func chromeSheetContent(_ sheet: ChromeSheet) -> some View {
+        switch sheet {
+        case .alarms:
+            AlarmsView(environment: environment, liveState: liveState)
+        case .settings:
+            SettingsView(environment: environment, liveState: liveState)
+        }
+    }
+
+    @ToolbarContentBuilder
+    private func chromeToolbar() -> some ToolbarContent {
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            Button {
+                chromeSheet = .alarms
+            } label: {
+                Image(systemName: "bell")
+            }
+            .accessibilityLabel("Alarms")
+            .accessibilityIdentifier("root.alarms")
+
+            Button {
+                chromeSheet = .settings
+            } label: {
+                Image(systemName: "gearshape")
+            }
+            .accessibilityLabel("Settings")
+            .accessibilityIdentifier("root.settings")
         }
     }
 }
