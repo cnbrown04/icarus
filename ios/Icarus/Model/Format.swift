@@ -38,6 +38,11 @@ enum Format {
         duration(Int64(minutes) * 60)
     }
 
+    /// A stage total in whole seconds, the unit `sleepStageTotals` returns.
+    static func duration(seconds: Int) -> String {
+        duration(Int64(seconds))
+    }
+
     /// A wall-clock time in the profile's zone, e.g. "10:48 PM". Used for sleep bounds.
     static func clock(_ epochMs: Int64, in timeZone: TimeZone) -> String {
         let formatter = DateFormatter()

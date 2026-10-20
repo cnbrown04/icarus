@@ -311,6 +311,16 @@ enum Dashboard {
             let restingHR: Double?
             let rmssdMs: Double?
             let quality: SleepQuality
+            /// Stored hypnogram, ordered and tiled across the session. Empty when this night predates
+            /// staging or the session was too short to stage.
+            let stages: [StageSegment]
+            /// Seconds per stage. Empty when unstaged; all four keys are present when staged.
+            let stageTotals: [SleepStage: Int]
+            /// Asleep (light + deep + REM) divided by in-bed seconds. Nil when unstaged.
+            let efficiency: Double?
+
+            /// True when the store has a hypnogram for this session.
+            var isStaged: Bool { !stages.isEmpty }
         }
 
         let context: Context
@@ -330,19 +340,42 @@ enum Dashboard {
         let from = LocalTime.localTime(
             LocalTime.adding(days: -6, to: context.today), hour: 0, in: context.timeZone
         )
-        let rows = try BandRow.fetchAll(db).map(\.id).flatMap { bandID in
-            try db.sleepSessionRows(bandID: bandID, from: from, to: nowMs)
+        // Keep the band on each row: stage segments are keyed by (band_id, session_start_ms).
+        let entries = try BandRow.fetchAll(db).flatMap { band in
+            try db.sleepSessionRows(bandID: band.id, from: from, to: nowMs)
+                .map { (bandID: band.id, row: $0) }
         }
-        let nights = rows
-            .sorted { $0.startMs > $1.startMs }
-            .map { row in
-                SleepSnapshot.Night(
-                    id: row.startMs,
-                    startMs: row.startMs,
-                    durationS: row.durationS,
-                    restingHR: row.restingHr,
-                    rmssdMs: row.rmssdMs,
-                    quality: row.qualityValue
+        let nights = try entries
+            .sorted { $0.row.startMs > $1.row.startMs }
+            .map { entry -> SleepSnapshot.Night in
+                let segments = try db.sleepStageSegments(
+                    bandID: entry.bandID,
+                    sessionStartMs: entry.row.startMs
+                )
+                var totals: [SleepStage: Int] = [:]
+                if !segments.isEmpty {
+                    totals = try db.sleepStageTotals(
+                        bandID: entry.bandID,
+                        sessionStartMs: entry.row.startMs
+                    )
+                }
+                let stagedSeconds = totals.values.reduce(0, +)
+                let asleepSeconds = (totals[.light] ?? 0)
+                    + (totals[.deep] ?? 0)
+                    + (totals[.rem] ?? 0)
+                let efficiency = stagedSeconds > 0
+                    ? min(1.0, max(0.0, Double(asleepSeconds) / Double(stagedSeconds)))
+                    : nil
+                return SleepSnapshot.Night(
+                    id: entry.row.startMs,
+                    startMs: entry.row.startMs,
+                    durationS: entry.row.durationS,
+                    restingHR: entry.row.restingHr,
+                    rmssdMs: entry.row.rmssdMs,
+                    quality: entry.row.qualityValue,
+                    stages: segments,
+                    stageTotals: totals,
+                    efficiency: efficiency
                 )
             }
         return SleepSnapshot(context: context, nights: nights)

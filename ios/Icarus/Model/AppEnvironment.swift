@@ -298,7 +298,18 @@ final class AppEnvironment {
                     in: zone,
                     computedAtMs: computedAtMs
                 )
-                BandLog.tierB(.info, "app: stored batch; sleep derivation succeeded")
+                // Stage the nights the drained batch touched. Session detection above runs over the
+                // whole span (so start_ms keys stay stable), but staging is bounded to sessions
+                // overlapping this batch: an unchanged older night keeps its persisted hypnogram.
+                // Sessions shorter than SleepStager.minimumSessionSeconds are skipped, and the
+                // current algorithm version lets unchanged windows be left alone.
+                let stagedSegments = try db.deriveSleepStageSegments(
+                    from: fromMs,
+                    to: toMs + 1,
+                    bandID: bandID,
+                    computedAtMs: computedAtMs
+                )
+                BandLog.tierB(.info, "app: stored batch; sleep derivation succeeded (\(stagedSegments) stage segment(s) written)")
                 return inserted
             }
             // Recompute minute metrics for the WHOLE drained batch range, not a short tail: a
@@ -473,6 +484,7 @@ final class AppEnvironment {
                     arguments: [junkRecordCutoffMs]
                 )
                 let junk = db.changesCount
+                try db.execute(sql: "DELETE FROM sleep_stage_segment")
                 try db.execute(sql: "DELETE FROM sleep_session")
                 let sessions = db.changesCount
                 // Re-derive over each band's whole stored span right away, so correct sessions
@@ -496,6 +508,12 @@ final class AppEnvironment {
                         to: spanMax + 1,
                         bandID: bandID,
                         in: zone,
+                        computedAtMs: nowMs
+                    )
+                    _ = try db.deriveSleepStageSegments(
+                        from: spanMin,
+                        to: spanMax + 1,
+                        bandID: bandID,
                         computedAtMs: nowMs
                     )
                 }

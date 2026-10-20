@@ -2,17 +2,23 @@ import Metrics
 import SwiftUI
 
 /// The last 7 nights of derived sleep sessions (PLAN.md 8.1, 10.2 v2). Sessions come from the band's
-/// offloaded history (PLAN.md 5.3.4), so the list stays empty until a sync has drained it.
+/// offloaded history (PLAN.md 5.3.4), so the list stays empty until a sync has drained it. The newest
+/// night shows its stored hypnogram inline; older nights open a detail with the same chart and facts.
 struct SleepView: View {
     let environment: AppEnvironment
 
     @State private var snapshot: Dashboard.SleepSnapshot?
 
+    private var timeZone: TimeZone {
+        snapshot?.context.timeZone ?? Dashboard.fallbackZone
+    }
+
     var body: some View {
         List {
             if let nights = snapshot?.nights, !nights.isEmpty {
-                ForEach(nights) { night in
-                    nightSection(night)
+                latestSection(nights[0])
+                ForEach(nights.dropFirst()) { night in
+                    priorNightSection(night)
                 }
             } else {
                 Section {
@@ -34,37 +40,145 @@ struct SleepView: View {
 
     // MARK: Nights
 
-    private func nightSection(_ night: Dashboard.SleepSnapshot.Night) -> some View {
+    /// The most recent night carries the full hypnogram and stage breakdown.
+    private func latestSection(_ night: Dashboard.SleepSnapshot.Night) -> some View {
         Section {
-            LabeledContent("Bed → wake") {
-                Text(sleepWindow(night))
-                    .monospacedDigit()
-            }
-            LabeledContent("Duration") {
-                Text(Format.duration(night.durationS))
-                    .monospacedDigit()
-            }
-            LabeledContent("Quality") {
-                Text(Format.sleepQuality(night.quality))
-                    .foregroundStyle(Palette.sleepQuality(night.quality))
-            }
-            LabeledContent("Median HR") {
-                Text(night.restingHR.map { Format.number($0, unit: "bpm") } ?? "--")
-                    .monospacedDigit()
-            }
-            LabeledContent("RMSSD") {
-                Text(night.rmssdMs.map { Format.number($0, unit: "ms") } ?? "--")
-                    .monospacedDigit()
-            }
+            nightStages(night)
+            nightFacts(night, timeZone: timeZone)
         } header: {
             // The night is labelled by the day it started (PLAN.md 8.1's evening-to-morning window).
             Text(Date(epochMs: night.startMs), style: .date)
         }
     }
 
-    private func sleepWindow(_ night: Dashboard.SleepSnapshot.Night) -> String {
-        let wakeMs = night.startMs + night.durationS * 1_000
-        let zone = snapshot?.context.timeZone ?? Dashboard.fallbackZone
-        return "\(Format.clock(night.startMs, in: zone)) – \(Format.clock(wakeMs, in: zone))"
+    /// Older nights keep a compact summary in the list and open the chart on tap.
+    private func priorNightSection(_ night: Dashboard.SleepSnapshot.Night) -> some View {
+        Section {
+            NavigationLink {
+                SleepNightDetailView(night: night, timeZone: timeZone)
+            } label: {
+                priorNightLabel(night)
+            }
+        } header: {
+            Text(Date(epochMs: night.startMs), style: .date)
+        }
     }
+
+    private func priorNightLabel(_ night: Dashboard.SleepSnapshot.Night) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.s8) {
+            HStack(alignment: .firstTextBaseline, spacing: Spacing.s8) {
+                Text(Format.duration(night.durationS))
+                    .font(.headline)
+                    .monospacedDigit()
+                Spacer(minLength: Spacing.s8)
+                Text(Format.sleepQuality(night.quality))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Palette.sleepQuality(night.quality))
+            }
+
+            HStack(spacing: Spacing.s8) {
+                Text(sleepWindow(night, in: timeZone))
+                Spacer(minLength: Spacing.s8)
+                if let efficiency = night.efficiency {
+                    Text("Asleep \(Format.percent(efficiency))")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .monospacedDigit()
+
+            if night.isStaged {
+                SleepStageBar(totals: night.stageTotals, showsLegend: false)
+                Text(SleepStageTotals.summary(night.stageTotals))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .lineLimit(2)
+            } else {
+                Text("Stages not yet computed — sync to update")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, Spacing.s4)
+    }
+}
+
+/// A prior night's hypnogram, stage breakdown and the facts the list used to show inline.
+private struct SleepNightDetailView: View {
+    let night: Dashboard.SleepSnapshot.Night
+    let timeZone: TimeZone
+
+    var body: some View {
+        List {
+            Section {
+                nightStages(night)
+            } header: {
+                Text(Date(epochMs: night.startMs), style: .date)
+            }
+
+            Section("Night") {
+                nightFacts(night, timeZone: timeZone)
+            }
+        }
+        .navigationTitle(Text(Date(epochMs: night.startMs), style: .date))
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: Shared rows
+
+/// The chart, stage totals and efficiency, or the honest empty state for a night that predates staging.
+@ViewBuilder
+private func nightStages(_ night: Dashboard.SleepSnapshot.Night) -> some View {
+    if night.isStaged {
+        VStack(alignment: .leading, spacing: Spacing.s12) {
+            SleepStageChart(segments: night.stages, totals: night.stageTotals)
+                .frame(height: Spacing.s48 * 3)
+            SleepStageSummaryRow(totals: night.stageTotals)
+            HStack(spacing: Spacing.s8) {
+                Text("Time asleep")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: Spacing.s8)
+                Text(night.efficiency.map { Format.percent($0) } ?? "--")
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+            }
+        }
+        .padding(.vertical, Spacing.s4)
+    } else {
+        Text("Stages not yet computed — sync to update")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+    }
+}
+
+@ViewBuilder
+private func nightFacts(_ night: Dashboard.SleepSnapshot.Night, timeZone: TimeZone) -> some View {
+    LabeledContent("Bed → wake") {
+        Text(sleepWindow(night, in: timeZone))
+            .monospacedDigit()
+    }
+    LabeledContent("Duration") {
+        Text(Format.duration(night.durationS))
+            .monospacedDigit()
+    }
+    LabeledContent("Quality") {
+        Text(Format.sleepQuality(night.quality))
+            .foregroundStyle(Palette.sleepQuality(night.quality))
+    }
+    LabeledContent("Median HR") {
+        Text(night.restingHR.map { Format.number($0, unit: "bpm") } ?? "--")
+            .monospacedDigit()
+    }
+    LabeledContent("RMSSD") {
+        Text(night.rmssdMs.map { Format.number($0, unit: "ms") } ?? "--")
+            .monospacedDigit()
+    }
+}
+
+private func sleepWindow(_ night: Dashboard.SleepSnapshot.Night, in timeZone: TimeZone) -> String {
+    let wakeMs = night.startMs + night.durationS * 1_000
+    return "\(Format.clock(night.startMs, in: timeZone)) – \(Format.clock(wakeMs, in: timeZone))"
 }
