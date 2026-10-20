@@ -72,13 +72,23 @@ extension TrendSeries {
     }
 }
 
+/// Everything Today reads in one observation: the summary, the two per-minute timelines and the
+/// calibration progress. Bundling them keeps the cards on the same store snapshot.
+private struct TodayData: Sendable {
+    let snapshot: Dashboard.TodaySnapshot
+    let dayStartMs: Int64
+    let zoneTimeline: HRZoneTimeline
+    let stressTimeline: [StressTimelinePoint]
+    let calibration: StressCalibrationProgress
+}
+
 /// The Today dashboard: live heart rate, four metric tiles, and stress and zones for the day. Band and sync state
 /// lives in Settings.
 struct TodayView: View {
     let environment: AppEnvironment
     let liveState: LiveState
 
-    @State private var snapshot: Dashboard.TodaySnapshot?
+    @State private var data: TodayData?
     @State private var sleep: Dashboard.SleepSnapshot?
 
     var body: some View {
@@ -115,11 +125,30 @@ struct TodayView: View {
         .task {
             let clock = environment.clock
             do {
-                for try await value in environment.database.observe({ try Dashboard.today($0, nowMs: clock.nowMs) }) {
-                    snapshot = value
+                for try await value in environment.database.observe({ db in
+                    let now = clock.nowMs
+                    let snapshot = try Dashboard.today(db, nowMs: now)
+                    let dayStart = LocalTime.localTime(
+                        snapshot.context.today,
+                        hour: 0,
+                        in: snapshot.context.timeZone
+                    )
+                    return TodayData(
+                        snapshot: snapshot,
+                        dayStartMs: dayStart,
+                        zoneTimeline: try Dashboard.hrZoneTimeline(
+                            db, nowMs: now, fromMs: dayStart, context: snapshot.context
+                        ),
+                        stressTimeline: try Dashboard.stressTimeline(db, nowMs: now, fromMs: dayStart),
+                        calibration: try Dashboard.stressCalibration(
+                            db, nowMs: now, context: snapshot.context
+                        )
+                    )
+                }) {
+                    data = value
                 }
             } catch {
-                snapshot = nil
+                data = nil
             }
         }
         .task {
@@ -153,6 +182,24 @@ struct TodayView: View {
                         Text(Format.sleepQuality(latest.quality))
                             .foregroundStyle(Palette.sleepQuality(latest.quality))
                     }
+                    HStack(spacing: Spacing.s8) {
+                        Text(sleepWindow(latest))
+                        Spacer(minLength: Spacing.s8)
+                        if let comparison = sleepComparison(latest) {
+                            Text(comparison)
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    HStack(spacing: Spacing.s16) {
+                        Text("RHR \(latest.restingHR.map { Format.bpm($0) } ?? "--")")
+                        Text("RMSSD \(latest.rmssdMs.map { Format.ms($0) } ?? "--")")
+                        Spacer(minLength: 0)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
                 } else {
                     Text("No data yet")
                         .font(.subheadline)
@@ -215,6 +262,18 @@ struct TodayView: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                if let snapshot {
+                    HStack(alignment: .top, spacing: Spacing.s16) {
+                        summaryStat(title: "Avg", value: snapshot.hrAvg.map { Format.bpm($0) } ?? "--")
+                        summaryStat(title: "Max", value: snapshot.hrMax.map { Format.bpm($0) } ?? "--")
+                        summaryStat(title: "Data coverage", value: Format.percent(snapshot.coverage))
+                    }
+                    if snapshot.coverage < 0.8 {
+                        Text("Partial day")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
         }
         .buttonStyle(.plain)
@@ -241,6 +300,20 @@ struct TodayView: View {
         }
     }
 
+    private func summaryStat(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.s4) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var metricGrid: some View {
         LazyVGrid(
             columns: [
@@ -256,6 +329,7 @@ struct TodayView: View {
                     tint: Palette.sleep,
                     value: restingValue,
                     unit: restingValue == "--" ? nil : "bpm",
+                    caption: "Lowest 5-min in 00:00–06:00",
                     change: restingSeries.change,
                     changeUnit: "bpm"
                 ) {
@@ -271,6 +345,7 @@ struct TodayView: View {
                     tint: Palette.hrv,
                     value: hrvValue,
                     unit: hrvValue == "--" ? nil : "ms",
+                    caption: hrvCaption,
                     change: hrvSeries.change,
                     changeUnit: "ms"
                 ) {
@@ -285,16 +360,34 @@ struct TodayView: View {
                     symbol: "gauge.with.dots.needle.67percent",
                     tint: Palette.stressModerate,
                     value: stressValue,
+                    caption: latestStress == nil ? nil : "Estimated",
                     valueIdentifier: "today.stressValue"
                 ) {
                     HStack(spacing: Spacing.s8) {
                         StressGauge(value: latestStress)
                             .frame(width: MetricTileLayout.visualHeight, height: MetricTileLayout.visualHeight)
-                        if let band = stressCaption {
-                            Text(band)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: Spacing.s4) {
+                            if let band = stressCaption {
+                                Text(band)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if let average = snapshot?.stressAverage, let peak = snapshot?.stressPeak {
+                                Text("Avg \(Int(average.rounded())) · Peak \(peak)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
+                            if let day = snapshot?.stressDay, day.sampleMinutes > 0 {
+                                StressBandMinutesCompact(summary: day)
+                            } else if showsCalibrationNote {
+                                Text(calibrationLine)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
                         }
+                        Spacer(minLength: 0)
                     }
                 }
             }
@@ -315,10 +408,13 @@ struct TodayView: View {
                             EmptyView()
                         }
                         .frame(width: MetricTileLayout.visualHeight, height: MetricTileLayout.visualHeight)
-                        Text(activeText)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
+                        VStack(alignment: .leading, spacing: Spacing.s4) {
+                            Text(activeText)
+                            Text(bmrText)
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
                     }
                 }
             }
@@ -334,11 +430,29 @@ struct TodayView: View {
                 tint: .orange,
                 showsChevron: true
             ) {
-                if let buckets = snapshot?.stressBuckets, !buckets.isEmpty {
-                    StressBarChart(buckets: buckets)
+                if let data {
+                    if data.snapshot.stressDay.sampleMinutes > 0 {
+                        stressSummary(data.snapshot.stressDay)
+                        StressTimelineChart(
+                            points: data.stressTimeline,
+                            fromMs: data.dayStartMs,
+                            toMs: data.snapshot.context.nowMs
+                        )
                         .frame(height: Spacing.s48 * 2)
                         .allowsHitTesting(false)
-                    StressLegend()
+                        StressLegend()
+                        StressBandMinutesRow(summary: data.snapshot.stressDay)
+                    }
+                    if showsCalibrationNote {
+                        if data.snapshot.stressDay.sampleMinutes > 0 {
+                            Divider()
+                        }
+                        StressCalibrationNote(progress: data.calibration, state: stressState)
+                    } else if data.snapshot.stressDay.sampleMinutes == 0 {
+                        Text(noStressText)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
                     Text("No stress values yet")
                         .font(.subheadline)
@@ -349,6 +463,21 @@ struct TodayView: View {
         .buttonStyle(.plain)
     }
 
+    private func stressSummary(_ day: StressDaySummary) -> some View {
+        HStack(spacing: Spacing.s16) {
+            if let average = day.average {
+                Text("Average \(Int(average.rounded()))")
+            }
+            if let peak = day.peak {
+                Text("Peak \(peak)")
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+    }
+
     private var zonesCard: some View {
         NavigationLink(value: TodayDestination.heartRate) {
             DashboardCard(
@@ -357,9 +486,21 @@ struct TodayView: View {
                 tint: .green,
                 showsChevron: true
             ) {
+                if let data, !data.zoneTimeline.runs.isEmpty {
+                    ZoneTimelineChart(
+                        timeline: data.zoneTimeline,
+                        fromMs: data.dayStartMs,
+                        toMs: data.snapshot.context.nowMs
+                    )
+                    .frame(height: Spacing.s48 * 2 + Spacing.s16)
+                    .allowsHitTesting(false)
+                }
                 if let zones = snapshot?.zones, zones.contains(where: { $0.minutes > 0 }) {
+                    Text("Minutes by zone")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     ZoneBar(zones: zones)
-                } else {
+                } else if data == nil || data?.zoneTimeline.runs.isEmpty == true {
                     Text("Zones need a profile and a night of data.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -370,6 +511,18 @@ struct TodayView: View {
     }
 
     // MARK: Values
+
+    private var snapshot: Dashboard.TodaySnapshot? {
+        data?.snapshot
+    }
+
+    private var stressTimeline: [StressTimelinePoint] {
+        data?.stressTimeline ?? []
+    }
+
+    private var calibration: StressCalibrationProgress {
+        data?.calibration ?? .unavailable
+    }
 
     private var sparklinePoints: [HRPoint] {
         let raw = (snapshot?.sparkline ?? []).map { HRPoint(date: $0.date, bpm: Double($0.bpm)) }
@@ -417,18 +570,54 @@ struct TodayView: View {
         return "\(Int(value.rounded()))"
     }
 
+    private var hrvCaption: String? {
+        guard let sdnn = snapshot?.latestMinute?.sdnnMs else { return nil }
+        return "SDNN \(Format.ms(sdnn))"
+    }
+
     private var latestStress: Int? {
-        snapshot?.latestMinute?.stress
+        if let stress = snapshot?.latestMinute?.stress { return stress }
+        return stressTimeline.last(where: { $0.stress != nil })?.stress
+    }
+
+    private var stressState: StressState? {
+        snapshot?.latestMinute?.state ?? stressTimeline.last?.state
     }
 
     private var stressValue: String {
         if let latest = latestStress { return "\(latest)" }
-        return Format.stressState(snapshot?.latestMinute?.state ?? .insufficient)
+        if let state = stressState, state != .value { return Format.stressState(state) }
+        if calibration.nights.isEmpty { return "No baseline" }
+        if !calibration.isCalibrated { return "Calibrating" }
+        return "No values"
     }
 
     private var stressCaption: String? {
         guard let latest = latestStress else { return nil }
         return Format.stressBand(latest)
+    }
+
+    private var calibrationLine: String {
+        guard !calibration.nights.isEmpty else { return "No baseline" }
+        return "\(calibration.qualifyingDays) of \(calibration.requiredDays) nights"
+    }
+
+    private var showsCalibrationNote: Bool {
+        guard let data else { return false }
+        switch stressState {
+        case .some(.calibrating), .some(.hrOnly), .some(.insufficient):
+            return true
+        default:
+            break
+        }
+        return data.snapshot.stressDay.sampleMinutes == 0 && !data.calibration.isCalibrated
+    }
+
+    private var noStressText: String {
+        if stressState == .exertion {
+            return "Stress is not scored during exertion."
+        }
+        return "No stress values yet"
     }
 
     private var caloriesValue: String {
@@ -444,5 +633,36 @@ struct TodayView: View {
     private var activeText: String {
         guard let active = snapshot?.today?.kcalActive else { return "Active --" }
         return "Active \(Int(active.rounded())) kcal"
+    }
+
+    private var bmrText: String {
+        guard let total = snapshot?.today?.kcalTotal, let active = snapshot?.today?.kcalActive else {
+            return "BMR --"
+        }
+        return "BMR \(Int(max(0, total - active).rounded())) kcal"
+    }
+
+    // MARK: Sleep values
+
+    private var sleepTimeZone: TimeZone {
+        sleep?.context.timeZone ?? Dashboard.fallbackZone
+    }
+
+    private func sleepWindow(_ night: Dashboard.SleepSnapshot.Night) -> String {
+        let wakeMs = night.startMs + night.durationS * 1_000
+        return "\(Format.clock(night.startMs, in: sleepTimeZone)) – \(Format.clock(wakeMs, in: sleepTimeZone))"
+    }
+
+    /// Latest duration against the recent nights, including the latest. Named for the actual count when
+    /// fewer than seven nights have synced.
+    private func sleepComparison(_ latest: Dashboard.SleepSnapshot.Night) -> String? {
+        guard let nights = sleep?.nights, nights.count > 1 else { return nil }
+        let recent = Array(nights.prefix(7))
+        let average = Double(recent.reduce(Int64(0)) { $0 + $1.durationS }) / Double(recent.count)
+        let deltaMinutes = Int(((Double(latest.durationS) - average) / 60).rounded())
+        let label = recent.count >= 7 ? "7-day average" : "\(recent.count)-night average"
+        if deltaMinutes == 0 { return "At \(label)" }
+        if deltaMinutes > 0 { return "\(deltaMinutes) min above \(label)" }
+        return "\(-deltaMinutes) min below \(label)"
     }
 }

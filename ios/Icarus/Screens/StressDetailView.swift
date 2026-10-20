@@ -2,14 +2,27 @@ import Metrics
 import Store
 import SwiftUI
 
+/// One read of the stress screen: the summary, the 24-hour timeline and the calibration progress.
+private struct StressScreenData: Sendable {
+    let snapshot: Dashboard.StressSnapshot
+    let timeline: [StressTimelinePoint]
+    let calibration: StressCalibrationProgress
+    let fromMs: Int64
+    let nowMs: Int64
+}
+
 /// Stress now, over 24 h and over 7, 30 or 90 days, with RMSSD and sqrt(Baevsky SI) (PLAN.md §14 row 9).
 struct StressDetailView: View {
     let environment: AppEnvironment
 
-    @State private var snapshot: Dashboard.StressSnapshot?
+    @State private var data: StressScreenData?
     @State private var span: TrendSpan = .week
     @State private var trends: Dashboard.TrendsSnapshot?
     @State private var showsMethod = false
+
+    private var snapshot: Dashboard.StressSnapshot? {
+        data?.snapshot
+    }
 
     var body: some View {
         ScrollView {
@@ -31,21 +44,36 @@ struct StressDetailView: View {
                             Text("Estimated")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                            if let data, !data.calibration.nights.isEmpty, !data.calibration.isCalibrated {
+                                Text("\(data.calibration.qualifyingDays) of \(data.calibration.requiredDays) nights")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
                         }
                     }
                 }
 
-                ChartCard(title: "Last 24 h", footer: "Each bar is a 15-minute average.") {
+                ChartCard(title: "Last 24 h", footer: "Each point is a scored minute. Calibrating, exertion and insufficient minutes are gaps.") {
                     StressLegend()
                 } chart: {
-                    if let buckets = snapshot?.buckets, !buckets.isEmpty {
-                        StressBarChart(buckets: buckets)
+                    if let data, data.timeline.contains(where: { $0.stress != nil }) {
+                        StressTimelineChart(points: data.timeline, fromMs: data.fromMs, toMs: data.nowMs)
                             .frame(height: Spacing.s48 * 3)
-                            .accessibilityValue(bucketSummary)
                     } else {
                         Text("No stress values yet")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let data {
+                    DashboardCard(title: "Calibration", symbol: "slider.horizontal.3", tint: .orange) {
+                        StressCalibrationDetail(
+                            progress: data.calibration,
+                            state: data.snapshot.latest?.state,
+                            timeZone: data.snapshot.context.timeZone
+                        )
                     }
                 }
 
@@ -104,9 +132,17 @@ struct StressDetailView: View {
         .navigationTitle("Stress")
         .task {
             for await value in environment.snapshots(every: .seconds(15), { db, nowMs in
-                try Dashboard.stress(db, nowMs: nowMs)
+                let snapshot = try Dashboard.stress(db, nowMs: nowMs)
+                let fromMs = nowMs - 24 * 60 * LocalTime.msPerMinute
+                return StressScreenData(
+                    snapshot: snapshot,
+                    timeline: try Dashboard.stressTimeline(db, nowMs: nowMs, fromMs: fromMs),
+                    calibration: try Dashboard.stressCalibration(db, nowMs: nowMs, context: snapshot.context),
+                    fromMs: fromMs,
+                    nowMs: nowMs
+                )
             }) {
-                snapshot = value
+                data = value
             }
         }
         .task(id: span) {
@@ -150,12 +186,6 @@ struct StressDetailView: View {
         "Daily averages. " + stressTrend.latestFooter(unit: "")
     }
 
-    private var bucketSummary: String {
-        let values = (snapshot?.buckets ?? []).map(\.average)
-        guard let low = values.min(), let high = values.max() else { return "No values" }
-        return "Range \(low) to \(high)"
-    }
-
     private var currentValue: String {
         if let stress = latest?.stress { return "\(stress)" }
         return Format.stressState(latest?.state ?? .insufficient)
@@ -179,7 +209,9 @@ private struct StressMethodSheet: View {
             List {
                 Section("Method") {
                     Text("Stress compares your heart rate and RMSSD in 5-minute windows with your own nights from the last 14 days.")
-                    Text("Values need 7 days of nights before they appear. Until then the state reads Calibrating.")
+                    Text("A night qualifies with 12 five-minute windows (1 h) of valid R-R between 00:00 and 06:00, outside exertion.")
+                    Text("Values need 7 qualifying nights before they appear. Until then the state reads Calibrating.")
+                    Text("Without R-R, 7 nights of heart-rate windows can score an HR-only fallback. It omits HRV, so it is less specific.")
                 }
                 Section("Limits") {
                     Text("Band readings are less precise than an ECG. Motion adds noise. Windows above 40 % heart-rate reserve are excluded as exertion.")

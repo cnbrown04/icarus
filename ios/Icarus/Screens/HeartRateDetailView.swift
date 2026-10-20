@@ -1,5 +1,14 @@
+import Metrics
 import Store
 import SwiftUI
+
+/// Everything the heart-rate screen reads in one snapshot: the selected range, plus today's zone
+/// timeline for the day chart above the per-zone bars.
+private struct HeartRateScreenData: Sendable {
+    let snapshot: Dashboard.HeartRateSnapshot
+    let dayStartMs: Int64
+    let dayTimeline: HRZoneTimeline
+}
 
 /// Heart rate over 1 h to 7 d, with zones and min, average and max, and resting HR over 7, 30 or 90 days
 /// (PLAN.md §14 row 8).
@@ -8,9 +17,17 @@ struct HeartRateDetailView: View {
 
     @State private var range: Dashboard.HeartRateRange = .hour
     @State private var span: TrendSpan = .month
-    @State private var snapshot: Dashboard.HeartRateSnapshot?
+    @State private var data: HeartRateScreenData?
     @State private var trends: Dashboard.TrendsSnapshot?
     @State private var selection: Date?
+
+    private var snapshot: Dashboard.HeartRateSnapshot? {
+        data?.snapshot
+    }
+
+    private var dayTimeline: HRZoneTimeline {
+        data?.dayTimeline ?? .empty
+    }
 
     var body: some View {
         ScrollView {
@@ -40,9 +57,23 @@ struct HeartRateDetailView: View {
                 }
 
                 DashboardCard(title: "Zones", symbol: "figure.run", tint: .green) {
+                    if let data, !data.dayTimeline.runs.isEmpty {
+                        Text("Today, by minute")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        ZoneTimelineChart(
+                            timeline: data.dayTimeline,
+                            fromMs: data.dayStartMs,
+                            toMs: data.snapshot.context.nowMs
+                        )
+                        .frame(height: Spacing.s48 * 2 + Spacing.s16)
+                    }
                     if let zones = snapshot?.zones, zones.contains(where: { $0.minutes > 0 }) {
+                        Text("Minutes by zone, \(range.label)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         ZoneBar(zones: zones)
-                    } else {
+                    } else if data == nil || dayTimeline.runs.isEmpty {
                         Text("Zones need a profile and a night of data.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -75,9 +106,21 @@ struct HeartRateDetailView: View {
         .task(id: range) {
             let selected = range
             for await value in environment.snapshots(every: .seconds(15), { db, nowMs in
-                try Dashboard.heartRate(db, nowMs: nowMs, range: selected)
+                let snapshot = try Dashboard.heartRate(db, nowMs: nowMs, range: selected)
+                let dayStart = LocalTime.localTime(
+                    snapshot.context.today,
+                    hour: 0,
+                    in: snapshot.context.timeZone
+                )
+                return HeartRateScreenData(
+                    snapshot: snapshot,
+                    dayStartMs: dayStart,
+                    dayTimeline: try Dashboard.hrZoneTimeline(
+                        db, nowMs: nowMs, fromMs: dayStart, context: snapshot.context
+                    )
+                )
             }) {
-                snapshot = value
+                data = value
             }
         }
         .task(id: span) {

@@ -36,6 +36,10 @@ struct SleepView: View {
 
     private func nightSection(_ night: Dashboard.SleepSnapshot.Night) -> some View {
         Section {
+            LabeledContent("Bed → wake") {
+                Text(sleepWindow(night))
+                    .monospacedDigit()
+            }
             LabeledContent("Duration") {
                 Text(Format.duration(night.durationS))
                     .monospacedDigit()
@@ -56,5 +60,11 @@ struct SleepView: View {
             // The night is labelled by the day it started (PLAN.md 8.1's evening-to-morning window).
             Text(Date(epochMs: night.startMs), style: .date)
         }
+    }
+
+    private func sleepWindow(_ night: Dashboard.SleepSnapshot.Night) -> String {
+        let wakeMs = night.startMs + night.durationS * 1_000
+        let zone = snapshot?.context.timeZone ?? Dashboard.fallbackZone
+        return "\(Format.clock(night.startMs, in: zone)) – \(Format.clock(wakeMs, in: zone))"
     }
 }

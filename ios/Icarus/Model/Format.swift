@@ -33,6 +33,20 @@ enum Format {
         return rest == 0 ? "\(hours) h" : "\(hours) h \(rest) min"
     }
 
+    /// A minute count as hours and minutes, for chart summaries and calibration shortfalls.
+    static func duration(minutes: Int) -> String {
+        duration(Int64(minutes) * 60)
+    }
+
+    /// A wall-clock time in the profile's zone, e.g. "10:48 PM". Used for sleep bounds.
+    static func clock(_ epochMs: Int64, in timeZone: TimeZone) -> String {
+        let formatter = DateFormatter()
+        formatter.timeZone = timeZone
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter.string(from: Date(epochMs: epochMs))
+    }
+
     /// A number with an optional unit, rounded. Used by trend averages.
     static func number(_ value: Double, unit: String) -> String {
         let text = "\(Int(value.rounded()))"
@@ -49,6 +63,11 @@ enum Format {
     /// Percent with a regular space before the sign, as the zone labels use.
     static func percent(_ value: Int) -> String {
         "\(value) %"
+    }
+
+    /// A fraction (0...1) as a percent with a regular space before the sign.
+    static func percent(_ fraction: Double) -> String {
+        percent(Int((fraction * 100).rounded()))
     }
 
     /// Band word for a stress value (PLAN.md 8.3).

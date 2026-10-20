@@ -80,10 +80,23 @@ enum Dashboard {
         let today: DaySummary?
         /// Stress for the local day so far, in 15-minute buckets.
         let stressBuckets: [StressBucket]
+        /// Stress for the local day so far, averaged and counted by band.
+        let stressDay: StressDaySummary
         /// Heart-rate zones for the local day so far.
         let zones: [ZoneMinutes]
         /// Seven local days, oldest first, ending today.
         let week: [DaySummary]
+
+        /// Today's sample-weighted mean heart rate, from `today`.
+        var hrAvg: Double? { today?.hrAvg }
+        /// Today's highest minute heart rate, from `today`.
+        var hrMax: Int? { today?.hrMax }
+        /// Fraction of today's 1440 minutes with heart-rate samples, from `today`.
+        var coverage: Double { today?.coverage ?? 0 }
+        /// Today's mean stress, from `stressDay`.
+        var stressAverage: Double? { stressDay.average }
+        /// Today's highest minute stress, from `stressDay`.
+        var stressPeak: Int? { stressDay.peak }
     }
 
     static func today(_ db: Database, nowMs: Int64) throws -> TodaySnapshot {
@@ -92,12 +105,14 @@ enum Dashboard {
         let recent = try db.minuteMetricRows(from: nowMs - 10 * LocalTime.msPerMinute, to: nowMs)
         let dayStart = LocalTime.localTime(context.today, hour: 0, in: context.timeZone)
         let dayRows = try db.minuteMetricRows(from: dayStart, to: nowMs)
+        let stress = stressSamples(dayRows)
         return TodaySnapshot(
             context: context,
             sparkline: samples.map { TodaySnapshot.Point(id: $0.rowid, date: Date(epochMs: $0.tsMs), bpm: $0.bpm) },
             latestMinute: recent.last,
             today: try db.daySummaries([context.today], in: context.timeZone).first,
-            stressBuckets: StressBuckets.make(stressSamples(dayRows), bucketMs: stressBucketMs),
+            stressBuckets: StressBuckets.make(stress, bucketMs: stressBucketMs),
+            stressDay: StressDaySummary.make(samples: stress),
             zones: zoneMinutes(dayRows, context: context),
             week: try db.daySummaries(weekDays(context), in: context.timeZone)
         )
@@ -192,6 +207,53 @@ enum Dashboard {
             baevskySqrt: rows.last(where: { $0.baevskySqrt != nil })?.baevskySqrt,
             week: try db.daySummaries(weekDays(context), in: context.timeZone),
             context: context
+        )
+    }
+
+    // MARK: Timelines and calibration
+
+    /// Per-minute zone points and coalesced runs for `[fromMs, nowMs)`. Pass `context` when the caller
+    /// already has one so the profile, resting HR and HRmax come from the same snapshot.
+    static func hrZoneTimeline(
+        _ db: Database,
+        nowMs: Int64,
+        fromMs: Int64,
+        context: Context? = nil
+    ) throws -> HRZoneTimeline {
+        let context = try context ?? Context.load(db, nowMs: nowMs)
+        guard let restingHR = context.restingHR, let maxHR = context.maxHR else { return .empty }
+        let rows = try db.minuteMetricRows(from: min(fromMs, nowMs), to: nowMs)
+        return HeartRateSeries.zoneTimeline(rows, restingHR: restingHR, maxHR: maxHR)
+    }
+
+    /// Per-minute stress points for `[fromMs, nowMs)`, including minutes whose state has no value.
+    static func stressTimeline(_ db: Database, nowMs: Int64, fromMs: Int64) throws -> [StressTimelinePoint] {
+        StressTimeline.points(try db.minuteMetricRows(from: min(fromMs, nowMs), to: nowMs))
+    }
+
+    /// How close the stress baseline is to ready: qualifying nights, the 7-night requirement, and the
+    /// per-night shortfall. Uses the same rules as scoring, so its counts match `StressBaseline.build`.
+    static func stressCalibration(
+        _ db: Database,
+        nowMs: Int64,
+        context: Context? = nil
+    ) throws -> StressCalibrationProgress {
+        let context = try context ?? Context.load(db, nowMs: nowMs)
+        guard let maxHR = context.maxHR else { return .unavailable }
+        let day = LocalTime.localDay(containing: nowMs, in: context.timeZone)
+        let lookbackStart = LocalTime.localTime(
+            LocalTime.adding(days: -Stress.lookbackDays, to: day),
+            hour: 0,
+            in: context.timeZone
+        )
+        let dayStart = LocalTime.localTime(day, hour: 0, in: context.timeZone)
+        let stored = try db.minuteMetricRows(from: lookbackStart, to: dayStart)
+        return Stress.calibrationProgress(
+            windows: FiveMinuteWindow.rebuilt(from: stored),
+            day: day,
+            in: context.timeZone,
+            restingHR: context.restingHR,
+            maxHR: maxHR
         )
     }
 
