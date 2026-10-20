@@ -100,30 +100,34 @@ APNs `.p8` key + signing capability), TestFlight (no ASC secrets), Apple Watch, 
    recompute their minute metrics. The graph reads `hr_sample`, which only realtime
    ingest wrote — without the backfill, drained gaps stayed invisible forever.
 
-## Current status (as of 2026-10-20 early)
+## Current status (as of 2026-10-20)
 
-- All packages green: BandProtocol 105, BandKit 154, Metrics 120, Store 95, SyncKit 58.
-- Tabs: **Today · Alarms · Settings** (Trends removed; 7/30/90-day spans now live on the
-  metric detail screens; Device is Settings → Band).
-- Today page (rich): live HR + 15-min sparkline + today avg/max/coverage; RHR (night-window
-  labelled) + 7-day trend; HRV RMSSD (+SDNN) + trend; stress value/band/average/peak/band
-  minutes + per-minute area timeline + calibration progress; Apple-sleep-style HR **zone
-  timeline** + zone-minute bars; sleep card with bedtime→wake, night RHR, RMSSD, vs-average
-  duration; calories total/active/BMR.
-- Calibration transparency: `StressCalibrationProgress` (7 nights required, 14-day lookback,
-  12 five-minute night windows each, HR-only fallback) surfaced as "X of 7 nights" plus a
-  per-night breakdown and what still needs collecting on Stress detail.
-- Read-time timeline APIs live in Store/Dashboard (`HRZoneTimeline`, `StressTimeline`,
-  `StressDaySummary`, `Dashboard.hrZoneTimeline/stressTimeline/stressCalibration`).
-- Installed build includes: full-history drain (Band → History, live progress), live
-  strap→app sync feedback (`BandEvent.drainProgress` → `LiveState.drainProgress`),
-  whole-batch minute-metric backfill, multi-observer `onTierBChange`, Server sync
-  renamed/clarified, Settings units/HRmax, raw data viewer, configurable retention, debug
-  metrics inspector, and the rich Today page above.
-- Not built (deliberate): Recovery and Strain scores. OpenStrap/analytics computes
-  recovery/strain/sleep from published cited methods — porting those is the next health-metric
-  body of work. Sleep stages, SpO₂ and respiratory rate are not derivable from this hardware
-  (NOOP: respiration is not in the record; SpO₂ not recoverable from time-multiplexed PPG).
+- All packages green: BandProtocol 105, BandKit 154, Metrics 132, Store 102, SyncKit 58.
+- **Navigation**: bottom tabs **Home + Today**; **Settings (gear) and Alarms (bell) are top-right
+  toolbar buttons** opening modal sheets (rooted in NavigationStack with Done).
+- **Home** (summary): greeting + live pill; Last night (duration, quality, bedtime→wake, night RHR,
+  compact stage bar; tap → Sleep); vitals row (RHR / HRV / stress incl. calibrating X/7); today's
+  activity (zones + calories); next alarm; one-line server-sync status.
+- **Today** (decluttered): live HR hero + one stat line; 2×2 tiles (RHR, HRV, Stress, Calories);
+  zone timeline + slim zone strip; stress timeline + band strip; compact sleep card. Detail
+  explainers live only on the detail screens.
+- **Sleep staging**: faithful port of NOOP `SleepStagerV2` (30 s epochs; gravity movement/jerk,
+  HR mean/flatness, R-R RSA regularity, cycle prior + REM-latency guard, Viterbi smoothing).
+  Runs during sleep derivation, persisted in `sleep_stage_segment` (schema v4), keyed by
+  (band_id, session_start_ms), re-derived idempotently; totals + efficiency exclude wake.
+  UI: hypnogram (Wake/REM/Light/Deep) on Sleep (latest + per-night detail), compact stage bar
+  on Home.
+- **Sleep data audit (2026-10-20, our own DB)**: `resp_rate_raw` constant 3073 (165k records) =
+  fixed trailer, NOT respiration; `signal_quality` constant 3074; `spo2_red/ir` constant
+  633/636 → SpO₂ not recoverable; `ppg_green` varies (real); `skin_temp_raw` varies (relative
+  only); **gravity + R-R (≈87 % of sleep records) are the usable staging inputs** — exactly
+  what NOOP V2 consumes. Respiration regularity is recovered from R-R (RSA), per upstream.
+- Installed build includes everything above plus the full-history drain, live drain progress,
+  whole-batch metric backfill, multi-observer onTierBChange, Server-sync clarity fixes,
+  Settings units/HRmax, raw viewer, configurable retention, debug inspector.
+- Not built (deliberate): Recovery and Strain scores (next body of work; OpenStrap/analytics has
+  published-method implementations); sleep-stage accuracy is approximate (NOOP: ~65–73 % epoch
+  ceiling EEG-free, not PSG-validated).
 - Working tree committed; phone on `com.cnbrown04.icarus` build with all of the above.
 - Pending feature follow-ups: none blocking. Open hardware questions: SET_READ_POINTER's exact
   units + re-ack replay behavior on the live strap (probe via the Band → History drain).
