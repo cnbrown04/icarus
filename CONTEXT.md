@@ -73,12 +73,15 @@ APNs `.p8` key + signing capability), TestFlight (no ASC secrets), Apple Watch, 
 
 ## Hard-won lessons (do not regress)
 
-1. **The strap records only while a BLE link is active.** No link → no banked records, at
-   all. Every historical gap traces to a link-less period (app killed / iOS background
-   budget). Overnight coverage = iOS granting background time; the realistic sustained
-   path is BGProcessingTask (`com.cnbrown04.icarus.maintenance`, needs charging + idle) —
-   phone on a charger overnight. Bluetooth state restoration DOES relaunch killed apps
-   (observed twice), giving bursty coverage.
+1. **The strap records autonomously.** OpenStrap's PROTOCOL.md: "The band is a sensor pipe — it
+   does no analytics on-device. It records raw + lightly-processed sensor records to flash and
+   streams/relays them to a phone." Confirmed live 2026-10-19 evening: the app was killed
+   17:25–21:14 and the strap had banked the whole window (drained later as records stamped
+   20:00–21:23). Earlier records appearing only during "linked" windows reflected the drain
+   cadence, not recording. Consequence: a killed app never loses strap-side data — it just
+   arrives later, and the UI must show the strap→app sync so that arrival is visible.
+   Flash is a ring (~131k records ≈ 36 h; OpenStrap: the ack cursor advances but the client
+   never erases flash — re-draining with SET_READ_POINTER is safe).
 2. Decoding timestamps off the full frame envelope latches garbage: header+CRC straddle
    words land inside the plausible-unix window (an EMPTY reply's straddle read as
    "1050 h ahead"; a real reply's as "26001 h ahead") and falsely pause all automatic
@@ -97,19 +100,22 @@ APNs `.p8` key + signing capability), TestFlight (no ASC secrets), Apple Watch, 
    recompute their minute metrics. The graph reads `hr_sample`, which only realtime
    ingest wrote — without the backfill, drained gaps stayed invisible forever.
 
-## Current status (as of 2026-10-19 evening)
+## Current status (as of 2026-10-19 late evening)
 
-- All packages green: BandProtocol 101, BandKit 147, Metrics 112, Store 83, SyncKit 57.
-- Working tree clean; the installed phone build has the drains + clock fix (14:39) but
-  NOT the full-history-drain wiring (17:30/17:32 commits) — pending one plug-in install.
-- Tonight's plan: app started once, phone on a charger (BGProcessingTask path), strap worn.
-  Morning verification: hour-bucket analysis (historical vs hr_sample), the
-  "before SET_CLOCK" reading, pages-behind trajectory.
-- Pending feature follow-ups: Settings → Storage pickers + DebugView metrics
-  inspector/force-recompute are built but also pending the same install.
-- Open hardware questions: whether BGProcessingTask keeps a sustained overnight link;
-  SET_READ_POINTER's exact units + re-ack replay behavior on the live strap.
+- All packages green: BandProtocol 105, BandKit 154, Metrics 112, Store 85, SyncKit 58.
+- Tabs: **Today · Alarms · Settings** (Trends removed; 7/30/90-day spans now live on the
+  metric detail screens; Device is Settings → Band).
+- Installed build includes: full-history drain (Band → History, live progress), live
+  strap→app sync feedback via `BandEvent.drainProgress` → `LiveState.drainProgress`, whole-batch
+  minute-metric backfill, multi-observer `onTierBChange` (alarm re-arm + auto-restore both fire),
+  Server sync renamed/clarified (uploads only; quarantine de-duplicated; retry countdown honest),
+  Settings units/HRmax, raw data viewer, configurable retention, debug metrics inspector.
+- Nightly coverage: strap flash holds the night; the app drains on connect + 15-min cadence
+  (and the full-history restore can rewind). Overnight UI completeness depends on the app
+  getting wake-ups; BGProcessingTask (phone charging + idle) provides the sustained window.
+- Working tree committed; phone on `com.cnbrown04.icarus` build with all of the above.
+- Pending feature follow-ups: none blocking. Open hardware questions: SET_READ_POINTER's exact
+  units + re-ack replay behavior on the live strap (probe via the Band → History drain).
 - Bigger backlog (not started): server deployment, APNs push enablement, TestFlight,
   WHOOP-derived HRmax/calorie cross-check, SpO₂/temp/resp converted displays (gated on
-  verified raw→unit mappings), configurable retention is done-pending-install, watch app,
-  passkeys.
+  verified raw→unit mappings), watch app, passkeys.
