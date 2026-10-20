@@ -82,8 +82,8 @@ private struct TodayData: Sendable {
     let calibration: StressCalibrationProgress
 }
 
-/// The Today dashboard: live heart rate, four metric tiles, and stress and zones for the day. Band and sync state
-/// lives in Settings.
+/// The Today dashboard: live heart rate, four metric tiles, and today's zones, stress and sleep. Band and
+/// sync state live in Settings; each card opens the screen that owns its detail.
 struct TodayView: View {
     let environment: AppEnvironment
     let liveState: LiveState
@@ -102,8 +102,8 @@ struct TodayView: View {
                 }
                 heroCard
                 metricGrid
-                stressCard
                 zonesCard
+                stressCard
                 sleepCard
             }
             .pagePadding()
@@ -165,6 +165,237 @@ struct TodayView: View {
 
     // MARK: Cards
 
+    private var heroCard: some View {
+        NavigationLink(value: TodayDestination.heartRate) {
+            DashboardCard(
+                title: "Heart Rate",
+                symbol: "heart.fill",
+                tint: Palette.heartRate,
+                showsChevron: true,
+                pulses: liveState.isStreaming
+            ) {
+                HStack(alignment: .firstTextBaseline) {
+                    bpmText
+                    Spacer(minLength: Spacing.s8)
+                    StatusPill.link(liveState)
+                }
+                HRAreaChart(points: sparklinePoints, average: nil, selection: .constant(nil))
+                    .frame(height: Spacing.s48 * 2)
+                    .allowsHitTesting(false)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Heart rate, last 15 minutes")
+                    .accessibilityValue(rangeText)
+                Text(heroSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var bpmText: some View {
+        if let bpm = liveState.latestBPM {
+            HStack(alignment: .firstTextBaseline, spacing: Spacing.s4) {
+                Text("\(bpm)")
+                    .font(.heroValue)
+                    .monospacedDigit()
+                    .liveNumberTransition()
+                    .stateAnimation(bpm)
+                    .accessibilityIdentifier("today.hrValue")
+                Text("bpm")
+                    .font(.metricUnit)
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            Text("--")
+                .font(.heroValue)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var metricGrid: some View {
+        LazyVGrid(
+            columns: [
+                GridItem(.flexible(), spacing: Spacing.s16),
+                GridItem(.flexible(), spacing: Spacing.s16),
+            ],
+            spacing: Spacing.s16
+        ) {
+            NavigationLink(value: TodayDestination.heartRate) {
+                MetricTile(
+                    title: "Resting HR",
+                    symbol: "bed.double.fill",
+                    tint: Palette.sleep,
+                    value: restingValue,
+                    unit: restingValue == "--" ? nil : "bpm",
+                    caption: "Overnight low",
+                    change: restingSeries.change,
+                    changeUnit: "bpm"
+                ) {
+                    MiniSparkline(points: restingWeek.points, tint: Palette.sleep)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Resting HR, last 7 days")
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens heart rate details")
+
+            NavigationLink(value: TodayDestination.stress) {
+                MetricTile(
+                    title: "HRV",
+                    symbol: "waveform.path.ecg",
+                    tint: Palette.hrv,
+                    value: hrvValue,
+                    unit: hrvValue == "--" ? nil : "ms",
+                    caption: "RMSSD",
+                    change: hrvSeries.change,
+                    changeUnit: "ms"
+                ) {
+                    MiniSparkline(points: hrvWeek.points, tint: Palette.hrv)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("HRV, last 7 days")
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens stress details")
+
+            NavigationLink(value: TodayDestination.stress) {
+                MetricTile(
+                    title: "Stress",
+                    symbol: "gauge.with.dots.needle.67percent",
+                    tint: Palette.stressModerate,
+                    value: stressValue,
+                    caption: stressTileCaption,
+                    change: stressSeries.change,
+                    valueIdentifier: "today.stressValue"
+                ) {
+                    MiniSparkline(points: stressWeek.points, tint: Palette.stressModerate)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Stress, last 7 days")
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens stress details")
+
+            NavigationLink(value: TodayDestination.calories) {
+                MetricTile(
+                    title: "Calories",
+                    symbol: "flame.fill",
+                    tint: Palette.caloriesActive,
+                    value: caloriesValue,
+                    unit: caloriesValue == "--" ? nil : "kcal",
+                    caption: "Estimated",
+                    change: caloriesSeries.change,
+                    changeUnit: "kcal",
+                    valueIdentifier: "today.caloriesValue"
+                ) {
+                    MiniSparkline(points: caloriesWeek.points, tint: Palette.caloriesActive)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Calories, last 7 days")
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens calorie details")
+        }
+    }
+
+    private var zonesCard: some View {
+        NavigationLink(value: TodayDestination.heartRate) {
+            DashboardCard(
+                title: "Heart rate zones",
+                symbol: "figure.run",
+                tint: .green,
+                showsChevron: true
+            ) {
+                if let data, !data.zoneTimeline.runs.isEmpty {
+                    ZoneTimelineChart(
+                        timeline: data.zoneTimeline,
+                        fromMs: data.dayStartMs,
+                        toMs: data.snapshot.context.nowMs
+                    )
+                    .frame(height: Spacing.s48 * 2)
+                    .allowsHitTesting(false)
+                    if !zoneSegments.isEmpty {
+                        VStack(alignment: .leading, spacing: Spacing.s4) {
+                            MinuteStrip(
+                                segments: zoneSegments,
+                                accessibilityLabel: "Minutes by zone",
+                                accessibilityValue: zoneAccessibilityValue
+                            )
+                            Text(zoneCaption)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                        }
+                    }
+                } else {
+                    Text("No zone data yet")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var stressCard: some View {
+        NavigationLink(value: TodayDestination.stress) {
+            DashboardCard(
+                title: "Stress today",
+                symbol: "gauge.with.dots.needle.67percent",
+                tint: .orange,
+                showsChevron: true
+            ) {
+                if let data {
+                    let day = data.snapshot.stressDay
+                    if day.sampleMinutes > 0 {
+                        Text(stressSummary(day))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                        StressTimelineChart(
+                            points: data.stressTimeline,
+                            fromMs: data.dayStartMs,
+                            toMs: data.snapshot.context.nowMs
+                        )
+                        .frame(height: Spacing.s48 * 2)
+                        .allowsHitTesting(false)
+                        if !stressBandSegments.isEmpty {
+                            MinuteStrip(
+                                segments: stressBandSegments,
+                                accessibilityLabel: "Minutes in each stress band",
+                                accessibilityValue: stressBandAccessibilityValue
+                            )
+                        }
+                    }
+                    if let line = stressCalibrationLine {
+                        Text(line)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    } else if day.sampleMinutes == 0 {
+                        Text(stressEmptyLine)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("No stress values yet")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
     private var sleepCard: some View {
         NavigationLink(value: TodayDestination.sleep) {
             DashboardCard(
@@ -180,28 +411,16 @@ struct TodayView: View {
                             .monospacedDigit()
                         Spacer(minLength: Spacing.s8)
                         Text(Format.sleepQuality(latest.quality))
+                            .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Palette.sleepQuality(latest.quality))
                     }
-                    HStack(spacing: Spacing.s8) {
-                        Text(sleepWindow(latest))
-                        Spacer(minLength: Spacing.s8)
-                        if let comparison = sleepComparison(latest) {
-                            Text(comparison)
-                        }
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    HStack(spacing: Spacing.s16) {
-                        Text("RHR \(latest.restingHR.map { Format.bpm($0) } ?? "--")")
-                        Text("RMSSD \(latest.rmssdMs.map { Format.ms($0) } ?? "--")")
-                        Spacer(minLength: 0)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+                    Text(sleepWindow(latest))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .lineLimit(1)
                 } else {
-                    Text("No data yet")
+                    Text("No sleep data yet")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -236,280 +455,6 @@ struct TodayView: View {
         }
     }
 
-    private var heroCard: some View {
-        NavigationLink(value: TodayDestination.heartRate) {
-            DashboardCard(
-                title: "Heart Rate",
-                symbol: "heart.fill",
-                tint: Palette.heartRate,
-                showsChevron: true,
-                pulses: liveState.isStreaming
-            ) {
-                HStack(alignment: .firstTextBaseline) {
-                    bpmText
-                    Spacer(minLength: Spacing.s8)
-                    StatusPill.link(liveState)
-                }
-                HRAreaChart(points: sparklinePoints, average: nil, selection: .constant(nil))
-                    .frame(height: Spacing.s48 * 2)
-                    .allowsHitTesting(false)
-                    .accessibilityLabel("Heart rate, last 15 minutes")
-                    .accessibilityValue(rangeText)
-                HStack {
-                    Text("Last 15 min")
-                    Spacer(minLength: Spacing.s8)
-                    Text(rangeText)
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                if let snapshot {
-                    HStack(alignment: .top, spacing: Spacing.s16) {
-                        summaryStat(title: "Avg", value: snapshot.hrAvg.map { Format.bpm($0) } ?? "--")
-                        summaryStat(title: "Max", value: snapshot.hrMax.map { Format.bpm($0) } ?? "--")
-                        summaryStat(title: "Data coverage", value: Format.percent(snapshot.coverage))
-                    }
-                    if snapshot.coverage < 0.8 {
-                        Text("Partial day")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
-    @ViewBuilder
-    private var bpmText: some View {
-        if let bpm = liveState.latestBPM {
-            HStack(alignment: .firstTextBaseline, spacing: Spacing.s4) {
-                Text("\(bpm)")
-                    .font(.heroValue)
-                    .monospacedDigit()
-                    .liveNumberTransition()
-                    .stateAnimation(bpm)
-                    .accessibilityIdentifier("today.hrValue")
-                Text("bpm")
-                    .font(.metricUnit)
-                    .foregroundStyle(.secondary)
-            }
-        } else {
-            Text("--")
-                .font(.heroValue)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func summaryStat(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: Spacing.s4) {
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.subheadline.weight(.semibold))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var metricGrid: some View {
-        LazyVGrid(
-            columns: [
-                GridItem(.flexible(), spacing: Spacing.s16),
-                GridItem(.flexible(), spacing: Spacing.s16),
-            ],
-            spacing: Spacing.s16
-        ) {
-            NavigationLink(value: TodayDestination.heartRate) {
-                MetricTile(
-                    title: "Resting HR",
-                    symbol: "bed.double.fill",
-                    tint: Palette.sleep,
-                    value: restingValue,
-                    unit: restingValue == "--" ? nil : "bpm",
-                    caption: "Lowest 5-min in 00:00–06:00",
-                    change: restingSeries.change,
-                    changeUnit: "bpm"
-                ) {
-                    MiniSparkline(points: restingWeek.points, tint: Palette.sleep)
-                }
-            }
-            .buttonStyle(.plain)
-
-            NavigationLink(value: TodayDestination.stress) {
-                MetricTile(
-                    title: "HRV",
-                    symbol: "waveform.path.ecg",
-                    tint: Palette.hrv,
-                    value: hrvValue,
-                    unit: hrvValue == "--" ? nil : "ms",
-                    caption: hrvCaption,
-                    change: hrvSeries.change,
-                    changeUnit: "ms"
-                ) {
-                    MiniSparkline(points: hrvWeek.points, tint: Palette.hrv)
-                }
-            }
-            .buttonStyle(.plain)
-
-            NavigationLink(value: TodayDestination.stress) {
-                MetricTile(
-                    title: "Stress",
-                    symbol: "gauge.with.dots.needle.67percent",
-                    tint: Palette.stressModerate,
-                    value: stressValue,
-                    caption: latestStress == nil ? nil : "Estimated",
-                    valueIdentifier: "today.stressValue"
-                ) {
-                    HStack(spacing: Spacing.s8) {
-                        StressGauge(value: latestStress)
-                            .frame(width: MetricTileLayout.visualHeight, height: MetricTileLayout.visualHeight)
-                        VStack(alignment: .leading, spacing: Spacing.s4) {
-                            if let band = stressCaption {
-                                Text(band)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                            }
-                            if let average = snapshot?.stressAverage, let peak = snapshot?.stressPeak {
-                                Text("Avg \(Int(average.rounded())) · Peak \(peak)")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                            }
-                            if let day = snapshot?.stressDay, day.sampleMinutes > 0 {
-                                StressBandMinutesCompact(summary: day)
-                            } else if showsCalibrationNote {
-                                Text(calibrationLine)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                            }
-                        }
-                        Spacer(minLength: 0)
-                    }
-                }
-            }
-            .buttonStyle(.plain)
-
-            NavigationLink(value: TodayDestination.calories) {
-                MetricTile(
-                    title: "Calories",
-                    symbol: "flame.fill",
-                    tint: Palette.caloriesActive,
-                    value: caloriesValue,
-                    unit: caloriesValue == "--" ? nil : "kcal",
-                    caption: "Estimated",
-                    valueIdentifier: "today.caloriesValue"
-                ) {
-                    HStack(spacing: Spacing.s12) {
-                        RingProgress(fraction: activeShare, summary: "Active share of calories", lineWidth: Spacing.s8) {
-                            EmptyView()
-                        }
-                        .frame(width: MetricTileLayout.visualHeight, height: MetricTileLayout.visualHeight)
-                        VStack(alignment: .leading, spacing: Spacing.s4) {
-                            Text(activeText)
-                            Text(bmrText)
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                    }
-                }
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    private var stressCard: some View {
-        NavigationLink(value: TodayDestination.stress) {
-            DashboardCard(
-                title: "Stress today",
-                symbol: "gauge.with.dots.needle.67percent",
-                tint: .orange,
-                showsChevron: true
-            ) {
-                if let data {
-                    if data.snapshot.stressDay.sampleMinutes > 0 {
-                        stressSummary(data.snapshot.stressDay)
-                        StressTimelineChart(
-                            points: data.stressTimeline,
-                            fromMs: data.dayStartMs,
-                            toMs: data.snapshot.context.nowMs
-                        )
-                        .frame(height: Spacing.s48 * 2)
-                        .allowsHitTesting(false)
-                        StressLegend()
-                        StressBandMinutesRow(summary: data.snapshot.stressDay)
-                    }
-                    if showsCalibrationNote {
-                        if data.snapshot.stressDay.sampleMinutes > 0 {
-                            Divider()
-                        }
-                        StressCalibrationNote(progress: data.calibration, state: stressState)
-                    } else if data.snapshot.stressDay.sampleMinutes == 0 {
-                        Text(noStressText)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                } else {
-                    Text("No stress values yet")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func stressSummary(_ day: StressDaySummary) -> some View {
-        HStack(spacing: Spacing.s16) {
-            if let average = day.average {
-                Text("Average \(Int(average.rounded()))")
-            }
-            if let peak = day.peak {
-                Text("Peak \(peak)")
-            }
-            Spacer(minLength: 0)
-        }
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-        .monospacedDigit()
-    }
-
-    private var zonesCard: some View {
-        NavigationLink(value: TodayDestination.heartRate) {
-            DashboardCard(
-                title: "Zones today",
-                symbol: "figure.run",
-                tint: .green,
-                showsChevron: true
-            ) {
-                if let data, !data.zoneTimeline.runs.isEmpty {
-                    ZoneTimelineChart(
-                        timeline: data.zoneTimeline,
-                        fromMs: data.dayStartMs,
-                        toMs: data.snapshot.context.nowMs
-                    )
-                    .frame(height: Spacing.s48 * 2 + Spacing.s16)
-                    .allowsHitTesting(false)
-                }
-                if let zones = snapshot?.zones, zones.contains(where: { $0.minutes > 0 }) {
-                    Text("Minutes by zone")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    ZoneBar(zones: zones)
-                } else if data == nil || data?.zoneTimeline.runs.isEmpty == true {
-                    Text("Zones need a profile and a night of data.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
     // MARK: Values
 
     private var snapshot: Dashboard.TodaySnapshot? {
@@ -531,8 +476,17 @@ struct TodayView: View {
 
     private var rangeText: String {
         let values = (snapshot?.sparkline ?? []).map(\.bpm)
-        guard let low = values.min(), let high = values.max() else { return "No samples" }
-        return "Range \(low)-\(high) bpm"
+        guard let low = values.min(), let high = values.max() else { return "No samples in the last 15 minutes" }
+        return "Range \(low) to \(high) bpm"
+    }
+
+    /// One compact line under the live chart: today's average, maximum and coverage.
+    private var heroSummary: String {
+        guard let snapshot else { return "No summary yet" }
+        guard snapshot.hrAvg != nil || snapshot.hrMax != nil else { return "No heart rate yet" }
+        let average = snapshot.hrAvg.map { "\(Int($0.rounded()))" } ?? "--"
+        let maximum = snapshot.hrMax.map { "\($0)" } ?? "--"
+        return "Avg \(average) · Max \(maximum) bpm · \(Format.percent(snapshot.coverage)) coverage"
     }
 
     private var week: [DaySummary] {
@@ -556,6 +510,22 @@ struct TodayView: View {
         TrendSeries.make(days: week, timeZone: timeZone, value: \.rmssdNight, currentCount: 7)
     }
 
+    private var stressSeries: TrendSeries {
+        TrendSeries.make(days: week, timeZone: timeZone, value: \.stressAverage, currentCount: 1)
+    }
+
+    private var stressWeek: TrendSeries {
+        TrendSeries.make(days: week, timeZone: timeZone, value: \.stressAverage, currentCount: 7)
+    }
+
+    private var caloriesSeries: TrendSeries {
+        TrendSeries.make(days: week, timeZone: timeZone, value: \.kcalTotal, currentCount: 1)
+    }
+
+    private var caloriesWeek: TrendSeries {
+        TrendSeries.make(days: week, timeZone: timeZone, value: \.kcalTotal, currentCount: 7)
+    }
+
     private var timeZone: TimeZone {
         snapshot?.context.timeZone ?? Dashboard.fallbackZone
     }
@@ -570,11 +540,6 @@ struct TodayView: View {
         return "\(Int(value.rounded()))"
     }
 
-    private var hrvCaption: String? {
-        guard let sdnn = snapshot?.latestMinute?.sdnnMs else { return nil }
-        return "SDNN \(Format.ms(sdnn))"
-    }
-
     private var latestStress: Int? {
         if let stress = snapshot?.latestMinute?.stress { return stress }
         return stressTimeline.last(where: { $0.stress != nil })?.stress
@@ -585,35 +550,30 @@ struct TodayView: View {
     }
 
     private var stressValue: String {
-        if let latest = latestStress { return "\(latest)" }
-        if let state = stressState, state != .value { return Format.stressState(state) }
+        latestStress.map { "\($0)" } ?? "--"
+    }
+
+    /// The band when there is a value; otherwise one short status line.
+    private var stressTileCaption: String? {
+        guard data != nil else { return nil }
+        if let latest = latestStress { return Format.stressBand(latest) }
+        if !calibration.isCalibrated, stressState != .exertion, stressState != .hrOnly, !calibration.nights.isEmpty {
+            return "Calibrating \(calibration.qualifyingDays)/\(calibration.requiredDays)"
+        }
+        if stressState == .exertion { return "Exertion" }
+        if stressState == .hrOnly { return "HR only" }
         if calibration.nights.isEmpty { return "No baseline" }
-        if !calibration.isCalibrated { return "Calibrating" }
         return "No values"
     }
 
-    private var stressCaption: String? {
-        guard let latest = latestStress else { return nil }
-        return Format.stressBand(latest)
+    private var stressCalibrationLine: String? {
+        guard snapshot != nil, latestStress == nil else { return nil }
+        if stressState == .exertion || stressState == .hrOnly { return nil }
+        guard !calibration.isCalibrated, !calibration.nights.isEmpty else { return nil }
+        return "Calibrating \(calibration.qualifyingDays) of \(calibration.requiredDays) nights"
     }
 
-    private var calibrationLine: String {
-        guard !calibration.nights.isEmpty else { return "No baseline" }
-        return "\(calibration.qualifyingDays) of \(calibration.requiredDays) nights"
-    }
-
-    private var showsCalibrationNote: Bool {
-        guard let data else { return false }
-        switch stressState {
-        case .some(.calibrating), .some(.hrOnly), .some(.insufficient):
-            return true
-        default:
-            break
-        }
-        return data.snapshot.stressDay.sampleMinutes == 0 && !data.calibration.isCalibrated
-    }
-
-    private var noStressText: String {
+    private var stressEmptyLine: String {
         if stressState == .exertion {
             return "Stress is not scored during exertion."
         }
@@ -625,44 +585,112 @@ struct TodayView: View {
         return "\(Int(total.rounded()))"
     }
 
-    private var activeShare: Double {
-        guard let total = snapshot?.today?.kcalTotal, total > 0, let active = snapshot?.today?.kcalActive else { return 0 }
-        return active / total
+    // MARK: Zone and stress strips
+
+    private var zoneSegments: [MinuteStrip.Segment] {
+        (snapshot?.zones ?? [])
+            .filter { $0.minutes > 0 }
+            .enumerated()
+            .map { index, entry in
+                MinuteStrip.Segment(id: index, minutes: entry.minutes, color: Palette.zone(entry.zone))
+            }
     }
 
-    private var activeText: String {
-        guard let active = snapshot?.today?.kcalActive else { return "Active --" }
-        return "Active \(Int(active.rounded())) kcal"
+    private var zoneCaption: String {
+        let populated = (snapshot?.zones ?? []).filter { $0.minutes > 0 }
+        guard !populated.isEmpty else { return "" }
+        let parts = populated.map { "\(zoneShortName($0.zone)) \($0.minutes)" }
+        return parts.joined(separator: " · ") + " min"
     }
 
-    private var bmrText: String {
-        guard let total = snapshot?.today?.kcalTotal, let active = snapshot?.today?.kcalActive else {
-            return "BMR --"
+    private var zoneAccessibilityValue: String {
+        (snapshot?.zones ?? [])
+            .filter { $0.minutes > 0 }
+            .map { "\(Format.zoneLabel($0.zone)): \(Format.minutes($0.minutes))" }
+            .joined(separator: ", ")
+    }
+
+    private func zoneShortName(_ zone: HeartRateZone) -> String {
+        switch zone {
+        case .below: "Below"
+        case .zone1: "Z1"
+        case .zone2: "Z2"
+        case .zone3: "Z3"
+        case .zone4: "Z4"
+        case .zone5: "Z5"
         }
-        return "BMR \(Int(max(0, total - active).rounded())) kcal"
+    }
+
+    private var stressBandSegments: [MinuteStrip.Segment] {
+        (snapshot?.stressDay.bandMinutes ?? [])
+            .filter { $0.minutes > 0 }
+            .enumerated()
+            .map { index, entry in
+                MinuteStrip.Segment(id: index, minutes: entry.minutes, color: Palette.stress(entry.band))
+            }
+    }
+
+    private var stressBandAccessibilityValue: String {
+        (snapshot?.stressDay.bandMinutes ?? [])
+            .filter { $0.minutes > 0 }
+            .map { "\(Format.bandName($0.band)): \(Format.minutes($0.minutes))" }
+            .joined(separator: ", ")
+    }
+
+    private func stressSummary(_ day: StressDaySummary) -> String {
+        var parts: [String] = []
+        if let average = day.average {
+            parts.append("Avg \(Int(average.rounded()))")
+        }
+        if let peak = day.peak {
+            parts.append("Peak \(peak)")
+        }
+        return parts.joined(separator: " · ")
     }
 
     // MARK: Sleep values
 
-    private var sleepTimeZone: TimeZone {
-        sleep?.context.timeZone ?? Dashboard.fallbackZone
-    }
-
     private func sleepWindow(_ night: Dashboard.SleepSnapshot.Night) -> String {
+        let zone = sleep?.context.timeZone ?? Dashboard.fallbackZone
         let wakeMs = night.startMs + night.durationS * 1_000
-        return "\(Format.clock(night.startMs, in: sleepTimeZone)) – \(Format.clock(wakeMs, in: sleepTimeZone))"
+        return "\(Format.clock(night.startMs, in: zone)) – \(Format.clock(wakeMs, in: zone))"
+    }
+}
+
+/// A slim proportional bar for zone or band minutes. The segments carry the colour; the caption or
+/// the detail screen carries the labels.
+private struct MinuteStrip: View {
+    struct Segment: Identifiable {
+        let id: Int
+        let minutes: Int
+        let color: Color
     }
 
-    /// Latest duration against the recent nights, including the latest. Named for the actual count when
-    /// fewer than seven nights have synced.
-    private func sleepComparison(_ latest: Dashboard.SleepSnapshot.Night) -> String? {
-        guard let nights = sleep?.nights, nights.count > 1 else { return nil }
-        let recent = Array(nights.prefix(7))
-        let average = Double(recent.reduce(Int64(0)) { $0 + $1.durationS }) / Double(recent.count)
-        let deltaMinutes = Int(((Double(latest.durationS) - average) / 60).rounded())
-        let label = recent.count >= 7 ? "7-day average" : "\(recent.count)-night average"
-        if deltaMinutes == 0 { return "At \(label)" }
-        if deltaMinutes > 0 { return "\(deltaMinutes) min above \(label)" }
-        return "\(-deltaMinutes) min below \(label)"
+    let segments: [Segment]
+    let accessibilityLabel: String
+    let accessibilityValue: String
+
+    private var total: Int {
+        segments.reduce(0) { $0 + $1.minutes }
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            HStack(spacing: .zero) {
+                ForEach(segments) { segment in
+                    Rectangle()
+                        .fill(segment.color)
+                        .frame(
+                            width: proxy.size.width * CGFloat(segment.minutes) / CGFloat(max(total, 1)),
+                            height: proxy.size.height
+                        )
+                }
+            }
+        }
+        .frame(height: Spacing.s8)
+        .clipShape(Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(accessibilityValue)
     }
 }
