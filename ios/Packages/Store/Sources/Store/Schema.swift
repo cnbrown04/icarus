@@ -12,6 +12,9 @@ enum Schema {
         migrator.registerMigration("v3") { db in
             try db.execute(sql: v3)
         }
+        migrator.registerMigration("v4") { db in
+            try db.execute(sql: v4)
+        }
     }
 
     /// Migration v1, copied from PLAN.md 10.2. Times are epoch ms UTC.
@@ -93,5 +96,19 @@ enum Schema {
     ALTER TABLE historical_record ADD COLUMN ambient_drive INTEGER;
     ALTER TABLE historical_record ADD COLUMN led_drive1 INTEGER;
     ALTER TABLE historical_record ADD COLUMN led_drive2 INTEGER;
+    """
+    /// Migration v4, staged sleep hypnograms. Additive: one row per contiguous stage segment for a
+    /// derived `sleep_session`, keyed conceptually by `(band_id, session_start_ms)` but not enforced
+    /// as an SQL foreign key — derivation deletes and re-inserts a session's segments in the same
+    /// transaction, and a session start is a natural key rather than a rowid.
+    ///
+    /// `algo_version` is `SleepStager.algoVersion`: it lets a future recompute detect segments written
+    /// by an older recipe instead of trusting stale rows.
+    static let v4 = """
+    CREATE TABLE sleep_stage_segment (rowid INTEGER PRIMARY KEY, band_id TEXT NOT NULL REFERENCES band(id),
+      session_start_ms INTEGER NOT NULL /* sleep_session.start_ms (natural key) */,
+      start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, stage TEXT NOT NULL /* wake|light|deep|rem */,
+      algo_version INTEGER NOT NULL, computed_at INTEGER NOT NULL);
+    CREATE INDEX sleep_stage_segment_session ON sleep_stage_segment(band_id, session_start_ms);
     """
 }

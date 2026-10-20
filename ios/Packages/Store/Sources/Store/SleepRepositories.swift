@@ -216,4 +216,168 @@ extension Database {
         }
         return try insertSleepSessions(sessions, bandID: bandID, computedAtMs: computedAtMs)
     }
+
+    // MARK: Sleep stage segments
+
+    /// Replaces one session's staged hypnogram: deletes the session's existing segments, then inserts
+    /// `segments`. Idempotent, so re-deriving a night never accumulates stale rows.
+    ///
+    /// The delete happens even when `segments` is empty, which is how a session that became too short
+    /// to stage loses any earlier hypnogram. Returns the number of segment rows written.
+    @discardableResult
+    public func replaceSleepStageSegments(
+        _ segments: [StageSegment],
+        bandID: String,
+        sessionStartMs: Int64,
+        algoVersion: Int = SleepStager.algoVersion,
+        computedAtMs: Int64
+    ) throws -> Int {
+        var written = 0
+        try inSavepoint {
+            try execute(
+                sql: """
+                DELETE FROM sleep_stage_segment
+                WHERE band_id = ? AND session_start_ms = ?
+                """,
+                arguments: [bandID, sessionStartMs]
+            )
+            guard !segments.isEmpty else { return .commit }
+            let statement = try makeStatement(sql: """
+            INSERT INTO sleep_stage_segment
+              (band_id, session_start_ms, start_ms, end_ms, stage, algo_version, computed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """)
+            for segment in segments {
+                statement.setUncheckedArguments([
+                    bandID,
+                    sessionStartMs,
+                    segment.startUnix * 1000,
+                    segment.endUnix * 1000,
+                    segment.stage.rawValue,
+                    algoVersion,
+                    computedAtMs,
+                ])
+                try statement.execute()
+                written += 1
+            }
+            return .commit
+        }
+        return written
+    }
+
+    /// Stages the derived sessions that overlap `[fromMs, toMs)` and persists their segments.
+    ///
+    /// Call after `deriveSleepSessions` in the same transaction. Work is bounded to sessions touched
+    /// by the drained range: a batch that extends last night's session restages only that night, not
+    /// the whole history. Sessions shorter than `SleepStager.minimumSessionSeconds` (~10 minutes) are
+    /// deleted rather than staged. Existing rows written by the current `SleepStager.algoVersion` and
+    /// covering exactly the same session window are left alone (cache-busting: bump `algoVersion` to
+    /// force a restage).
+    ///
+    /// Each session reads `SleepStager.padLo` / `padHi` seconds of historical records around its
+    /// window so the recipe's 5-/11-minute HR windows and RSA beat window reach the session edges.
+    /// The staging inputs are gravity, bpm and rr_ms only:
+    /// `resp_rate_raw` and `signal_quality` are constants in our stored data, and `spo2_red` /
+    /// `spo2_ir` are constant too, so none carry staging signal. Respiration regularity comes from
+    /// the R-R RSA path, which is also NOOP V2's path.
+    ///
+    /// Returns the number of segment rows written.
+    @discardableResult
+    public func deriveSleepStageSegments(
+        from fromMs: Int64,
+        to toMs: Int64,
+        bandID: String,
+        computedAtMs: Int64
+    ) throws -> Int {
+        guard toMs > fromMs else { return 0 }
+        let sessions = try sleepSessionRows(bandID: bandID, from: fromMs, to: toMs)
+        var written = 0
+        for session in sessions {
+            let startUnix = session.startMs / 1000
+            let endUnix = session.endMs / 1000
+            guard session.durationS >= SleepStager.minimumSessionSeconds,
+                  endUnix > startUnix
+            else {
+                try replaceSleepStageSegments(
+                    [],
+                    bandID: bandID,
+                    sessionStartMs: session.startMs,
+                    computedAtMs: computedAtMs
+                )
+                continue
+            }
+
+            // Cache-busting guard: the same recipe already staged exactly this session window.
+            if segmentsAreCurrent(
+                bandID: bandID,
+                session: session,
+                algoVersion: SleepStager.algoVersion
+            ) {
+                continue
+            }
+
+            let rows = try historicalRecordRows(
+                bandID: bandID,
+                from: session.startMs - SleepStager.padLo * 1000,
+                to: session.endMs + (SleepStager.padHi + 1) * 1000
+            )
+            let records = rows.map { row in
+                let bpm = row.bpm.flatMap { value -> Double? in
+                    let bpm = Double(value)
+                    return (20...250).contains(bpm) ? bpm : nil
+                }
+                let gravity: StagingRecord.Gravity? = {
+                    guard let x = row.gravityX, let y = row.gravityY, let z = row.gravityZ else {
+                        return nil
+                    }
+                    return .init(x: x, y: y, z: z)
+                }()
+                return StagingRecord(
+                    tsUnix: row.tsMs / 1000,
+                    bpm: bpm,
+                    contact: row.contact ?? false,
+                    rrMs: row.rrMs ?? [],
+                    gravity: gravity
+                )
+            }
+            let staging = SleepStager.stage(
+                records: records,
+                fromUnix: startUnix,
+                toUnix: endUnix,
+                restingHR: session.restingHr
+            )
+            written += try replaceSleepStageSegments(
+                staging.segments,
+                bandID: bandID,
+                sessionStartMs: session.startMs,
+                computedAtMs: computedAtMs
+            )
+        }
+        return written
+    }
+
+    /// True when every stored segment for this session carries the current algorithm version and the
+    /// stored hypnogram tiles exactly the session window. A session that grew or was re-keyed fails
+    /// the coverage test and is restaged.
+    private func segmentsAreCurrent(
+        bandID: String,
+        session: SleepSessionRow,
+        algoVersion: Int
+    ) -> Bool {
+        let rows: [SleepStageSegmentRow]? = try? SleepStageSegmentRow.fetchAll(
+            self,
+            sql: """
+            SELECT * FROM sleep_stage_segment
+            WHERE band_id = ? AND session_start_ms = ?
+            ORDER BY start_ms, rowid
+            """,
+            arguments: [bandID, session.startMs]
+        )
+        guard let rows, !rows.isEmpty else { return false }
+        guard rows.allSatisfy({ $0.algoVersion == algoVersion }) else { return false }
+        guard rows.first?.startMs == session.startMs, rows.last?.endMs == session.endMs else {
+            return false
+        }
+        return true
+    }
 }

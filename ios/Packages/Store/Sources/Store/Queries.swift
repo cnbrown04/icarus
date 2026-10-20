@@ -51,6 +51,42 @@ extension Database {
         """, arguments: [bandID, fromMs, toMs])
     }
 
+    /// One session's persisted stage rows, ordered by time.
+    public func sleepStageSegmentRows(bandID: String, sessionStartMs: Int64) throws -> [SleepStageSegmentRow] {
+        try SleepStageSegmentRow.fetchAll(self, sql: """
+        SELECT * FROM sleep_stage_segment
+        WHERE band_id = ? AND session_start_ms = ?
+        ORDER BY start_ms, rowid
+        """, arguments: [bandID, sessionStartMs])
+    }
+
+    /// One session's staged hypnogram, ordered and tiled in unix seconds.
+    public func sleepStageSegments(bandID: String, sessionStartMs: Int64) throws -> [StageSegment] {
+        try sleepStageSegmentRows(bandID: bandID, sessionStartMs: sessionStartMs).compactMap(\.segment)
+    }
+
+    /// Stage segments overlapping `[fromMs, toMs)`, ordered by start. A segment straddling an edge is
+    /// returned whole (its stored boundaries are not clipped), so callers can draw the hypnogram.
+    public func sleepStageSegments(bandID: String, from fromMs: Int64, to toMs: Int64) throws -> [StageSegment] {
+        try SleepStageSegmentRow.fetchAll(self, sql: """
+        SELECT * FROM sleep_stage_segment
+        WHERE band_id = ? AND end_ms > ? AND start_ms < ?
+        ORDER BY start_ms, rowid
+        """, arguments: [bandID, fromMs, toMs]).compactMap(\.segment)
+    }
+
+    /// Total seconds per stage for one session. All four stages are present (0 when absent); wake is
+    /// NOT asleep, matching `SleepStaging.stageSeconds`.
+    public func sleepStageTotals(bandID: String, sessionStartMs: Int64) throws -> [SleepStage: Int] {
+        let rows = try sleepStageSegmentRows(bandID: bandID, sessionStartMs: sessionStartMs)
+        var totals = Dictionary(uniqueKeysWithValues: SleepStage.allCases.map { ($0, 0) })
+        for row in rows {
+            guard let stage = row.stageValue else { continue }
+            totals[stage, default: 0] += Int(clamping: max(0, row.endMs - row.startMs) / 1000)
+        }
+        return totals
+    }
+
     /// Local-day rollups for `days`, computed from the minute rows (PLAN.md 10.3 `daily_summaries`, derived here).
     public func daySummaries(_ days: [LocalDay], in timeZone: TimeZone) throws -> [DaySummary] {
         let ordered = DailyRollup.sortedUnique(days)

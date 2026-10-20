@@ -7,10 +7,11 @@ struct SchemaTests {
     private static let tables = [
         "profile", "band", "hr_sample", "rr_interval", "minute_metric", "band_event",
         "alarm", "alarm_delivery", "sync_cursor", "sync_batch_log", "raw_frame",
-        "historical_record", "sleep_session",
+        "historical_record", "sleep_session", "sleep_stage_segment",
     ]
-    /// v2 added the sleep tables, v3 the nine nullable `historical_record` sensor columns.
-    private static let migrations = ["v1", "v2", "v3"]
+    /// v2 added the sleep tables, v3 the nine nullable `historical_record` sensor columns, v4 the
+    /// persisted sleep-stage segments.
+    private static let migrations = ["v1", "v2", "v3", "v4"]
 
     @Test func migratesEmptyDatabaseToAllTables() throws {
         let database = try AppDatabase.inMemory()
