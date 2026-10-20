@@ -10,7 +10,7 @@ public enum StressState: String, Sendable, Equatable, CaseIterable {
 }
 
 /// Band for UI copy (PLAN.md 8.3): 0-33 low, 34-66 moderate, 67-100 high.
-public enum StressBand: String, Sendable, Equatable {
+public enum StressBand: String, Sendable, Equatable, Hashable, CaseIterable {
     case low
     case moderate
     case high
@@ -87,26 +87,18 @@ public struct StressBaseline: Sendable, Equatable {
         var rrLnRmssd: [Double] = []
         var hrOnlyHR: [Double] = []
 
-        for offset in 1...Stress.lookbackDays {
-            let night = LocalTime.nightWindow(
-                of: LocalTime.adding(days: -offset, to: day),
-                in: timeZone
-            )
-            let nightWindows = windows.filter {
-                night.contains($0.startMs)
-                    && !HeartRateZones.isExertion(hr: $0.hrMean, restingHR: restingHR, maxHR: maxHR)
-            }
-            let validNights = nightWindows.filter(\.valid)
-            if validNights.count >= Stress.minNightWindowsPerDay {
+        for night in Stress.nightWindows(
+            windows, day: day, in: timeZone, restingHR: restingHR, maxHR: maxHR
+        ) {
+            if night.valid.count >= Stress.minNightWindowsPerDay {
                 validDays += 1
             }
-            let hrNights = nightWindows.compactMap(\.hrMean)
-            if hrNights.count >= Stress.minNightWindowsPerDay {
+            if night.withHR.count >= Stress.minNightWindowsPerDay {
                 hrOnlyDays += 1
             }
-            rrHR += validNights.compactMap(\.hrMean)
-            rrLnRmssd += validNights.compactMap(\.lnRmssd)
-            hrOnlyHR += hrNights
+            rrHR += night.valid.compactMap(\.hrMean)
+            rrLnRmssd += night.valid.compactMap(\.lnRmssd)
+            hrOnlyHR += night.withHR.compactMap(\.hrMean)
         }
 
         return StressBaseline(
@@ -122,6 +114,73 @@ public struct StressBaseline: Sendable, Equatable {
     }
 }
 
+/// One night in the stress baseline lookback, as seen by `Stress.calibrationProgress`.
+public struct StressNightProgress: Sendable, Equatable, Identifiable {
+    /// Local day whose night is counted (00:00-06:00 local on that day).
+    public let day: LocalDay
+    /// Nights before the scored day this night is. 1 is the night immediately before it.
+    public let offset: Int
+    /// Windows that pass the R-R validity rule, after exertion is excluded.
+    public let validWindowCount: Int
+    /// Windows with a heart-rate mean, after exertion is excluded.
+    public let hrWindowCount: Int
+    /// Windows a day needs to qualify (12 at the time of writing).
+    public let requiredWindows: Int
+
+    public var id: LocalDay { day }
+
+    /// True when this night counts toward the R-R baseline.
+    public var qualifiesForRR: Bool { validWindowCount >= requiredWindows }
+    /// True when this night counts toward the HR-only baseline.
+    public var qualifiesForHROnly: Bool { hrWindowCount >= requiredWindows }
+
+    /// R-R windows still missing before this night would qualify.
+    public var validWindowsNeeded: Int { max(0, requiredWindows - validWindowCount) }
+    /// HR windows still missing before this night would qualify for the HR-only path.
+    public var hrWindowsNeeded: Int { max(0, requiredWindows - hrWindowCount) }
+
+    /// Minutes of additional valid 5-minute windows this night needs.
+    public var validMinutesNeeded: Int { validWindowsNeeded * Int(LocalTime.msPerWindow / LocalTime.msPerMinute) }
+    /// Minutes of additional HR windows this night needs for the HR-only path.
+    public var hrMinutesNeeded: Int { hrWindowsNeeded * Int(LocalTime.msPerWindow / LocalTime.msPerMinute) }
+}
+
+/// How close the stress baseline is to ready (PLAN.md 8.3).
+public struct StressCalibrationProgress: Sendable, Equatable {
+    /// Days that qualify for the R-R baseline, same count as `StressBaseline.validDays`.
+    public let qualifyingDays: Int
+    /// Days needed before values replace the calibrating state (7 at the time of writing).
+    public let requiredDays: Int
+    /// Nights inspected before the scored day (14 at the time of writing).
+    public let lookbackDays: Int
+    /// Days that qualify for the HR-only baseline. Days with valid R-R also count here.
+    public let hrOnlyDays: Int
+    /// Most recent night first: offsets 1 through `lookbackDays`.
+    public let nights: [StressNightProgress]
+
+    /// The R-R baseline is ready.
+    public var isCalibrated: Bool { qualifyingDays >= requiredDays }
+    /// R-R-qualifying nights still missing, assuming no existing night gains windows.
+    public var daysNeeded: Int { max(0, requiredDays - qualifyingDays) }
+
+    /// The HR-only baseline is ready.
+    public var isHROnlyCalibrated: Bool { hrOnlyDays >= requiredDays }
+    /// HR-only-qualifying nights still missing.
+    public var hrOnlyDaysNeeded: Int { max(0, requiredDays - hrOnlyDays) }
+
+    /// The most recent night's detail, if the lookback was built.
+    public var latestNight: StressNightProgress? { nights.first }
+
+    /// Returned when the profile cannot supply HRmax, so the baseline cannot be built at all.
+    public static let unavailable = StressCalibrationProgress(
+        qualifyingDays: 0,
+        requiredDays: Stress.minQualifyingDays,
+        lookbackDays: Stress.lookbackDays,
+        hrOnlyDays: 0,
+        nights: []
+    )
+}
+
 public enum Stress {
     /// Scale that makes MAD a consistent sigma estimate for normal data.
     public static let madScale = 1.4826
@@ -130,6 +189,71 @@ public enum Stress {
     /// A day qualifies with at least this many night windows.
     public static let minNightWindowsPerDay = 12
     public static let lookbackDays = 14
+
+    /// The eligible windows for each night in the baseline lookback, most recent first.
+    ///
+    /// This is the one place the night-window and exertion rules live. `StressBaseline.build` and
+    /// `calibrationProgress` both use it, so progress can never disagree with scoring.
+    struct NightWindows {
+        let day: LocalDay
+        let offset: Int
+        /// Windows that pass the R-R validity rule.
+        let valid: [FiveMinuteWindow]
+        /// Windows with a heart-rate mean, including invalid R-R windows.
+        let withHR: [FiveMinuteWindow]
+    }
+
+    static func nightWindows(
+        _ windows: [FiveMinuteWindow],
+        day: LocalDay,
+        in timeZone: TimeZone,
+        restingHR: Double?,
+        maxHR: Double
+    ) -> [NightWindows] {
+        (1...lookbackDays).map { offset in
+            let nightDay = LocalTime.adding(days: -offset, to: day)
+            let night = LocalTime.nightWindow(of: nightDay, in: timeZone)
+            let eligible = windows.filter {
+                night.contains($0.startMs)
+                    && !HeartRateZones.isExertion(hr: $0.hrMean, restingHR: restingHR, maxHR: maxHR)
+            }
+            return NightWindows(
+                day: nightDay,
+                offset: offset,
+                valid: eligible.filter(\.valid),
+                withHR: eligible.filter { $0.hrMean != nil }
+            )
+        }
+    }
+
+    /// How close `windows` are to a ready baseline for `day`. Uses the same rules as `StressBaseline.build`,
+    /// so `qualifyingDays` matches `StressBaseline.validDays` and `hrOnlyDays` matches its HR-only count.
+    public static func calibrationProgress(
+        windows: [FiveMinuteWindow],
+        day: LocalDay,
+        in timeZone: TimeZone,
+        restingHR: Double?,
+        maxHR: Double
+    ) -> StressCalibrationProgress {
+        let nights = nightWindows(
+            windows, day: day, in: timeZone, restingHR: restingHR, maxHR: maxHR
+        ).map { night in
+            StressNightProgress(
+                day: night.day,
+                offset: night.offset,
+                validWindowCount: night.valid.count,
+                hrWindowCount: night.withHR.count,
+                requiredWindows: minNightWindowsPerDay
+            )
+        }
+        return StressCalibrationProgress(
+            qualifyingDays: nights.filter(\.qualifiesForRR).count,
+            requiredDays: minQualifyingDays,
+            lookbackDays: lookbackDays,
+            hrOnlyDays: nights.filter(\.qualifiesForHROnly).count,
+            nights: nights
+        )
+    }
 
     /// Standard normal CDF, via erfc.
     public static func normalCDF(_ z: Double) -> Double {
