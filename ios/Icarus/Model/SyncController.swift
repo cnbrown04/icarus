@@ -12,9 +12,12 @@ struct SyncScreenData: Sendable {
     let pendingRows: Int
 
     static func load(_ db: Database) throws -> SyncScreenData {
-        SyncScreenData(
-            batches: try db.syncBatches(limit: 50),
-            quarantined: try db.syncBatches(status: "rejected", limit: 50),
+        let quarantined = try db.syncBatches(status: "rejected", limit: 50)
+        // Rejected batches are listed in the Quarantined section, so keep them out of Batches.
+        let recent = try db.syncBatches(limit: 50).filter { $0.status != "rejected" }
+        return SyncScreenData(
+            batches: recent,
+            quarantined: quarantined,
             pendingRows: try SyncSnapshot.load(db).pendingRows
         )
     }
@@ -51,6 +54,7 @@ final class SyncController {
     /// The device's APNs token, once iOS has issued one (PLAN.md 12.5). Sent to the server when paired.
     private(set) var pushToken: String?
     @ObservationIgnored private var sentPushToken: String?
+    @ObservationIgnored private var runTask: Task<Void, Never>?
     /// False while the app is in the background. Background uploads are queued only then (PLAN.md 11.2).
     var isForeground = true
 
@@ -66,10 +70,20 @@ final class SyncController {
         status = await engine.status()
     }
 
-    /// One sync pass. A call made while a pass runs joins it (SyncEngine.run).
+    /// One sync pass. A call made while a pass runs waits for that same pass instead of returning early.
     func runNow() async {
-        guard !isRunning else { return }
+        if let runTask {
+            await runTask.value
+            return
+        }
         isRunning = true
+        let task = Task { @MainActor in await self.performRun() }
+        runTask = task
+        await task.value
+        runTask = nil
+    }
+
+    private func performRun() async {
         _ = await engine.run()
         if await engine.takeAlarmConflicts() > 0 {
             alarmConflictNotice = true
