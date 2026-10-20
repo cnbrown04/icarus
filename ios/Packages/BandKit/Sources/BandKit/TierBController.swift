@@ -128,8 +128,15 @@ public actor TierBController {
     public private(set) var clockUntrusted = false
     /// Records that passed the future gate this drain — the sentinel/summary tally.
     private var drainKeptRecords = 0
+    /// Records kept across every completed drain since the link opened, for the live UI total.
+    private var sessionKeptRecords = 0
     /// Future-dated records dropped this drain (the record-timestamp gate tally).
     private var drainDroppedFutureRecords = 0
+    /// When the last `.drainProgress` event went out. Acks are throttled to about 2/s; drain
+    /// start and end always emit, so the last count is never lost.
+    private var lastDrainProgressAt: Date?
+    /// Minimum spacing between the throttled `.drainProgress` emissions.
+    private static let drainProgressMinInterval: TimeInterval = 0.5
     /// The decoded ring-buffer state of the strap's GET_DATA_RANGE reply (NOOP's DataRange words):
     /// write pointer, persistent read pointer, ring capacity, and the page backlog. Set from every
     /// decoded GET_DATA_RANGE reply (the handshake's and `drainFullHistory`'s); nil until the first
@@ -200,6 +207,8 @@ public actor TierBController {
         // never starve a link that just came back.
         clockUntrusted = false
         emptyStreak = 0
+        sessionKeptRecords = 0
+        lastDrainProgressAt = nil
         BandLog.tierB(.info, "link open; handshake begins")
         guard enabled, !handshakeStarted else { return }
         handshakeStarted = true
@@ -375,11 +384,23 @@ public actor TierBController {
         fullHistorySummary = "draining…"
         BandLog.tierB(.info, "full-history restore begins")
         do {
+            // The connect trigger kicks its own drain as soon as Tier B goes ready, so an
+            // auto-restore (or a manual tap) can land while that drain is still running. Waiting
+            // it out keeps the restore's first kick from being denied and reported as "0 drains".
+            while case .draining = offload.phase {
+                await waitForDrainEnd()
+            }
+            guard enabled, state == .ready, linkOpen else {
+                fullHistorySummary = "restore aborted: the link closed before the restore started"
+                BandLog.tierB(.error, "full-history restore aborted: the link closed before the restore started")
+                return
+            }
             // The reply's ring state is ALSO decoded into `ringState` by `handleDataRangeReply`
             // when the notification lands; decoding the resolved frame here keeps the rewind
             // decision independent of that event's ordering.
             let rangeFrame = try await send(BandCommand.getDataRange())
             guard let ring = DataRange.ringState(from: FrameCodec.reencode(rangeFrame), cmdOff: 6) else {
+                fullHistorySummary = "restore aborted: the band's ring state is unreadable"
                 BandLog.tierB(.error, "full-history restore aborted: the GET_DATA_RANGE reply's ring state is unreadable")
                 return
             }
@@ -393,6 +414,7 @@ public actor TierBController {
                 do {
                     try await rewindReadPointer(to: UInt32(target))
                 } catch {
+                    fullHistorySummary = "restore aborted: the read-cursor rewind failed"
                     BandLog.tierB(.error, "full-history restore aborted: the SET_READ_POINTER write failed (\(String(describing: error)))")
                     return
                 }
@@ -402,9 +424,17 @@ public actor TierBController {
             // and run-cap watchdogs bound each slice; the acked batches flush as they always do.
             var totalKept = 0
             var drains = 0
+            var stopSummary: String?
             while drains < Self.maxFullHistoryDrains {
+                // A periodic or strap-triggered drain can win the actor race between slices; wait
+                // for it and retry rather than treating the restore as denied.
+                while case .draining = offload.phase {
+                    await waitForDrainEnd()
+                }
                 guard enabled, state == .ready, linkOpen else { break }
                 guard await runDrain(.autoContinue) else {
+                    if case .draining = offload.phase { continue }
+                    stopSummary = "restore stopped: the next drain could not start"
                     BandLog.tierB(.info, "full-history restore: the next drain was denied — stopping")
                     break
                 }
@@ -428,12 +458,18 @@ public actor TierBController {
                     break
                 }
             }
-            if drains == Self.maxFullHistoryDrains {
+            if stopSummary == nil, drains == 0 {
+                stopSummary = "restore stopped: the link closed before the first drain"
+            }
+            if let stopSummary {
+                fullHistorySummary = stopSummary
+            } else if drains == Self.maxFullHistoryDrains {
                 fullHistorySummary = "restore hit the \(Self.maxFullHistoryDrains)-drain cap"
                 BandLog.tierB(.error, "full-history restore hit the \(Self.maxFullHistoryDrains)-drain cap")
+            } else {
+                fullHistorySummary = "finished: \(drains) drain(s), \(totalKept) record(s) re-drained"
+                BandLog.tierB(.info, "full-history restore finished: \(drains) drain(s), \(totalKept) record(s) re-drained")
             }
-            fullHistorySummary = "finished: \(drains) drain(s), \(totalKept) record(s) re-drained"
-            BandLog.tierB(.info, "full-history restore finished: \(drains) drain(s), \(totalKept) record(s) re-drained")
         } catch {
             // `send` failures land here (disabled / notConnected / timedOut after retries).
             fullHistorySummary = "restore aborted: \(String(describing: error))"
@@ -574,7 +610,10 @@ public actor TierBController {
         loggedNoCursorSentinel = false
         loggedFutureEndRTC = false
         historicalRecords.removeAll()
-        await runOffloadEffects(offload.start())
+        let effects = offload.start()
+        // Drain start is a UI milestone, so it bypasses the ack throttle.
+        emitDrainProgress(force: true)
+        await runOffloadEffects(effects)
         scheduleQuietWatchdog()
         scheduleRunCapWatchdog()
         return true
@@ -685,6 +724,9 @@ public actor TierBController {
                     // would lose every acked record if the app died mid-drain. Repeated stores dedupe
                     // on (band_id, ts_ms).
                     flushRecords()
+                    // One emission per acked batch (never per record), throttled to ~2/s. The
+                    // end-of-drain emission always carries the final count.
+                    emitDrainProgress(force: false)
                 } catch {
                     BandLog.tierB(.error, "HISTORICAL_DATA_RESULT write failed: \(String(describing: error))")
                 }
@@ -757,10 +799,14 @@ public actor TierBController {
         } else {
             emptyStreak = 0
         }
+        sessionKeptRecords += drainKeptRecords
         let dropped = drainDroppedFutureRecords
         BandLog.tierB(.info, "historical offload ended (\(offload.phase)): \(offload.recordCount) record(s) total, \(historicalRecords.count) unflushed"
             + (dropped > 0 ? ", \(dropped) future-dated record(s) dropped" : ""))
         flushRecords()
+        // The end-of-drain emission always goes out, so the UI sees the final count and why the
+        // drain stopped even when the last ack was throttled.
+        emitDrainProgress(force: true)
         // The full-history restore parks one waiter per drain here; resume them all (the restore
         // loop re-checks the phase itself, so a stale resume is harmless).
         let waiters = drainEndWaiters
@@ -768,6 +814,41 @@ public actor TierBController {
         for waiter in waiters {
             waiter.resume()
         }
+    }
+
+    /// Surfaces the offload's current state to the app. Called on drain start, after each acked
+    /// batch (throttled) and at drain end (forced): it only reads counters, so the drain's
+    /// per-record path stays untouched.
+    private func emitDrainProgress(force: Bool) {
+        let now = clock.now()
+        if !force,
+           let last = lastDrainProgressAt,
+           now.timeIntervalSince(last) < Self.drainProgressMinInterval {
+            return
+        }
+        lastDrainProgressAt = now
+        let phase: DrainProgress.Phase
+        let stopReason: OffloadStateMachine.StopReason?
+        switch offload.phase {
+        case .draining:
+            phase = .draining
+            stopReason = nil
+        case .idle:
+            phase = .idle
+            stopReason = nil
+        case let .stopped(reason):
+            phase = .idle
+            stopReason = reason
+        }
+        let total = sessionKeptRecords + (phase == .draining ? drainKeptRecords : 0)
+        emit(.drainProgress(DrainProgress(
+            phase: phase,
+            recordsThisDrain: drainKeptRecords,
+            totalThisSession: total,
+            pagesBehind: ringState?.pagesBehind,
+            stopReason: stopReason,
+            at: now
+        )))
     }
 
     /// Hands the accumulated records to the app and clears the buffer. Called after each acked

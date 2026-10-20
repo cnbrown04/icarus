@@ -531,6 +531,59 @@ struct TierBControllerTests {
         #expect(await h.controller.state == .awaitingLink)
     }
 
+    /// The live UI gets start, throttled ack updates and a forced end, so a drain is visible
+    /// while it runs without per-record emissions.
+    @Test func drainProgressReportsStartThrottledAcksAndEnd() async throws {
+        let h = Harness()
+        await h.controller.connectionOpened()
+
+        func progress() -> [DrainProgress] {
+            h.events.all.compactMap { event in
+                if case let .drainProgress(value) = event { return value }
+                return nil
+            }
+        }
+
+        let started = progress()
+        #expect(started.count == 1)
+        #expect(started.first?.phase == .draining)
+        #expect(started.first?.recordsThisDrain == 0)
+        #expect(started.first?.totalThisSession == 0)
+
+        let base = UInt32(ManualClock.origin.timeIntervalSince1970)
+        // The first ack lands in the same instant as the start emission, so it is throttled.
+        await h.controller.receive(historicalRecordFrame(unix: base - 3600))
+        await h.controller.receive(metadataFrame(token: [1, 0, 0, 0, 1, 0, 0, 0]))
+        await flush()
+        #expect(progress().count == 1, "acks within 0.5 s stay throttled")
+
+        // Half a second later the next ack emits with the accumulated count.
+        h.clock.advance(by: 0.5)
+        await flush()
+        await h.controller.receive(historicalRecordFrame(unix: base - 3599))
+        await h.controller.receive(metadataFrame(token: [2, 0, 0, 0, 1, 0, 0, 0]))
+        await flush()
+        let acked = progress()
+        #expect(acked.count == 2)
+        #expect(acked.last?.phase == .draining)
+        #expect(acked.last?.recordsThisDrain == 2)
+        #expect(acked.last?.totalThisSession == 2)
+
+        // The end always emits, with the stop reason and the final kept total.
+        for _ in 0 ..< 8 {
+            guard await h.controller.drainPhase == .draining else { break }
+            h.clock.advance(by: OffloadStateMachine.quietTimeout)
+            await flush()
+        }
+        #expect(await h.controller.drainPhase != .draining)
+        let ended = progress()
+        #expect(ended.count == 3)
+        #expect(ended.last?.phase == .idle)
+        #expect(ended.last?.stopReason == .quietTimeout)
+        #expect(ended.last?.recordsThisDrain == 2)
+        #expect(ended.last?.totalThisSession == 2)
+    }
+
     // MARK: Full-history restore (app-deleted repopulation)
 
     /// The #791 capture's GET_DATA_RANGE reply payload (the envelope minus its [AA][size][crc8]
@@ -579,6 +632,37 @@ struct TierBControllerTests {
         let task = Task { await h.controller.drainFullHistory() }
         await settle { h.band.opcodes.filter { $0 == 22 }.count == cmd22Baseline + 1 }
         return (task, cmd22Baseline)
+    }
+
+    /// The connect trigger starts its own drain as soon as Tier B is ready. A restore asked for
+    /// during that drain must wait for it to end, not have its first kick denied as "0 drains".
+    @Test func drainFullHistoryWaitsOutTheInFlightConnectDrain() async throws {
+        let h = Harness()
+        await h.controller.connectionOpened()
+        #expect(await h.controller.drainPhase == .draining, "the connect trigger started a drain")
+        let rangeReadsBefore = h.band.opcodes.filter { $0 == 34 }.count
+
+        let complete = Frame(type: PacketType.metadata.rawValue, seq: 24, cmd: 3, payload: [])
+        h.band.setMultiResponder { request, _ in
+            switch request.cmd {
+            case 34: return [reply(to: request, payload: ringPayload(write: 100, read: 0))]
+            case 22: return [complete]
+            case 3: return [reply(to: request, payload: [])]
+            default: return []
+            }
+        }
+        let task = Task { await h.controller.drainFullHistory() }
+        await flush()
+        #expect(h.band.opcodes.filter { $0 == 34 }.count == rangeReadsBefore,
+                "the range read waits for the in-flight drain")
+        #expect(await h.controller.fullHistorySummary == "draining…")
+
+        await endRunningDrain(h)
+        await task.value
+
+        #expect(h.band.opcodes.filter { $0 == 34 }.count == rangeReadsBefore + 1,
+                "the range read runs after the connect drain")
+        #expect(await h.controller.fullHistorySummary?.contains("finished") == true)
     }
 
     /// The restore's spine: GET_DATA_RANGE reads U behind W → the cursor is rewound to the ring

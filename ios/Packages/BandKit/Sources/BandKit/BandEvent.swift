@@ -36,7 +36,12 @@ public enum BandEvent: Sendable, Equatable {
     case bandInfo(BandInfo)
     /// The decoded records of one completed history offload drain, emitted exactly once per drain
     /// (PLAN.md 5.3.4). The records are not kept by the transport; the consumer persists them.
+    /// Drained batches also flush as they are acked, so this is normally only the last partial batch.
     case historical([HistoricalRecord])
+    /// Live history-offload progress: emitted on drain start, throttled while batches are acked,
+    /// and once at drain end with the stop reason (PLAN.md 5.3.4). Cheap enough for the UI to
+    /// observe every band connection and periodic drain without per-record work.
+    case drainProgress(DrainProgress)
     /// A human-readable reason the Tier B custom-service setup or handshake failed. Emitted just
     /// before `.tierB(.unavailable)`. The Device screen shows it while the state is `.unavailable`.
     case tierBFailure(String)
