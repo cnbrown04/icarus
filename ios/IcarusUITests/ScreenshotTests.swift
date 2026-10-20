@@ -23,8 +23,9 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["today.hrValue"].waitForExistence(timeout: 30))
         attachScreenshot(named: "07-today")
 
-        openFromToday(app, tap: app.staticTexts["today.hrValue"], title: "Heart rate")
+        openFromToday(app, tap: app.staticTexts["today.hrValue"], title: "Heart Rate")
         attachScreenshot(named: "08-heart-rate")
+        attachTrendScreenshot(app)
         goBack(app)
 
         openFromToday(app, tap: app.staticTexts["today.stressValue"], title: "Stress")
@@ -36,9 +37,7 @@ final class ScreenshotTests: XCTestCase {
         goBack(app)
 
         let tabs: [(label: String, attachmentName: String)] = [
-            ("Trends", "11-trends"),
             ("Alarms", "12-alarms"),
-            ("Device", "15-device"),
             ("Settings", "17-settings"),
         ]
         for tab in tabs {
@@ -48,14 +47,16 @@ final class ScreenshotTests: XCTestCase {
                 // The seed has three alarms (Store SeedData), so the list must show them before the capture.
                 XCTAssertTrue(element(app, "alarms.time").waitForExistence(timeout: 10))
             }
-            if tab.label == "Device" {
-                scrollToExperimental(app)
-            }
             attachScreenshot(named: tab.attachmentName)
             if tab.label == "Alarms" {
                 attachAlarmEditorScreens(app)
             }
         }
+
+        // Band left the tab bar; it now sits behind Settings → Band.
+        openBand(app)
+        scrollToExperimental(app)
+        attachScreenshot(named: "15-device")
     }
 
     func testProfileScreenshot() {
@@ -146,8 +147,8 @@ final class ScreenshotTests: XCTestCase {
 
         XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 30))
         app.tabBars.buttons["Settings"].tap()
-        app.buttons["Sync"].firstMatch.tap()
-        XCTAssertTrue(app.navigationBars["Sync"].waitForExistence(timeout: 10))
+        app.buttons["Server sync"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Server sync"].waitForExistence(timeout: 10))
         attachScreenshot(named: "16-sync")
     }
 
@@ -167,7 +168,36 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Alarms"].waitForExistence(timeout: 10))
     }
 
-    /// Scrolls the Device form until its Experimental section header is on screen.
+    /// Selects the 90-day span on the resting-HR card, where the old Trends chart now lives, and captures it.
+    private func attachTrendScreenshot(_ app: XCUIApplication) {
+        let quarter = app.buttons["90 d"].firstMatch
+        XCTAssertTrue(quarter.waitForExistence(timeout: 10))
+        var swipes = 0
+        while !quarter.isHittable, swipes < 6 {
+            app.swipeUp()
+            swipes += 1
+        }
+        quarter.tap()
+
+        XCTAssertTrue(app.staticTexts["Resting HR"].waitForExistence(timeout: 10))
+        let chart = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Resting HR, 90 d"))
+            .firstMatch
+        _ = chart.waitForExistence(timeout: 5)
+        attachScreenshot(named: "11-trends")
+    }
+
+    /// Opens Settings → Band, the screen that used to be the Device tab.
+    private func openBand(_ app: XCUIApplication) {
+        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
+        let band = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Band")).firstMatch
+        XCTAssertTrue(band.waitForExistence(timeout: 10))
+        band.tap()
+        XCTAssertTrue(app.navigationBars["Band"].waitForExistence(timeout: 10))
+    }
+
+    /// Scrolls the Band form until its Experimental section header is on screen.
     private func scrollToExperimental(_ app: XCUIApplication) {
         let header = app.staticTexts["Experimental"]
         XCTAssertTrue(header.waitForExistence(timeout: 10))

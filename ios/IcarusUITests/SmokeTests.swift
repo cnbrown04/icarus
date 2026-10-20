@@ -12,9 +12,17 @@ final class SmokeTests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 30))
-        for title in ["Trends", "Alarms", "Device", "Settings", "Today"] {
+        XCTAssertFalse(app.tabBars.buttons["Trends"].exists)
+        for title in ["Alarms", "Settings", "Today"] {
             app.tabBars.buttons[title].tap()
             XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 10), "missing title \(title)")
         }
+
+        // Band is no longer a tab: Settings pushes the Band screen.
+        app.tabBars.buttons["Settings"].tap()
+        let band = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Band")).firstMatch
+        XCTAssertTrue(band.waitForExistence(timeout: 10))
+        band.tap()
+        XCTAssertTrue(app.navigationBars["Band"].waitForExistence(timeout: 10))
     }
 }

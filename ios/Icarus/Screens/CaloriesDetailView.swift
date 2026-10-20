@@ -2,11 +2,13 @@ import Metrics
 import Store
 import SwiftUI
 
-/// Today's resting and active calories, by hour, a week of totals, and the inputs used (PLAN.md §14 row 10).
+/// Today's resting and active calories, by hour, a 7, 30 or 90 day trend, and the inputs used (PLAN.md §14 row 10).
 struct CaloriesDetailView: View {
     let environment: AppEnvironment
 
     @State private var snapshot: Dashboard.CaloriesSnapshot?
+    @State private var span: TrendSpan = .week
+    @State private var trends: Dashboard.TrendsSnapshot?
 
     var body: some View {
         ScrollView {
@@ -48,18 +50,26 @@ struct CaloriesDetailView: View {
                     }
                 }
 
-                ChartCard(title: "Seven days") {
-                    Text(weekAverage)
-                        .font(.metricValue)
-                        .monospacedDigit()
+                ChartCard(title: "Calories, \(span.label)", footer: calorieFooter) {
+                    VStack(alignment: .leading, spacing: Spacing.s12) {
+                        TrendSpanPicker(span: $span)
+                        TrendSummary(series: calorieTrend, unit: "kcal")
+                    }
                 } chart: {
-                    DayBarChart(
-                        points: weekTotals.points,
-                        color: { _ in Palette.caloriesActive },
-                        average: weekTotals.average
-                    )
-                    .frame(height: Spacing.s48 * 3)
-                    .accessibilityLabel("Calories, seven days")
+                    if calorieTrend.points.isEmpty {
+                        Text("No data for this span")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        DayBarChart(
+                            points: calorieTrend.points,
+                            color: { _ in Palette.caloriesActive },
+                            average: calorieTrend.average
+                        )
+                        .frame(height: Spacing.s48 * 3)
+                        .accessibilityLabel("Calories, \(span.label)")
+                        .accessibilityValue(calorieFooter)
+                    }
                 }
 
                 DashboardCard(title: "Inputs", symbol: "list.bullet", tint: .secondary) {
@@ -92,6 +102,14 @@ struct CaloriesDetailView: View {
                 try Dashboard.calories(db, nowMs: nowMs)
             }) {
                 snapshot = value
+            }
+        }
+        .task(id: span) {
+            let days = span.loadedDayCount
+            for await value in environment.snapshots(every: .seconds(60), { db, nowMs in
+                try Dashboard.trends(db, nowMs: nowMs, dayCount: days)
+            }) {
+                trends = value
             }
         }
     }
@@ -134,17 +152,17 @@ struct CaloriesDetailView: View {
         return active / total
     }
 
-    private var weekTotals: TrendSeries {
+    private var calorieTrend: TrendSeries {
         TrendSeries.make(
-            days: snapshot?.week ?? [],
-            timeZone: snapshot?.context.timeZone ?? Dashboard.fallbackZone,
+            days: trends?.days ?? [],
+            timeZone: trends?.context.timeZone ?? Dashboard.fallbackZone,
             value: \.kcalTotal,
-            currentCount: 7
+            currentCount: span.rawValue
         )
     }
 
-    private var weekAverage: String {
-        weekTotals.average.map { Format.kcal($0) } ?? "--"
+    private var calorieFooter: String {
+        "Estimated. " + calorieTrend.latestFooter(unit: "kcal")
     }
 
     private struct InputRow {

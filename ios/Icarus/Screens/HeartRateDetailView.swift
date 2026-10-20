@@ -1,13 +1,15 @@
 import Store
 import SwiftUI
 
-/// Heart rate over 1 h to 7 d, with zones and min, average and max, and resting HR over 30 days (PLAN.md §14 row 8).
+/// Heart rate over 1 h to 7 d, with zones and min, average and max, and resting HR over 7, 30 or 90 days
+/// (PLAN.md §14 row 8).
 struct HeartRateDetailView: View {
     let environment: AppEnvironment
 
     @State private var range: Dashboard.HeartRateRange = .hour
+    @State private var span: TrendSpan = .month
     @State private var snapshot: Dashboard.HeartRateSnapshot?
-    @State private var trend = TrendSeries.empty
+    @State private var trends: Dashboard.TrendsSnapshot?
     @State private var selection: Date?
 
     var body: some View {
@@ -47,19 +49,21 @@ struct HeartRateDetailView: View {
                     }
                 }
 
-                ChartCard(title: "Resting HR, 30 days", footer: trendFooter) {
-                    Text(trend.latest.map { Format.number($0, unit: "bpm") } ?? "--")
-                        .font(.metricValue)
-                        .monospacedDigit()
+                ChartCard(title: "Resting HR", footer: restingFooter) {
+                    VStack(alignment: .leading, spacing: Spacing.s12) {
+                        TrendSpanPicker(span: $span)
+                        TrendSummary(series: restingTrend, unit: "bpm")
+                    }
                 } chart: {
-                    if trend.points.isEmpty {
-                        Text("No resting HR yet")
+                    if restingTrend.points.isEmpty {
+                        Text("No resting HR for this span")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     } else {
-                        DayLineChart(points: trend.points, tint: Palette.heartRate, average: trend.average)
+                        DayLineChart(points: restingTrend.points, tint: Palette.heartRate, average: restingTrend.average)
                             .frame(height: Spacing.s48 * 3)
-                            .accessibilityLabel("Resting HR, 30 days")
+                            .accessibilityLabel("Resting HR, \(span.label)")
+                            .accessibilityValue(restingFooter)
                     }
                 }
             }
@@ -76,16 +80,12 @@ struct HeartRateDetailView: View {
                 snapshot = value
             }
         }
-        .task {
+        .task(id: span) {
+            let days = span.loadedDayCount
             for await value in environment.snapshots(every: .seconds(60), { db, nowMs in
-                try Dashboard.trends(db, nowMs: nowMs, dayCount: 30)
+                try Dashboard.trends(db, nowMs: nowMs, dayCount: days)
             }) {
-                trend = TrendSeries.make(
-                    days: value.days,
-                    timeZone: value.context.timeZone,
-                    value: \.restingHR,
-                    currentCount: 30
-                )
+                trends = value
             }
         }
     }
@@ -104,8 +104,18 @@ struct HeartRateDetailView: View {
         return "Range \(low)-\(high) bpm"
     }
 
-    private var trendFooter: String {
-        guard let average = trend.average else { return "No data" }
-        return "Average \(Format.number(average, unit: "bpm")) over 30 days"
+    private var restingFooter: String {
+        guard let average = restingTrend.average else { return "No data for \(span.label)" }
+        return "Average \(Format.number(average, unit: "bpm")) over \(span.rawValue) days. "
+            + restingTrend.latestFooter(unit: "bpm")
+    }
+
+    private var restingTrend: TrendSeries {
+        TrendSeries.make(
+            days: trends?.days ?? [],
+            timeZone: trends?.context.timeZone ?? Dashboard.fallbackZone,
+            value: \.restingHR,
+            currentCount: span.rawValue
+        )
     }
 }

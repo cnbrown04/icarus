@@ -2,11 +2,13 @@ import Metrics
 import Store
 import SwiftUI
 
-/// Stress now, over 24 h and over seven days, with RMSSD and sqrt(Baevsky SI) (PLAN.md §14 row 9).
+/// Stress now, over 24 h and over 7, 30 or 90 days, with RMSSD and sqrt(Baevsky SI) (PLAN.md §14 row 9).
 struct StressDetailView: View {
     let environment: AppEnvironment
 
     @State private var snapshot: Dashboard.StressSnapshot?
+    @State private var span: TrendSpan = .week
+    @State private var trends: Dashboard.TrendsSnapshot?
     @State private var showsMethod = false
 
     var body: some View {
@@ -47,28 +49,41 @@ struct StressDetailView: View {
                     }
                 }
 
-                ChartCard(title: "Seven days", footer: "Daily averages.") {
-                    Text(weekAverage)
-                        .font(.metricValue)
-                        .monospacedDigit()
+                ChartCard(title: "Stress, \(span.label)", footer: stressFooter) {
+                    VStack(alignment: .leading, spacing: Spacing.s12) {
+                        TrendSpanPicker(span: $span)
+                        TrendSummary(series: stressTrend, unit: "")
+                    }
                 } chart: {
-                    DayBarChart(
-                        points: stressWeek.points,
-                        color: { Palette.stress(StressBand.of(stress: Int($0.rounded()))) },
-                        average: stressWeek.average
-                    )
-                    .frame(height: Spacing.s48 * 3)
-                    .accessibilityLabel("Stress, seven daily averages")
+                    if stressTrend.points.isEmpty {
+                        Text("No data for this span")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        DayBarChart(
+                            points: stressTrend.points,
+                            color: { Palette.stress(StressBand.of(stress: Int($0.rounded()))) },
+                            average: stressTrend.average
+                        )
+                        .frame(height: Spacing.s48 * 3)
+                        .accessibilityLabel("Stress, \(span.label) daily averages")
+                        .accessibilityValue(stressFooter)
+                    }
                 }
 
-                ChartCard(title: "RMSSD, 7 days") {
-                    Text(rmssdWeek.average.map { Format.number($0, unit: "ms") } ?? "--")
-                        .font(.metricValue)
-                        .monospacedDigit()
+                ChartCard(title: "RMSSD, \(span.label)", footer: rmssdTrend.latestFooter(unit: "ms")) {
+                    TrendSummary(series: rmssdTrend, unit: "ms")
                 } chart: {
-                    DayLineChart(points: rmssdWeek.points, tint: Palette.hrv, average: rmssdWeek.average)
-                        .frame(height: Spacing.s48 * 2)
-                        .accessibilityLabel("Nightly RMSSD, 7 days")
+                    if rmssdTrend.points.isEmpty {
+                        Text("No data for this span")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        DayLineChart(points: rmssdTrend.points, tint: Palette.hrv, average: rmssdTrend.average)
+                            .frame(height: Spacing.s48 * 2)
+                            .accessibilityLabel("Nightly RMSSD, \(span.label)")
+                            .accessibilityValue(rmssdTrend.latestFooter(unit: "ms"))
+                    }
                 }
 
                 HStack(spacing: Spacing.s12) {
@@ -94,6 +109,14 @@ struct StressDetailView: View {
                 snapshot = value
             }
         }
+        .task(id: span) {
+            let days = span.loadedDayCount
+            for await value in environment.snapshots(every: .seconds(60), { db, nowMs in
+                try Dashboard.trends(db, nowMs: nowMs, dayCount: days)
+            }) {
+                trends = value
+            }
+        }
         .sheet(isPresented: $showsMethod) {
             StressMethodSheet()
                 .presentationDetents([.medium, .large])
@@ -105,26 +128,32 @@ struct StressDetailView: View {
         snapshot?.latest
     }
 
-    private var timeZone: TimeZone {
-        snapshot?.context.timeZone ?? Dashboard.fallbackZone
+    private var stressTrend: TrendSeries {
+        TrendSeries.make(
+            days: trends?.days ?? [],
+            timeZone: trends?.context.timeZone ?? Dashboard.fallbackZone,
+            value: \.stressAverage,
+            currentCount: span.rawValue
+        )
     }
 
-    private var stressWeek: TrendSeries {
-        TrendSeries.make(days: snapshot?.week ?? [], timeZone: timeZone, value: \.stressAverage, currentCount: 7)
+    private var rmssdTrend: TrendSeries {
+        TrendSeries.make(
+            days: trends?.days ?? [],
+            timeZone: trends?.context.timeZone ?? Dashboard.fallbackZone,
+            value: \.rmssdNight,
+            currentCount: span.rawValue
+        )
     }
 
-    private var rmssdWeek: TrendSeries {
-        TrendSeries.make(days: snapshot?.week ?? [], timeZone: timeZone, value: \.rmssdNight, currentCount: 7)
+    private var stressFooter: String {
+        "Daily averages. " + stressTrend.latestFooter(unit: "")
     }
 
     private var bucketSummary: String {
         let values = (snapshot?.buckets ?? []).map(\.average)
         guard let low = values.min(), let high = values.max() else { return "No values" }
         return "Range \(low) to \(high)"
-    }
-
-    private var weekAverage: String {
-        stressWeek.average.map { Format.number($0, unit: "") } ?? "--"
     }
 
     private var currentValue: String {
