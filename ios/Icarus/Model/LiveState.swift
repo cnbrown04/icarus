@@ -4,6 +4,23 @@ import Foundation
 import Metrics
 import Observation
 
+/// The Device screen's view of the strap's history offload, fed by `.drainProgress` events.
+/// Observable through `LiveState`, so a drain start, every acked batch and its end update the UI
+/// without polling.
+struct DrainProgressState: Equatable {
+    var isDraining = false
+    /// Records kept by the current (or, when idle, the last) drain.
+    var recordsThisDrain = 0
+    /// Records kept across every drain since the link opened.
+    var totalThisSession = 0
+    /// The strap's reported ring backlog, when a GET_DATA_RANGE reply has been decoded.
+    var pagesBehind: Int?
+    /// Why the last drain stopped abnormally, in words. Nil after a clean catch-up/completion.
+    var lastStopReasonText: String?
+    /// When the last drain ended.
+    var lastEndedAt: Date?
+}
+
 /// Live band data for Today, Device, Pair band and Debug (PLAN.md 7.3). Consumes a BandTransport on the
 /// main actor. Charts read history from the store, not from here.
 @MainActor
@@ -28,8 +45,23 @@ final class LiveState {
     private(set) var lastBandEventAt: Date?
     /// Best-effort identity strings decoded from the last GET_HELLO reply (PLAN.md 5.3.4).
     private(set) var bandInfo: BandInfo?
-    /// Set by `AlarmCoordinator`. Called on the main actor when Tier B changes, or when a band event arrives.
-    @ObservationIgnored var onTierBChange: (@MainActor (TierBState) -> Void)?
+    /// Live history-offload progress, for the Device screen's History section and any other view
+    /// that wants to show a band sync without polling.
+    private(set) var drainProgress = DrainProgressState()
+    /// Handlers set by `AlarmCoordinator` (re-arm band alarms) and `AppEnvironment`
+    /// (auto-restore). Assignment APPENDS instead of replacing, so both observers fire: the
+    /// second assignment used to silently disable the first.
+    var onTierBChange: (@MainActor (TierBState) -> Void)? {
+        get { nil }
+        set {
+            guard let newValue else {
+                tierBChangeHandlers.removeAll()
+                return
+            }
+            tierBChangeHandlers.append(newValue)
+        }
+    }
+    @ObservationIgnored private var tierBChangeHandlers: [@MainActor (TierBState) -> Void] = []
     @ObservationIgnored var onBandEvent: (@MainActor (BandEventKind) -> Void)?
     /// Called on the main actor when a history offload drain completes. The records are NOT stored
     /// here — the consumer owns their persistence (PLAN.md 5.3.4).
@@ -136,6 +168,27 @@ final class LiveState {
 
     var isCollectionPaused: Bool {
         DataAge.isPaused(since: lastDataAt, now: clock.now)
+    }
+
+    /// One line for the History section, e.g. "Syncing with band… 3,214 records" while a drain
+    /// runs, then "Synced — 12,680 records" (plus an abnormal stop reason). Empty before the
+    /// first drain of the launch.
+    var drainProgressText: String {
+        let count = drainProgress.totalThisSession
+        let records = "\(count.formatted()) record\(count == 1 ? "" : "s")"
+        if drainProgress.isDraining {
+            var text = "Syncing with band… \(records)"
+            if let pages = drainProgress.pagesBehind, pages > 0 {
+                text += " · \(pages.formatted()) pages behind"
+            }
+            return text
+        }
+        guard drainProgress.lastEndedAt != nil else { return "" }
+        var text = "Synced — \(records)"
+        if let reason = drainProgress.lastStopReasonText {
+            text += " · \(reason)"
+        }
+        return text
     }
 
     /// The band readings are attributed to: the remembered one, else the first band seen.
@@ -273,7 +326,9 @@ final class LiveState {
             if newState != .unavailable {
                 tierBFailure = nil
             }
-            onTierBChange?(newState)
+            for handler in tierBChangeHandlers {
+                handler(newState)
+            }
         case let .tierBFailure(reason):
             tierBFailure = reason
         case let .bandEvent(kind):
@@ -286,6 +341,22 @@ final class LiveState {
             BandLog.tierB(.info, "app: historical records arrived (\(records.count))")
             lastHistoricalRecord = records.last
             onHistoricalRecords?(records)
+        case let .drainProgress(progress):
+            applyDrainProgress(progress)
+        }
+    }
+
+    private func applyDrainProgress(_ progress: DrainProgress) {
+        drainProgress.isDraining = progress.isDraining
+        drainProgress.recordsThisDrain = progress.recordsThisDrain
+        drainProgress.totalThisSession = progress.totalThisSession
+        drainProgress.pagesBehind = progress.pagesBehind
+        if progress.isDraining {
+            // A new drain starts: the previous end's reason no longer describes the state.
+            drainProgress.lastStopReasonText = nil
+        } else if let reason = progress.stopReason {
+            drainProgress.lastEndedAt = progress.at
+            drainProgress.lastStopReasonText = reason.isAbnormal ? reason.displayText : nil
         }
     }
 

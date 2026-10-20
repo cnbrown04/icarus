@@ -14,8 +14,6 @@ struct DeviceView: View {
     @State private var showsExplainer = false
     @State private var confirmsForget = false
     @State private var showsRestore = false
-    @State private var drainingRestore = false
-    @State private var restoreSummary: String?
 
     private var bandName: String {
         liveState.bandName ?? "Paired band"
@@ -116,25 +114,34 @@ struct DeviceView: View {
                 Button("Drain full band history…") {
                     showsRestore = true
                 }
-                .disabled(liveState.tierBState != .ready || drainingRestore)
+                .disabled(liveState.tierBState != .ready || liveState.drainProgress.isDraining)
                 .accessibilityIdentifier("device.drainFullHistory")
-                if drainingRestore {
+                // Every drain — the connect drain, the 15-minute cadence and the manual restore —
+                // drives the same live state, so the row updates in place instead of appearing
+                // only when the graphs catch up later.
+                if liveState.drainProgress.isDraining {
                     LabeledContent {
                         HStack(spacing: Spacing.s8) {
                             ProgressView()
-                            Text("Draining…")
+                            Text(liveState.drainProgressText)
+                                .monospacedDigit()
+                                .multilineTextAlignment(.trailing)
                         }
                     } label: {
-                        Label("Restore", systemImage: "arrow.counterclockwise")
+                        Label("Syncing", systemImage: "arrow.triangle.2.circlepath")
                     }
-                } else if let restoreSummary {
+                    .accessibilityIdentifier("device.drainProgress")
+                } else if liveState.drainProgress.lastEndedAt != nil {
                     LabeledContent {
-                        Text(restoreSummary)
+                        Text(liveState.drainProgressText)
+                            .monospacedDigit()
                             .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
                             .lineLimit(2)
                     } label: {
-                        Label("Restore", systemImage: "arrow.counterclockwise")
+                        Label("Last sync", systemImage: "checkmark.circle")
                     }
+                    .accessibilityIdentifier("device.drainProgress")
                 }
             } header: {
                 Text("History")
@@ -217,16 +224,11 @@ struct DeviceView: View {
         .navigationTitle("Band")
     }
 
-    /// Runs the full-history restore with UI state: the button disables while it runs, and the
-    /// one-line controller summary lands when it finishes.
+    /// Runs the full-history restore. The button and the progress row read the shared
+    /// `liveState.drainProgress`, so the manual path, the connect drain and the periodic cadence
+    /// all render the same live feedback and nothing is duplicated in local view state.
     private func startRestore() {
-        drainingRestore = true
-        restoreSummary = nil
-        Task {
-            await liveState.drainFullHistory()
-            restoreSummary = await liveState.fullHistorySummary() ?? "finished"
-            drainingRestore = false
-        }
+        Task { await liveState.drainFullHistory() }
     }
 
     /// Off switches the channel at once. On only opens the explainer, and the switch moves when "Turn on" is tapped.
