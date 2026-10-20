@@ -23,6 +23,32 @@ let testServer = URL(string: "https://icarus.test")!
 /// Fixed time, and a jitter that always returns the top of its range, so delays are exact.
 let testClock = SyncClock(now: { testNow }, uniform: { $0 })
 
+/// A clock tests can move forward, for retry windows and backoff.
+final class MutableTestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var date: Date
+
+    init(_ date: Date = testNow) {
+        self.date = date
+    }
+
+    var now: Date {
+        lock.lock()
+        defer { lock.unlock() }
+        return date
+    }
+
+    func advance(by seconds: TimeInterval) {
+        lock.lock()
+        date = date.addingTimeInterval(seconds)
+        lock.unlock()
+    }
+
+    var syncClock: SyncClock {
+        SyncClock(now: { self.now }, uniform: { $0 })
+    }
+}
+
 enum ScriptedStep: Sendable {
     case response(HTTPResponse)
     case failure
@@ -160,6 +186,7 @@ func makeEngine(
     outbox: Outbox,
     transport: ScriptedTransport,
     token: String? = "device-token",
+    clock: SyncClock = testClock,
     builder: BatchBuilder = BatchBuilder()
 ) -> SyncEngine {
     SyncEngine(
@@ -167,7 +194,7 @@ func makeEngine(
         outbox: outbox,
         tokens: InMemoryTokenStore(token: token),
         transport: transport,
-        clock: testClock,
+        clock: clock,
         builder: builder
     )
 }

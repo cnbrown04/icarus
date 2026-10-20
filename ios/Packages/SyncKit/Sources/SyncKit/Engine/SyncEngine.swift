@@ -58,6 +58,10 @@ public actor SyncEngine {
         if let running {
             return await running.value
         }
+        // Honor the backoff deadline: callers run again later, so a call before `retryAt` is a no-op.
+        if let retryAt, retryAt > clock.now() {
+            return .retry(at: retryAt)
+        }
         let task = Task { await self.runOnce() }
         running = task
         let result = await task.value

@@ -18,13 +18,20 @@ struct SyncEngineTests {
         let database = try databaseWithReadings(5)
         let transport = ScriptedTransport()
         await transport.queueBatch(.response(problemResponse(500, slug: "internal", detail: "boom")))
-        let engine = makeEngine(database: database, outbox: try pairedOutbox(), transport: transport)
+        let clock = MutableTestClock()
+        let engine = makeEngine(database: database, outbox: try pairedOutbox(), transport: transport, clock: clock.syncClock)
 
         let first = await engine.run()
         #expect(first == .retry(at: testNow.addingTimeInterval(5)))
         #expect(try cursor(database) == 0)
         #expect(try batchLogStatuses(database) == ["pending"])
 
+        // A run inside the backoff window is a no-op, so the cursor and batch are untouched.
+        #expect(await engine.run() == .retry(at: testNow.addingTimeInterval(5)))
+        #expect(try cursor(database) == 0)
+        #expect(try batchLogStatuses(database) == ["pending"])
+
+        clock.advance(by: 5)
         let second = await engine.run()
         #expect(second == .synced)
         #expect(try cursor(database) == 5)
@@ -35,9 +42,11 @@ struct SyncEngineTests {
         let database = try databaseWithReadings(2)
         let transport = ScriptedTransport()
         await transport.queueBatch(.failure)
-        let engine = makeEngine(database: database, outbox: try pairedOutbox(), transport: transport)
+        let clock = MutableTestClock()
+        let engine = makeEngine(database: database, outbox: try pairedOutbox(), transport: transport, clock: clock.syncClock)
 
         _ = await engine.run()
+        clock.advance(by: 5)
         _ = await engine.run()
 
         let uploads = await transport.batchRequests()
@@ -147,6 +156,26 @@ struct SyncEngineTests {
         await transport.queueBatch(.failure)
         let engine = makeEngine(database: database, outbox: try pairedOutbox(), transport: transport)
         #expect(await engine.run() == .retry(at: testNow.addingTimeInterval(5)))
+    }
+
+    @Test func runDuringBackoffReturnsTheDeadlineWithoutCallingTheNetwork() async throws {
+        let database = try databaseWithReadings(1)
+        let transport = ScriptedTransport()
+        await transport.queueBatch(.failure)
+        let clock = MutableTestClock()
+        let engine = makeEngine(database: database, outbox: try pairedOutbox(), transport: transport, clock: clock.syncClock)
+
+        #expect(await engine.run() == .retry(at: testNow.addingTimeInterval(5)))
+        #expect(await transport.batchRequests().count == 1)
+
+        clock.advance(by: 3)
+        #expect(await engine.run() == .retry(at: testNow.addingTimeInterval(5)))
+        #expect(await transport.batchRequests().count == 1)
+        #expect(await engine.status().phase == .retrying(at: testNow.addingTimeInterval(5)))
+
+        clock.advance(by: 2)
+        #expect(await engine.run() == .synced)
+        #expect(await transport.batchRequests().count == 2)
     }
 
     @Test func unpairedAndTokenlessEnginesDoNotCallTheNetwork() async throws {
