@@ -100,19 +100,30 @@ APNs `.p8` key + signing capability), TestFlight (no ASC secrets), Apple Watch, 
    recompute their minute metrics. The graph reads `hr_sample`, which only realtime
    ingest wrote — without the backfill, drained gaps stayed invisible forever.
 
-## Current status (as of 2026-10-19 late evening)
+## Current status (as of 2026-10-20 early)
 
-- All packages green: BandProtocol 105, BandKit 154, Metrics 112, Store 85, SyncKit 58.
+- All packages green: BandProtocol 105, BandKit 154, Metrics 120, Store 95, SyncKit 58.
 - Tabs: **Today · Alarms · Settings** (Trends removed; 7/30/90-day spans now live on the
   metric detail screens; Device is Settings → Band).
+- Today page (rich): live HR + 15-min sparkline + today avg/max/coverage; RHR (night-window
+  labelled) + 7-day trend; HRV RMSSD (+SDNN) + trend; stress value/band/average/peak/band
+  minutes + per-minute area timeline + calibration progress; Apple-sleep-style HR **zone
+  timeline** + zone-minute bars; sleep card with bedtime→wake, night RHR, RMSSD, vs-average
+  duration; calories total/active/BMR.
+- Calibration transparency: `StressCalibrationProgress` (7 nights required, 14-day lookback,
+  12 five-minute night windows each, HR-only fallback) surfaced as "X of 7 nights" plus a
+  per-night breakdown and what still needs collecting on Stress detail.
+- Read-time timeline APIs live in Store/Dashboard (`HRZoneTimeline`, `StressTimeline`,
+  `StressDaySummary`, `Dashboard.hrZoneTimeline/stressTimeline/stressCalibration`).
 - Installed build includes: full-history drain (Band → History, live progress), live
-  strap→app sync feedback via `BandEvent.drainProgress` → `LiveState.drainProgress`, whole-batch
-  minute-metric backfill, multi-observer `onTierBChange` (alarm re-arm + auto-restore both fire),
-  Server sync renamed/clarified (uploads only; quarantine de-duplicated; retry countdown honest),
-  Settings units/HRmax, raw data viewer, configurable retention, debug metrics inspector.
-- Nightly coverage: strap flash holds the night; the app drains on connect + 15-min cadence
-  (and the full-history restore can rewind). Overnight UI completeness depends on the app
-  getting wake-ups; BGProcessingTask (phone charging + idle) provides the sustained window.
+  strap→app sync feedback (`BandEvent.drainProgress` → `LiveState.drainProgress`),
+  whole-batch minute-metric backfill, multi-observer `onTierBChange`, Server sync
+  renamed/clarified, Settings units/HRmax, raw data viewer, configurable retention, debug
+  metrics inspector, and the rich Today page above.
+- Not built (deliberate): Recovery and Strain scores. OpenStrap/analytics computes
+  recovery/strain/sleep from published cited methods — porting those is the next health-metric
+  body of work. Sleep stages, SpO₂ and respiratory rate are not derivable from this hardware
+  (NOOP: respiration is not in the record; SpO₂ not recoverable from time-multiplexed PPG).
 - Working tree committed; phone on `com.cnbrown04.icarus` build with all of the above.
 - Pending feature follow-ups: none blocking. Open hardware questions: SET_READ_POINTER's exact
   units + re-ack replay behavior on the live strap (probe via the Band → History drain).
