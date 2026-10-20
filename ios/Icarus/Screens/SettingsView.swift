@@ -114,7 +114,7 @@ struct SettingsView: View {
                     SyncView(environment: environment)
                 } label: {
                     HStack(spacing: Spacing.s8) {
-                        settingsLabel("Sync", symbol: "arrow.triangle.2.circlepath", tint: Palette.syncOK)
+                        settingsLabel("Server sync", symbol: "arrow.triangle.2.circlepath", tint: Palette.syncOK)
                         Spacer(minLength: Spacing.s8)
                         Text(syncPhaseText)
                             .foregroundStyle(Palette.sync(environment.sync.status.phase))

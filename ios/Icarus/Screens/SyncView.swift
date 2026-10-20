@@ -45,7 +45,7 @@ struct SyncView: View {
                     Label("Sync every", systemImage: "timer")
                 }
             } footer: {
-                Text("Also syncs when you pull to refresh on Today.")
+                Text("Uploads to the paired web server; band history is separate (Settings → Band → History). Also runs when you pull to refresh on Today.")
             }
 
             if let quarantined = data?.quarantined, !quarantined.isEmpty {
@@ -89,7 +89,7 @@ struct SyncView: View {
                 }
             }
         }
-        .navigationTitle("Sync")
+        .navigationTitle("Server sync")
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Sync Now") {
