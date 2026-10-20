@@ -28,8 +28,11 @@ final class AppEnvironment {
     private let isSyncFixture: Bool
     private var ingestionStarted = false
     private var syncStarted = false
-    /// The auto-restore ran (or was checked) this launch (see `autoRestoreIfStoreEmpty`).
+    /// The auto-restore reached a verdict this launch (see `autoRestoreIfStoreEmpty`). Set only
+    /// after the store check (and, for the empty case, after the attempt), never up front.
     private var didAutoRestore = false
+    /// A store check/restore attempt is running; gates duplicate `.ready` observers.
+    private var autoRestoreInFlight = false
 
     private init(
         database: AppDatabase,
@@ -162,21 +165,29 @@ final class AppEnvironment {
 
     /// The app-deleted restore: when the channel first goes ready and the store holds no drained
     /// history at all, rewind the strap's read cursor and re-drain its whole stored history (the
-    /// strap's flash is retained across app deletions; OpenStrap §4.3). Once per launch.
+    /// strap's flash is retained across app deletions; OpenStrap §4.3). Once per launch for the
+    /// empty-store case; a failed store check is not a verdict, so a later ready may retry it.
     private func autoRestoreIfStoreEmpty(band: LiveState) async {
-        guard !didAutoRestore else { return }
-        didAutoRestore = true
+        guard !didAutoRestore, !autoRestoreInFlight else { return }
+        autoRestoreInFlight = true
+        defer { autoRestoreInFlight = false }
         do {
             let count = try await database.writer.read { db in
                 try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM historical_record") ?? 0
             }
             guard count == 0 else {
+                didAutoRestore = true
                 BandLog.tierB(.info, "app: store has \(count) historical row(s); no auto-restore")
                 return
             }
             BandLog.tierB(.info, "app: store is empty — auto-restoring the strap's full stored history")
+            // `drainFullHistory` waits out the connect drain if it is already running, so the
+            // restore is not denied as "0 drains" by the race.
             await band.drainFullHistory()
+            didAutoRestore = true
         } catch {
+            // Leave `didAutoRestore` false: this was not a genuine attempt, and a later ready
+            // (reconnect) should be allowed to retry.
             BandLog.tierB(.error, "app: auto-restore check failed: \(String(describing: error))")
         }
     }
@@ -229,15 +240,16 @@ final class AppEnvironment {
         }
         let fromMs = samples.map(\.tsMs).min() ?? 0
         let toMs = samples.map(\.tsMs).max() ?? 0
+        let inserted: Int
         do {
-            try await database.writer.write { db in
+            inserted = try await database.writer.write { db -> Int in
                 let inserted = try db.insertHistoricalSamples(samples)
                 guard let bandID = try String.fetchOne(
                     db, sql: "SELECT id FROM band WHERE peripheral_uuid = ?",
                     arguments: [bandUUID.uuidString]
                 ) else {
                     BandLog.tierB(.error, "app: no band row for \(bandUUID.uuidString); records dropped")
-                    return
+                    return 0
                 }
                 // Derivation runs over the band's WHOLE stored span, never the batch alone: the
                 // batch (or its ±margin) is a sliding window, so a long night would derive as a
@@ -247,7 +259,7 @@ final class AppEnvironment {
                 // entirely when the insert added nothing (replayed/duplicate batches).
                 guard inserted > 0 else {
                     BandLog.tierB(.info, "app: batch deduped to 0 new rows; derivation skipped")
-                    return
+                    return 0
                 }
                 let zone = try db.profile()?.timeZone ?? Dashboard.fallbackZone
                 let spanMin = try Int64.fetchOne(
@@ -287,11 +299,18 @@ final class AppEnvironment {
                     computedAtMs: computedAtMs
                 )
                 BandLog.tierB(.info, "app: stored batch; sleep derivation succeeded")
+                return inserted
             }
-            // Recompute the minute metrics the drained batch covers — the same follow-up the
-            // realtime ingest does after every flush. Anchored at the batch's end, so a live
-            // drain and a backfilled June window both recompute their own minutes.
-            _ = try await MetricsWorker(database: database).recompute(nowMs: toMs)
+            // Recompute minute metrics for the WHOLE drained batch range, not a short tail: a
+            // batch from a night's backlog can span hours, and a fresh worker's `recompute`
+            // lookback (30 min on its first run) would leave the earlier hours without rows,
+            // starving RHR/HRV/stress and the day rollups. The worker chunks by local day,
+            // oldest first, so each stress baseline sees the already-recomputed days. Skip when
+            // the batch deduped to zero new rows (a replayed/duplicate batch changes nothing).
+            if inserted > 0 {
+                _ = try await MetricsWorker(database: database)
+                    .recomputeBackfill(fromMs: fromMs, toMs: toMs, nowMs: computedAtMs)
+            }
         } catch {
             // A failed batch is safe to drop: the strap replays it until its ack lands, and the
             // insert dedups on (band, timestamp) (PLAN.md 5.3.4).
