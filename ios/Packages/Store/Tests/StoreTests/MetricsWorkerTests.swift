@@ -70,6 +70,64 @@ struct MetricsWorkerTests {
         #expect(latest.first?.hrAvg == 90)
     }
 
+    /// A drained batch can span hours. The range backfill must produce a minute row for every
+    /// minute it covers, not just the equivalent of the worker's short launch lookback.
+    @Test func rangeBackfillCoversEveryDrainedMinute() async throws {
+        let database = try seededDatabase()
+        // Four hours of samples ending an hour before "now", so every minute has closed.
+        let end = testNowMs - 60 * LocalTime.msPerMinute
+        let start = end - 4 * 60 * LocalTime.msPerMinute
+        try storeOneMinuteSamples(into: database, endingAt: end, minutes: 240, bpm: 60)
+        let worker = MetricsWorker(database: database)
+
+        let result = try await worker.recomputeBackfill(fromMs: start, toMs: end - 1, nowMs: testNowMs)
+        #expect(result.ran)
+        let rows = try await database.writer.read {
+            try $0.minuteMetricRows(from: start, to: end)
+        }
+        #expect(rows.count == 240, "every drained minute gets a row, not only the last 30 minutes")
+        #expect(rows.allSatisfy { $0.hrAvg == 60 && $0.hrN == 60 })
+
+        // Replaying the same drain range is idempotent.
+        let second = try await worker.recomputeBackfill(fromMs: start, toMs: end - 1, nowMs: testNowMs)
+        #expect(second.ran)
+        #expect(second.changedRows == 0)
+    }
+
+    /// The newest minute is recomputed only once it has closed at `nowMs`; the regular ingest
+    /// lookback owns the still-open minute.
+    @Test func rangeBackfillSkipsAnUnclosedMinute() async throws {
+        let database = try seededDatabase()
+        let end = testNowMs - 10 * LocalTime.msPerMinute
+        let start = end - 2 * LocalTime.msPerMinute
+        try storeOneMinuteSamples(into: database, endingAt: end, minutes: 2, bpm: 60)
+        // A sample in the minute starting at `end`, which is still open at `nowMs`.
+        try await database.writer.write { db in
+            try db.insertReadings([
+                Database.Reading(
+                    peripheralUUID: testPeripheral,
+                    tsMs: end + 1_000,
+                    bpm: 60,
+                    contact: true,
+                    rr: []
+                ),
+            ])
+        }
+        let worker = MetricsWorker(database: database)
+
+        let result = try await worker.recomputeBackfill(
+            fromMs: start,
+            toMs: end + 1_000,
+            nowMs: end + 30_000
+        )
+        #expect(result.ran)
+        let rows = try await database.writer.read {
+            try $0.minuteMetricRows(from: start, to: end + LocalTime.msPerMinute)
+        }
+        #expect(rows.count == 2, "the two closed minutes")
+        #expect(rows.last?.minuteMs == end - LocalTime.msPerMinute)
+    }
+
     @Test func rebuiltWindowsCarryTheStoredRMSSDOnlyOnceEach() {
         let rows = [
             minuteRow(0, hr: 60, rmssd: 45),

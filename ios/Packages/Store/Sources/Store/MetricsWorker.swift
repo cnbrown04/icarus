@@ -14,6 +14,9 @@ public actor MetricsWorker {
     public static let launchLookbackMinutes: Int64 = 30
     /// The baseline is rebuilt at most this often, or when the local day changes.
     public static let baselineMaxAgeMs: Int64 = 5 * LocalTime.msPerMinute
+    /// The most local days one backfill recomputes. Keeps a corrupt or absurd timestamp range
+    /// from turning into an unbounded loop of minute rows.
+    public static let maxBackfillDays = 60
 
     /// Result of one run.
     public struct Result: Sendable, Equatable {
@@ -60,7 +63,7 @@ public actor MetricsWorker {
     /// `recompute(nowMs:)` with its short lookback. Sleep sessions and daily rollups are separate:
     /// rollups are read-time (`DailyRollup`), sleep is `deriveSleepSessions`.
     public func recomputeBackfill(days: Int, nowMs: Int64) async throws -> Result {
-        let clamped = max(1, min(days, 60))
+        let clamped = max(1, min(days, Self.maxBackfillDays))
         let cache = baseline
         let (result, newBaseline) = try await database.writer.write { db -> (Result, BaselineCache?) in
             guard let profileRow = try db.profile() else {
@@ -89,6 +92,68 @@ public actor MetricsWorker {
                 if let newCache {
                     cache = newCache
                 }
+            }
+            return (Result(changedRows: total, ran: ran), cache)
+        }
+        if result.ran {
+            hasRunOnce = true
+        }
+        if let newBaseline {
+            baseline = newBaseline
+        }
+        return result
+    }
+
+    /// Recomputes every closed minute touched by the sample range `[fromMs, toMs]`, oldest local
+    /// day first. This is the historical-drain follow-up: a drained batch can span hours, so the
+    /// regular `recompute(nowMs:)` lookback (10–30 min) would leave every earlier minute without
+    /// a `minute_metric` row. Each local-day chunk is run separately so its stress baseline is
+    /// built from the days before it, exactly like the whole-day `recomputeBackfill(days:nowMs:)`.
+    ///
+    /// Minutes that have not closed at `nowMs` are skipped; the regular ingest path recomputes
+    /// them once they close. A range wider than `maxBackfillDays` local days is clamped to the
+    /// days ending at its newest sample (so even an old drained window is covered), and the
+    /// writes are idempotent (`upsertMinuteMetrics`), so replaying a drain batch is harmless.
+    public func recomputeBackfill(fromMs: Int64, toMs: Int64, nowMs: Int64) async throws -> Result {
+        let closedThrough = LocalTime.roundDown(nowMs, to: LocalTime.msPerMinute)
+        let lower = LocalTime.roundDown(min(fromMs, toMs), to: LocalTime.msPerMinute)
+        // Include the minute containing the newest sample, provided that minute has closed.
+        let upper = min(
+            LocalTime.roundDown(max(fromMs, toMs), to: LocalTime.msPerMinute) + LocalTime.msPerMinute,
+            closedThrough
+        )
+        guard upper > lower else { return Result(changedRows: 0, ran: false) }
+        let cache = baseline
+        let (result, newBaseline) = try await database.writer.write { db -> (Result, BaselineCache?) in
+            guard let profileRow = try db.profile() else {
+                return (Result(changedRows: 0, ran: false), nil)
+            }
+            let zone = profileRow.timeZone
+            // Clamp a corrupt or absurdly wide range to at most `maxBackfillDays` local days,
+            // keeping the days that END at the newest sample: an old drained window is still
+            // fully covered, while a garbage 1970…2100 span cannot loop forever.
+            let endDay = LocalTime.localDay(containing: upper - 1, in: zone)
+            let oldestDay = LocalTime.adding(days: -(Self.maxBackfillDays - 1), to: endDay)
+            var cursor = max(lower, LocalTime.localTime(oldestDay, hour: 0, in: zone))
+            var total = 0
+            var ran = false
+            var cache = cache
+            while cursor < upper {
+                let day = LocalTime.localDay(containing: cursor, in: zone)
+                let nextDayStart = LocalTime.localTime(LocalTime.adding(days: 1, to: day), hour: 0, in: zone)
+                let chunkEnd = min(upper, nextDayStart)
+                let lookback = (chunkEnd - cursor) / LocalTime.msPerMinute
+                guard lookback > 0 else { break }
+                // `run` rounds `nowMs` down to a minute, so a minute-aligned `chunkEnd` makes the
+                // chunk exactly `[cursor, chunkEnd)`. Day attribution comes from `chunkEnd`'s day;
+                // a chunk ending at midnight is the previous day's tail, which is all its rows.
+                let (chunk, newCache) = try Self.run(db, nowMs: chunkEnd, lookbackMinutes: lookback, cache: cache)
+                total += chunk.changedRows
+                ran = ran || chunk.ran
+                if let newCache {
+                    cache = newCache
+                }
+                cursor = chunkEnd
             }
             return (Result(changedRows: total, ran: ran), cache)
         }
