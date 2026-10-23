@@ -102,9 +102,9 @@ public struct StagingRecord: Sendable, Equatable {
 ///
 /// Upstream reference (fetched 2026-10-19, commit `ef165de4`):
 /// `Packages/StrandAnalytics/Sources/StrandAnalytics/SleepStagerV2.swift` in ryanbr/noop. The recipe
-/// is reimplemented here over our own value types; the session DETECTION is deliberately NOT ported —
-/// `SleepDeriver` already produces the contiguous in-bed windows, and this file only re-stages a
-/// window someone else decided is sleep (exactly V2's contract upstream).
+/// is reimplemented here over our own value types. Session DETECTION lives in `SleepDetector` (a port
+/// of NOOP's Stage 0); this file only stages a window the detector decided is sleep (exactly V2's
+/// contract upstream).
 ///
 /// V2 stages each 30 s epoch from:
 ///   1. per-night z-scored HR mean / HR variance / movement;
