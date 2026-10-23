@@ -15,6 +15,9 @@ enum Schema {
         migrator.registerMigration("v4") { db in
             try db.execute(sql: v4)
         }
+        migrator.registerMigration("v5") { db in
+            try db.execute(sql: v5)
+        }
     }
 
     /// Migration v1, copied from PLAN.md 10.2. Times are epoch ms UTC.
@@ -110,5 +113,11 @@ enum Schema {
       start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, stage TEXT NOT NULL /* wake|light|deep|rem */,
       algo_version INTEGER NOT NULL, computed_at INTEGER NOT NULL);
     CREATE INDEX sleep_stage_segment_session ON sleep_stage_segment(band_id, session_start_ms);
+    """
+    /// Migration v5, main sleep vs nap. Additive: `is_nap` is 1 for a daytime nap that passed the
+    /// detector's daytime guard, 0 for the night's main sleep. Existing rows default to 0; the
+    /// `SleepDeriver.algoVersion` bump re-derives them, which writes the real flag.
+    static let v5 = """
+    ALTER TABLE sleep_session ADD COLUMN is_nap INTEGER NOT NULL DEFAULT 0;
     """
 }

@@ -163,13 +163,13 @@ extension Database {
         let statement = try makeStatement(sql: """
         INSERT INTO sleep_session
           (band_id, start_ms, end_ms, duration_s, resting_hr, rmssd_ms, resp_rate_raw,
-           skin_temp_raw, contact_fraction, quality, record_count, algo_version, computed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           skin_temp_raw, contact_fraction, quality, record_count, is_nap, algo_version, computed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (band_id, start_ms) DO UPDATE SET
           end_ms = excluded.end_ms, duration_s = excluded.duration_s, resting_hr = excluded.resting_hr,
           rmssd_ms = excluded.rmssd_ms, resp_rate_raw = excluded.resp_rate_raw,
           skin_temp_raw = excluded.skin_temp_raw, contact_fraction = excluded.contact_fraction,
-          quality = excluded.quality, record_count = excluded.record_count,
+          quality = excluded.quality, record_count = excluded.record_count, is_nap = excluded.is_nap,
           algo_version = excluded.algo_version, computed_at = excluded.computed_at
         """)
         var written = 0
@@ -186,6 +186,7 @@ extension Database {
                 session.contactFraction,
                 session.quality.rawValue,
                 session.recordCount,
+                session.isNap ? 1 : 0,
                 SleepDeriver.algoVersion,
                 computedAtMs,
             ])
@@ -226,7 +227,12 @@ extension Database {
                 from: window.startUnix * 1000,
                 to: window.endUnix * 1000 + 1
             )
-            return SleepDeriver.summarize(rows.map(\.sleepRecord), startUnix: window.startUnix, endUnix: window.endUnix)
+            return SleepDeriver.summarize(
+                rows.map(\.sleepRecord),
+                startUnix: window.startUnix,
+                endUnix: window.endUnix,
+                isNap: window.isNap
+            )
         }
 
         // Drop the range's sessions the detection no longer produces, hypnograms first.

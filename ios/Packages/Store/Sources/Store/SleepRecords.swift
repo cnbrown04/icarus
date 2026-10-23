@@ -117,6 +117,8 @@ public struct SleepSessionRow: Codable, Equatable, Sendable, FetchableRecord {
     /// Raw `SleepQuality` value.
     public var quality: String
     public var recordCount: Int
+    /// True for a daytime nap (v5). Last night is the newest row with `isNap == false`.
+    public var isNap: Bool
     public var algoVersion: Int
     public var computedAt: Int64
 
@@ -133,11 +135,17 @@ public struct SleepSessionRow: Codable, Equatable, Sendable, FetchableRecord {
         case contactFraction = "contact_fraction"
         case quality
         case recordCount = "record_count"
+        case isNap = "is_nap"
         case algoVersion = "algo_version"
         case computedAt = "computed_at"
     }
 
     public var qualityValue: SleepQuality {
         SleepQuality(rawValue: quality) ?? .poor
+    }
+
+    /// The session as the plain span `SleepNights` takes, so Metrics never sees a row type.
+    public var span: SleepSpan {
+        SleepSpan(startMs: startMs, endMs: endMs, isNap: isNap)
     }
 }

@@ -10,8 +10,8 @@ struct SchemaTests {
         "historical_record", "sleep_session", "sleep_stage_segment",
     ]
     /// v2 added the sleep tables, v3 the nine nullable `historical_record` sensor columns, v4 the
-    /// persisted sleep-stage segments.
-    private static let migrations = ["v1", "v2", "v3", "v4"]
+    /// persisted sleep-stage segments, v5 the nap flag on `sleep_session`.
+    private static let migrations = ["v1", "v2", "v3", "v4", "v5"]
 
     @Test func migratesEmptyDatabaseToAllTables() throws {
         let database = try AppDatabase.inMemory()
@@ -57,6 +57,26 @@ struct SchemaTests {
             try String.fetchAll(db, sql: "SELECT sql FROM sqlite_master WHERE name = 'historical_record'")
         }
         #expect(constraints.first?.contains("UNIQUE (band_id, ts_ms)") == true)
+    }
+
+    @Test func v5AddsTheNapFlagDefaultingToMainSleep() throws {
+        let database = try seededDatabase()
+        let columns = try database.writer.read { db in
+            try String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('sleep_session')")
+        }
+        #expect(columns.contains("is_nap"))
+        // A row written without the flag (as a pre-v5 row is, after the migration) reads as a main sleep.
+        _ = try database.writer.write { db in
+            try db.execute(sql: """
+            INSERT INTO sleep_session (band_id, start_ms, end_ms, duration_s, contact_fraction, quality,
+              record_count, algo_version, computed_at)
+            SELECT id, 1000, 2000, 1, 1.0, 'good', 1, 3, 0 FROM band
+            """)
+        }
+        let isNap = try database.writer.read { db in
+            try Int.fetchOne(db, sql: "SELECT is_nap FROM sleep_session")
+        }
+        #expect(isNap == 0)
     }
 
     @Test func profileIsSingleRowWithCheckConstraint() throws {
