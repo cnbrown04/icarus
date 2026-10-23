@@ -1,9 +1,10 @@
 import Metrics
 import SwiftUI
 
-/// The last 7 nights of derived sleep sessions (PLAN.md 8.1, 10.2 v2). Sessions come from the band's
-/// offloaded history (PLAN.md 5.3.4), so the list stays empty until a sync has drained it. The newest
-/// night shows its stored hypnogram inline; older nights open a detail with the same chart and facts.
+/// The last 7 days of derived sleep sessions (PLAN.md 8.1, 10.2 v2), main sleep and naps. Sessions come from
+/// the band's offloaded history (PLAN.md 5.3.4), so the list stays empty until a sync has drained it. The
+/// latest main sleep shows its stored hypnogram inline; other entries open a detail with the same chart and
+/// facts. Naps are labelled, and they never replace the latest main sleep.
 struct SleepView: View {
     let environment: AppEnvironment
 
@@ -16,9 +17,12 @@ struct SleepView: View {
     var body: some View {
         List {
             if let nights = snapshot?.nights, !nights.isEmpty {
-                latestSection(nights[0])
-                ForEach(nights.dropFirst()) { night in
-                    priorNightSection(night)
+                ForEach(nights) { night in
+                    if night.id == snapshot?.latest?.id {
+                        latestSection(night)
+                    } else {
+                        priorNightSection(night)
+                    }
                 }
             } else {
                 Section {
@@ -40,14 +44,13 @@ struct SleepView: View {
 
     // MARK: Nights
 
-    /// The most recent night carries the full hypnogram and stage breakdown.
+    /// The latest main sleep carries the full hypnogram and stage breakdown.
     private func latestSection(_ night: Dashboard.SleepSnapshot.Night) -> some View {
         Section {
             nightStages(night)
             nightFacts(night, timeZone: timeZone)
         } header: {
-            // The night is labelled by the day it started (PLAN.md 8.1's evening-to-morning window).
-            Text(Date(epochMs: night.startMs), style: .date)
+            nightTitle(night)
         }
     }
 
@@ -60,7 +63,7 @@ struct SleepView: View {
                 priorNightLabel(night)
             }
         } header: {
-            Text(Date(epochMs: night.startMs), style: .date)
+            nightTitle(night)
         }
     }
 
@@ -114,7 +117,7 @@ private struct SleepNightDetailView: View {
             Section {
                 nightStages(night)
             } header: {
-                Text(Date(epochMs: night.startMs), style: .date)
+                nightTitle(night)
             }
 
             Section("Night") {
@@ -180,6 +183,12 @@ private func nightFacts(_ night: Dashboard.SleepSnapshot.Night, timeZone: TimeZo
         Text(night.rmssdMs.map { Format.number($0, unit: "ms") } ?? "--")
             .monospacedDigit()
     }
+}
+
+/// The night is labelled by the day it started (PLAN.md 8.1's evening-to-morning window). A nap says so.
+private func nightTitle(_ night: Dashboard.SleepSnapshot.Night) -> Text {
+    let date = Text(Date(epochMs: night.startMs), style: .date)
+    return night.isNap ? date + Text(" · Nap") : date
 }
 
 private func sleepWindow(_ night: Dashboard.SleepSnapshot.Night, in timeZone: TimeZone) -> String {

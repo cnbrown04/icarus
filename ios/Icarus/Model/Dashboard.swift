@@ -242,17 +242,11 @@ enum Dashboard {
         let context = try context ?? Context.load(db, nowMs: nowMs)
         guard let maxHR = context.maxHR else { return .unavailable }
         let day = LocalTime.localDay(containing: nowMs, in: context.timeZone)
-        let lookbackStart = LocalTime.localTime(
-            LocalTime.adding(days: -Stress.lookbackDays, to: day),
-            hour: 0,
-            in: context.timeZone
-        )
-        let dayStart = LocalTime.localTime(day, hour: 0, in: context.timeZone)
-        let stored = try db.minuteMetricRows(from: lookbackStart, to: dayStart)
+        let lookback = try db.stressLookback(for: day, in: context.timeZone)
         return Stress.calibrationProgress(
-            windows: FiveMinuteWindow.rebuilt(from: stored),
+            windows: lookback.windows,
             day: day,
-            in: context.timeZone,
+            nights: lookback.nights,
             restingHR: context.restingHR,
             maxHR: maxHR
         )
@@ -308,7 +302,9 @@ enum Dashboard {
             let id: Int64
             let startMs: Int64
             let durationS: Int64
-            /// Median heart rate over the session's contact-on records.
+            /// True for a daytime nap. Naps are listed, but they never stand in for last night.
+            let isNap: Bool
+            /// Lowest gated 5-minute HR over the session's contact-on records.
             let restingHR: Double?
             let rmssdMs: Double?
             let quality: SleepQuality
@@ -335,9 +331,10 @@ enum Dashboard {
         /// Sessions overlapping the last 7 local days, newest first.
         let nights: [Night]
 
-        /// The most recently derived session, for Today's card.
+        /// The most recent main sleep, for Home and Today. Naps are skipped, so a nap taken after a night's
+        /// sleep does not replace it.
         var latest: Night? {
-            nights.first
+            nights.first { !$0.isNap }
         }
     }
 
@@ -378,6 +375,7 @@ enum Dashboard {
                     id: entry.row.startMs,
                     startMs: entry.row.startMs,
                     durationS: entry.row.durationS,
+                    isNap: entry.row.isNap,
                     restingHR: entry.row.restingHr,
                     rmssdMs: entry.row.rmssdMs,
                     quality: entry.row.qualityValue,

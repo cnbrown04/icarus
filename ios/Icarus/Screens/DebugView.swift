@@ -170,6 +170,7 @@ struct DebugView: View {
                 "resting \(Self.number(row.restingHr)) bpm",
                 "rmssd \(Self.number(row.rmssdMs)) ms",
                 "quality \(row.quality)",
+                row.isNap ? "nap" : "main sleep",
                 "records \(row.recordCount)",
             ].joined(separator: " · "))
                 .font(.system(.caption2, design: .monospaced))
