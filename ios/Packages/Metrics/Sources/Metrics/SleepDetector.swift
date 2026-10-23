@@ -91,6 +91,13 @@ public enum SleepDetector {
     /// A daytime nap's resting HR must be ≤ baseline × this.
     public static let daytimeRestingHRMult = 0.95
 
+    // MARK: Resting HR
+
+    /// Width of a resting-HR bin, in seconds (NOOP sessionRestingHR uses 5-minute bins).
+    static let restingBinSeconds: Int64 = 5 * 60
+    /// A bin must hold this many samples to win the resting-HR floor (NOOP rhrMinBinSamples).
+    public static let restingBinMinSamples = 5
+
     // MARK: Off-wrist
 
     /// Off-wrist accounting bin.
@@ -462,16 +469,29 @@ public enum SleepDetector {
         return Double(stable) / Double(judged) >= quiescentStableFraction
     }
 
-    /// Lowest 5-minute bin mean HR with at least 5 samples (NOOP sessionRestingHR, #1943 gate).
+    /// Lowest 5-minute bin mean HR with at least `restingBinMinSamples` samples (NOOP sessionRestingHR,
+    /// #1943 gate). A one-sample bin at the edge of a wear gap cannot become the floor.
     static func restingHR(_ window: Period, hr: [HRPoint]) -> Double? {
-        let values = slice(hr, from: window.start, to: window.end)
+        lowestBinMean(slice(hr, from: window.start, to: window.end), from: window.start, minSamples: restingBinMinSamples)
+    }
+
+    /// Session resting HR (NOOP sessionRestingHR). Gated first; if no bin qualifies, the lowest bin of
+    /// any size; if there are no bins at all, nil. `points` must be sorted by time.
+    static func sessionRestingHR(_ points: [HRPoint], startUnix: Int64, endUnix: Int64) -> Double? {
+        let inside = slice(points, from: startUnix, to: endUnix)
+        return lowestBinMean(inside, from: startUnix, minSamples: restingBinMinSamples)
+            ?? lowestBinMean(inside, from: startUnix, minSamples: 1)
+    }
+
+    /// Lowest mean over 5-minute bins anchored at `start` that hold at least `minSamples` points.
+    static func lowestBinMean(_ values: ArraySlice<HRPoint>, from start: Int64, minSamples: Int) -> Double? {
         var bins: [Int64: (sum: Double, count: Int)] = [:]
         for point in values {
-            let bin = (point.ts - window.start) / 300
+            let bin = (point.ts - start) / restingBinSeconds
             bins[bin, default: (0, 0)].sum += point.bpm
             bins[bin, default: (0, 0)].count += 1
         }
-        return bins.values.filter { $0.count >= 5 }.map { $0.sum / Double($0.count) }.min()
+        return bins.values.filter { $0.count >= minSamples }.map { $0.sum / Double($0.count) }.min()
     }
 
     // MARK: Off-wrist

@@ -67,9 +67,11 @@ public struct SleepSession: Sendable, Equatable {
     public let endUnix: Int64
     /// `endUnix - startUnix`, so a session with a single record has duration 0.
     public let durationSeconds: Int64
-    /// Median heart rate over the contact-on records, or nil when none qualified.
+    /// Lowest gated 5-minute bin mean HR over the contact-on records (NOOP sessionRestingHR), or nil
+    /// when no contact-on record carried a valid reading.
     public let restingHeartRate: Double?
-    /// RMSSD over the session's cleaned R-R intervals (PLAN.md 8.3), or nil when too few survived.
+    /// Mean of the per-5-minute-window RMSSD over the session's cleaned R-R intervals (PLAN.md 8.3), or
+    /// nil when no window had enough successive differences.
     public let rmssdMs: Double?
     /// Median of the raw respiratory-rate bytes. [Unverified] mapping to breaths/minute.
     public let respRateRawMedian: Double?
@@ -80,6 +82,8 @@ public struct SleepSession: Sendable, Equatable {
     public let quality: SleepQuality
     /// Number of records in the session, contact on and off combined.
     public let recordCount: Int
+    /// True for a daytime nap; false for the night's main sleep. Last night is the newest main sleep.
+    public let isNap: Bool
 }
 
 /// Nightly sleep sessions from the strap's historical records (PLAN.md 8.1).
@@ -91,9 +95,11 @@ public struct SleepSession: Sendable, Equatable {
 /// This is a clearly-labelled proxy derived from published methods, not a WHOOP sleep score
 /// (PLAN.md §79 "we compute our own clearly labelled metrics").
 public enum SleepDeriver {
-    /// Algorithm version stored with every derived row (PLAN.md 8.5). 2 = `SleepDetector` windows;
-    /// 1 was "any contiguous worn run touching 21:00–06:00", which made whole days into nights.
-    public static let algoVersion = 2
+    /// Algorithm version stored with every derived row (PLAN.md 8.5). 3 = session RHR is the lowest gated
+    /// 5-minute bin and RMSSD is the mean of per-window RMSSD, plus the nap flag; 2 = `SleepDetector`
+    /// windows with the older median RHR and whole-session RMSSD; 1 was "any contiguous worn run touching
+    /// 21:00–06:00", which made whole days into nights.
+    public static let algoVersion = 3
 
     /// Context a derivation must read on each side of the span it rewrites: the longest window
     /// (`SleepDetector.maxSleepSeconds`) plus the detector's day of HR baseline context.
@@ -113,28 +119,37 @@ public enum SleepDeriver {
         let sorted = SleepDetector.deduplicatedSorted(records)
         return SleepDetector.detect(sorted, in: timeZone).compactMap { window in
             let inside = sorted.filter { $0.unixSeconds >= window.startUnix && $0.unixSeconds <= window.endUnix }
-            return summarize(inside, startUnix: window.startUnix, endUnix: window.endUnix)
+            return summarize(inside, startUnix: window.startUnix, endUnix: window.endUnix, isNap: window.isNap)
         }
     }
 
     /// Summarises the records of one detected window, or nil when the window holds no records.
-    public static func summarize(_ records: [SleepRecord], startUnix: Int64, endUnix: Int64) -> SleepSession? {
+    ///
+    /// Resting HR and RMSSD follow the published session methods (NOOP `sessionRestingHR` and
+    /// `sessionAvgHRV`, OpenStrap `sleepSessionWindowedRmssd`): the floor of gated 5-minute HR bins, and
+    /// the mean of per-window RMSSD, each window cleaned on its own. A median over the whole night would
+    /// let one stretch of restless sleep set the value for everything.
+    public static func summarize(
+        _ records: [SleepRecord],
+        startUnix: Int64,
+        endUnix: Int64,
+        isNap: Bool = false
+    ) -> SleepSession? {
         guard !records.isEmpty, endUnix > startUnix else { return nil }
-        let onWrist = records.filter(\.skinContact)
-        let contactFraction = Double(onWrist.count) / Double(records.count)
+        let sorted = records.sorted { $0.unixSeconds < $1.unixSeconds }
+        let onWrist = sorted.filter(\.skinContact)
+        let contactFraction = Double(onWrist.count) / Double(sorted.count)
 
         // Off-wrist and invalid readings pollute every aggregate, so only clean contact-on
         // records contribute.
-        let beats = onWrist.compactMap { record -> Double? in
+        let heartRate = onWrist.compactMap { record -> SleepDetector.HRPoint? in
             guard let bpm = record.bpm, bpmRange.contains(bpm) else { return nil }
-            return bpm
+            return SleepDetector.HRPoint(ts: record.unixSeconds, bpm: bpm)
         }
-        let restingHeartRate = Statistics.median(beats)
+        let restingHeartRate = SleepDetector.sessionRestingHR(heartRate, startUnix: startUnix, endUnix: endUnix)
 
-        let rr = onWrist.flatMap(\.rrMs)
-        let flags = RRCleaner.acceptedFlags(rr)
-        let accepted = zip(rr, flags).compactMap { $1 ? $0 : nil }
-        let rmssd = HRV.rmssd(accepted)
+        let beats = onWrist.map { (unixSeconds: $0.unixSeconds, rrMs: $0.rrMs) }
+        let rmssd = HRV.windowedRMSSD(beats, startUnix: startUnix)
 
         return SleepSession(
             startUnix: startUnix,
@@ -146,7 +161,8 @@ public enum SleepDeriver {
             skinTempRawMedian: Statistics.median(onWrist.compactMap(\.skinTempRaw)),
             contactFraction: contactFraction,
             quality: quality(contactFraction: contactFraction),
-            recordCount: records.count
+            recordCount: sorted.count,
+            isNap: isNap
         )
     }
 

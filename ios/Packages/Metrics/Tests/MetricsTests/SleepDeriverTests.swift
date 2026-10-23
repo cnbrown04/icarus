@@ -62,35 +62,34 @@ struct SleepDeriverTests {
         #expect(session.startUnix == start)
         #expect(session.endUnix == end - 60)
         #expect(session.durationSeconds == 450 * 60 - 60)
-        #expect(session.restingHeartRate == 55)
+        // Lowest 5-minute bin: bins hold 54.8 bpm on average at best (the 54/55/56 cycle over five minutes).
+        let resting = try #require(session.restingHeartRate)
+        #expect(abs(resting - 54.8) < 1e-9)
         #expect(session.contactFraction == 1)
         #expect(session.quality == .good)
         #expect(session.recordCount == 450)
         #expect(session.respRateRawMedian == 600)
         #expect(session.skinTempRawMedian == 3_100)
-        #expect(session.rmssdMs != nil) // the varied intervals survive the cleaner
+        // Records a minute apart never carry a successive difference, so there is no RMSSD to report.
+        #expect(session.rmssdMs == nil)
     }
 
-    @Test func rmssdMatchesTheSharedHRVAlgorithm() throws {
+    @Test func rmssdIsTheMeanOfPerWindowRMSSD() throws {
+        // 1 Hz beats alternating 1000 / 1040 ms: every successive difference is 40 ms, so every full
+        // 5-minute window has RMSSD 40 and the session mean is 40.
         let start = unix(2026, 10, 15, 23, 0)
-        let rrPattern: [Double] = [980, 1_020, 1_000, 1_040, 960]
-        let records = run(from: start, until: start + 90 * 60) { offset in
-            let minute = Int(offset - start) / 60
-            return record(offset, rr: [rrPattern[minute % rrPattern.count]])
+        let records = run(from: start, until: start + 90 * 60, cadence: 1) { offset in
+            record(offset, rr: [(offset - start) % 2 == 0 ? 1_000 : 1_040])
         }
 
         let session = try #require(summarize(records))
-        let allRR = records.flatMap(\.rrMs)
-        let flags = RRCleaner.acceptedFlags(allRR)
-        let accepted = zip(allRR, flags).compactMap { $1 ? $0 : nil }
-        #expect(session.rmssdMs == HRV.rmssd(accepted))
-        #expect(session.rmssdMs != nil)
+        #expect(session.rmssdMs == 40)
     }
 
     @Test func offWristRecordsCountTowardContactButNotAggregates() throws {
         let start = unix(2026, 10, 15, 23, 0)
         let offStart = start + 60 * 60
-        let records = run(from: start, until: start + 6 * 60 * 60) { offset in
+        let records = run(from: start, until: start + 6 * 60 * 60, cadence: 1) { offset in
             let onWrist = !(offset >= offStart && offset < offStart + 60 * 60)
             let minute = Int(offset - start) / 60
             // Off-wrist minutes carry garbage readings (200 bpm): they must not reach the median.
@@ -98,7 +97,7 @@ struct SleepDeriverTests {
         }
 
         let session = try #require(summarize(records))
-        #expect(session.recordCount == 6 * 60)
+        #expect(session.recordCount == 6 * 60 * 60)
         // 5 h of 6 h on-wrist → 0.8333, fair.
         #expect(abs(session.contactFraction - 5 / 6.0) < 0.0001)
         #expect(session.quality == .fair)
@@ -139,6 +138,36 @@ struct SleepDeriverTests {
         let start = unix(2026, 10, 15, 23, 0)
         #expect(SleepDeriver.summarize([], startUnix: start, endUnix: start + 60) == nil)
         #expect(SleepDeriver.summarize([record(start)], startUnix: start, endUnix: start) == nil)
+    }
+
+    @Test func restingHRIsTheLowestWellPopulatedFiveMinuteBin() throws {
+        // An hour at 70 bpm, plus three records at 45 bpm in the 00:00-00:05 bin. Three samples are below
+        // the five a bin needs to win the floor, so the 70 bpm plateau is the resting HR.
+        let start = unix(2026, 10, 15, 23, 0)
+        let midnight = unix(2026, 10, 16, 0, 0)
+        let plateau = run(from: start, until: midnight, cadence: 1) { offset in record(offset, bpm: 70) }
+        let sparse = (0..<3).map { record(midnight + Int64($0), bpm: 45) }
+        let session = try #require(SleepDeriver.summarize(plateau + sparse, startUnix: start, endUnix: midnight + 2))
+        #expect(session.restingHeartRate == 70)
+    }
+
+    @Test func restingHRFallsBackToTheLowestBinOfAnySize() throws {
+        // Records every two minutes: every 5-minute bin holds three, so none qualifies for the gated floor.
+        // The lowest bin of any size is the 50 bpm one.
+        let start = unix(2026, 10, 15, 23, 0)
+        let records = run(from: start, until: start + 10 * 60, cadence: 120) { offset in
+            record(offset, bpm: offset < start + 300 ? 60 : 50)
+        }
+        let session = try #require(summarize(records))
+        #expect(session.restingHeartRate == 50)
+    }
+
+    @Test func isNapCarriesThroughSummarize() throws {
+        let start = unix(2026, 10, 15, 13, 0)
+        let records = run(from: start, until: start + 60 * 60) { offset in record(offset) }
+        let nap = try #require(SleepDeriver.summarize(records, startUnix: start, endUnix: start + 3_540, isNap: true))
+        #expect(nap.isNap)
+        #expect(try #require(summarize(records)).isNap == false)
     }
 
     // MARK: derive()
