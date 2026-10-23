@@ -90,7 +90,7 @@ struct ProfileDraft: Equatable {
     var isComplete: Bool { firstIssue == nil }
 
     /// A store row for a complete draft. Nil when `isComplete` is false.
-    func row(timeZone: String = "America/Chicago") -> ProfileRow? {
+    func row(timeZone: String = TimeZone.current.identifier) -> ProfileRow? {
         guard isComplete, let sex, let birthYear = birthYearValue, let height = heightValue, let weight = weightValue else {
             return nil
         }

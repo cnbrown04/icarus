@@ -248,7 +248,7 @@ struct DebugView: View {
                 guard let bandID = try String.fetchOne(
                     db, sql: "SELECT id FROM band ORDER BY rowid DESC LIMIT 1"
                 ) else { return 0 }
-                let zone = try db.profile()?.timeZone ?? TimeZone(identifier: "America/Chicago")!
+                let zone = try db.profile()?.timeZone ?? Dashboard.fallbackZone
                 return try db.deriveSleepSessions(
                     from: nowMs - Int64(Self.recomputeDays) * day,
                     to: nowMs + 1,
