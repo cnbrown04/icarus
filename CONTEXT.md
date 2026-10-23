@@ -67,6 +67,11 @@ APNs `.p8` key + signing capability), TestFlight (no ASC secrets), Apple Watch, 
   records BEFORE acking a batch's trim (flush-on-ack); cadence = NOOP BackfillPolicy
   (15-min periodic floor, 90-s event floor, empty-streak backoff ×4 cap, auto-triggers
   skipped while the strap clock is untrusted).
+- **Record fields (2026-10-23, OpenStrap PROTOCOL.md §5 + 44k real frames):** the v24 "contact"
+  byte is a contact-QUALITY value, not a wear flag; on-wrist = HR present (`SleepRecord.isOnWrist`).
+  The second gravity triplet is a byte-identical mirror the strap sends. v25 records are a PPG
+  waveform stream whose every second duplicates a v24 record: only the timestamp is decoded and
+  they are not stored (NOOP's v25 "gravity" was retracted by OpenStrap; real data agrees).
 - **Hardware finding 2026-10-23 (contradicts the "re-drain is safe" assumption below):** a
   full-history restore at 00:28 (cursor 74268→0) replayed only ~50k records, starting
   2026-10-22 10:49 EDT. The 2026-10-21 19:35 → 10-22 10:49 span, which the old build had
@@ -119,6 +124,17 @@ APNs `.p8` key + signing capability), TestFlight (no ASC secrets), Apple Watch, 
    `hr_sample`/`rr_interval` (same physiological gate + dedupe as realtime ingest) and
    recompute their minute metrics. The graph reads `hr_sample`, which only realtime
    ingest wrote — without the backfill, drained gaps stayed invisible forever.
+
+## Scores (2026-10-23)
+
+- `Database.dailyScores(day:in:)` (Store/DailyScores.swift) feeds Home (Recovery, Strain tiles) and
+  Sleep (performance, need, debt, respiratory rate, regularity). Metrics ports: Recovery/Strain
+  (NOOP), SleepNeed/SleepRegularity (NOOP debt + OpenStrap need/SRI), RespiratoryRate (OpenStrap RSA).
+- Strain uses Banister: Edwards zones start at 50 % HRR and scored a normal day 0.
+- Recovery baseline is one entry per local day over 60 days; shown as "Calibrating · n/14" until 14.
+- Nightly RHR/HRV/stress baselines come from the main sleep that ended on the day (fallback
+  00:00–06:00). Session RHR = lowest gated 5-min mean; RMSSD = mean of 5-min windows, never across gaps.
+- Sleep edits (`sleep_edit`, v6) are replayed onto every re-derivation.
 
 ## Current status (as of 2026-10-20)
 
