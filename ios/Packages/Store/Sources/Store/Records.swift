@@ -24,7 +24,7 @@ public struct ProfileRow: Codable, Equatable, Sendable, FetchableRecord, Persist
         heightCm: Double? = nil,
         weightKg: Double? = nil,
         hrMax: Int? = nil,
-        tz: String = "America/Chicago",
+        tz: String = TimeZone.current.identifier,
         version: Int64 = 0,
         updatedAt: Int64 = 0
     ) {
@@ -51,8 +51,10 @@ public struct ProfileRow: Codable, Equatable, Sendable, FetchableRecord, Persist
         case updatedAt = "updated_at"
     }
 
+    /// The zone local times are computed in. An unrecognised identifier falls back to the device zone, the
+    /// same source the default `tz` uses: local time is the phone's zone, not a fixed one (CONTEXT.md lesson 8).
     public var timeZone: TimeZone {
-        TimeZone(identifier: tz) ?? TimeZone(identifier: "America/Chicago")!
+        TimeZone(identifier: tz) ?? .current
     }
 
     public var formula: FormulaSex? {

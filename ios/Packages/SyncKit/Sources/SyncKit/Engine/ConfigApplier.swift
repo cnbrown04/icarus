@@ -30,16 +30,21 @@ extension Database {
         ])
     }
 
-    /// Replaces the local profile with the server's. Unknown sex or timezone values fall back to nil or the default.
+    /// Replaces the local profile's values with the server's. Unknown sex values fall back to nil.
+    ///
+    /// The time zone is never taken from the server. Local time is the device's zone (CONTEXT.md lesson 8):
+    /// the phone is where the user is, and a server-stored zone (saved before the app followed the device, or
+    /// set from another machine) would move every sleep bound and day boundary by hours. So a new row gets the
+    /// device zone and an existing row keeps its own `tz`, which `HistoryPipeline.syncProfileTimeZone` keeps
+    /// on the device's zone at launch.
     func applyProfile(_ profile: ProfileDTO, nowMs: Int64) throws {
         let sex = ["male", "female"].contains(profile.formulaSex ?? "") ? profile.formulaSex : nil
-        let zone = profile.tz.flatMap { TimeZone(identifier: $0) != nil ? $0 : nil } ?? "America/Chicago"
         try execute(sql: """
         INSERT INTO profile (id, formula_sex, birth_year, height_cm, weight_kg, hr_max, tz, version, updated_at)
         VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           formula_sex = excluded.formula_sex, birth_year = excluded.birth_year, height_cm = excluded.height_cm,
-          weight_kg = excluded.weight_kg, hr_max = excluded.hr_max, tz = excluded.tz,
+          weight_kg = excluded.weight_kg, hr_max = excluded.hr_max,
           version = excluded.version, updated_at = excluded.updated_at
         """, arguments: [
             sex,
@@ -47,7 +52,7 @@ extension Database {
             profile.heightCm,
             profile.weightKg,
             profile.hrMax,
-            zone,
+            TimeZone.current.identifier,
             profile.version,
             nowMs,
         ])

@@ -254,9 +254,26 @@ struct SyncEngineTests {
         let profile = try #require(try dbRead(database) { try $0.profile() })
         #expect(profile.formulaSex == "male")
         #expect(profile.weightKg == 78.5)
-        #expect(profile.tz == "America/New_York")
+        // The server's zone is ignored: a new row takes the device zone (CONTEXT.md lesson 8).
+        #expect(profile.tz == TimeZone.current.identifier)
         #expect(profile.version == 2)
         #expect(outbox.loadState().profileVersion == 2)
+    }
+
+    @Test func serverProfileNeverOverwritesTheLocalTimeZone() async throws {
+        let database = try AppDatabase.inMemory()
+        // A local zone that is neither the device's nor the server's, so a silent overwrite would show.
+        try await database.writer.write { try $0.saveProfile(ProfileRow(formulaSex: "female", birthYear: 1990, tz: "Pacific/Auckland"), atMs: 1) }
+        let transport = ScriptedTransport()
+        let profileJSON = #"{"alarms":[],"webhook_endpoints":[],"profile":{"formula_sex":"male","birth_year":1985,"height_cm":180,"weight_kg":78.5,"hr_max":null,"tz":"America/New_York","version":3},"max_version":0,"server_time":"2026-10-07T14:30:00Z"}"#
+        await transport.setConfig(HTTPResponse(status: 200, body: Data(profileJSON.utf8)))
+        let engine = makeEngine(database: database, outbox: try pairedOutbox(), transport: transport)
+        _ = await engine.run()
+
+        let profile = try #require(try dbRead(database) { try $0.profile() })
+        #expect(profile.formulaSex == "male")
+        #expect(profile.version == 3)
+        #expect(profile.tz == "Pacific/Auckland")
     }
 
     @Test func skewWarningAppearsPastTwoMinutes() async throws {
