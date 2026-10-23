@@ -18,6 +18,9 @@ enum Schema {
         migrator.registerMigration("v5") { db in
             try db.execute(sql: v5)
         }
+        migrator.registerMigration("v6") { db in
+            try db.execute(sql: v6)
+        }
     }
 
     /// Migration v1, copied from PLAN.md 10.2. Times are epoch ms UTC.
@@ -119,5 +122,22 @@ enum Schema {
     /// `SleepDeriver.algoVersion` bump re-derives them, which writes the real flag.
     static let v5 = """
     ALTER TABLE sleep_session ADD COLUMN is_nap INTEGER NOT NULL DEFAULT 0;
+    """
+    /// Migration v6, user corrections to detected sleep (the bed/wake retime and the deleted night).
+    /// Additive. One row per corrected night, keyed by the night's DETECTED start: the derivation
+    /// re-detects from raw records on every drain, so a correction lives here and is replayed onto
+    /// each re-derivation instead of being written into `sleep_session`, which re-derivation replaces.
+    ///
+    /// `original_start_ms` / `original_end_ms` are the detected window the correction was made against
+    /// (the overlap key that matches a later re-detection, whose onset drifts as data lands).
+    /// `new_start_ms` / `new_end_ms` are the corrected bounds; a `dismiss` row has no new end and keeps
+    /// `new_start_ms` equal to the original start. `kind` is `retime` or `dismiss`.
+    static let v6 = """
+    CREATE TABLE sleep_edit (rowid INTEGER PRIMARY KEY, band_id TEXT NOT NULL REFERENCES band(id),
+      original_start_ms INTEGER NOT NULL, original_end_ms INTEGER NOT NULL,
+      new_start_ms INTEGER NOT NULL, new_end_ms INTEGER /* NULL for dismiss */,
+      kind TEXT NOT NULL CHECK (kind IN ('retime', 'dismiss')), created_at INTEGER NOT NULL,
+      UNIQUE (band_id, original_start_ms));
+    CREATE INDEX sleep_edit_new_start ON sleep_edit(band_id, new_start_ms);
     """
 }

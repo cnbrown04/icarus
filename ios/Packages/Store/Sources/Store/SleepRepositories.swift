@@ -218,9 +218,14 @@ extension Database {
         guard toMs > fromMs else { return 0 }
         let context = SleepDeriver.contextSeconds * 1000
         let detection = try sleepDetectionRecords(bandID: bandID, from: fromMs - context, to: toMs + context)
-        let windows = SleepDetector.detect(detection, in: timeZone).filter { window in
-            window.startUnix * 1000 >= fromMs && window.startUnix * 1000 < toMs
-        }
+        // User corrections (SleepEdits.swift) replace or drop the detected windows they claim, so a
+        // re-derivation never undoes a hand-corrected bed or wake time.
+        let windows = try sleepWindowsApplyingEdits(
+            SleepDetector.detect(detection, in: timeZone),
+            bandID: bandID,
+            from: fromMs,
+            to: toMs
+        )
         let sessions = try windows.compactMap { window -> SleepSession? in
             let rows = try historicalRecordRows(
                 bandID: bandID,
