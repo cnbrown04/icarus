@@ -67,6 +67,11 @@ APNs `.p8` key + signing capability), TestFlight (no ASC secrets), Apple Watch, 
   records BEFORE acking a batch's trim (flush-on-ack); cadence = NOOP BackfillPolicy
   (15-min periodic floor, 90-s event floor, empty-streak backoff ×4 cap, auto-triggers
   skipped while the strap clock is untrusted).
+- **Hardware finding 2026-10-23 (contradicts the "re-drain is safe" assumption below):** a
+  full-history restore at 00:28 (cursor 74268→0) replayed only ~50k records, starting
+  2026-10-22 10:49 EDT. The 2026-10-21 19:35 → 10-22 10:49 span, which the old build had
+  drained and ACKED but mostly never stored, did not come back. Treat acked data as gone:
+  persist-then-ack is the only protection.
 - Full-history restore: `drainFullHistory()` rewinds the read cursor to the oldest banked
   extent (`W ≥ T ? W − T : 0`) via SET_READ_POINTER, then drains back-to-back until empty/
   COMPLETE/live edge. Safe to re-drain (OpenStrap §4.3).
@@ -87,11 +92,26 @@ APNs `.p8` key + signing capability), TestFlight (no ASC secrets), Apple Watch, 
    "1050 h ahead"; a real reply's as "26001 h ahead") and falsely pause all automatic
    drains. Timestamp scans run on payload bytes; `newestUnix` prefers the newest
    not-future word (NOOP semantics) — an any-scan variant was tried and reverted.
-3. Deriving sleep per drain-batch with a sliding window spams `sleep_session` (a new
-   start_ms key per flush). Derivation runs over the band's whole stored span (stable
-   keys + ON CONFLICT replaces), skipped when a flush deduped to zero new rows.
-4. Persist-then-ack is the durability invariant: acked batches flush to the store
-   immediately (the strap's trim cursor advances on ack; don't hold a drain in memory).
+3. Never derive per drain-batch. Batches arrive every ~0.4 s; deriving sleep + metrics over
+   the whole span per batch took ~4 s each, queued the backlog in memory behind already-sent
+   acks, and iOS killed/relaunched the app every ~16 min — so the store kept only ~3 of every
+   16 minutes of history (all data before 2026-10-23 is chunked like that). Now: per batch
+   only `HistoryPipeline.persist` (insert rows); `HistoryDerivationScheduler` derives once,
+   4 s after a drain settles, over the drained range (sessions starting ≥ 24 h before it are
+   REPLACED — stale keys and their hypnograms deleted).
+4. Persist-then-ack is the durability invariant, enforced in BandKit: with a
+   `HistoricalSink` installed, `TierBController` awaits the store BEFORE writing
+   HISTORICAL_DATA_RESULT; a failed store leaves the batch unacked (the strap re-sends it).
+   Handing records to the app and acking straight away was NOT durable.
+7. The strap records 24/7, so "contiguous worn data touching 21:00–06:00" is not sleep (that
+   rule made a 20 h "night"). Sleep windows come from `SleepDetector` (NOOP Stage 0 port:
+   gravity stillness spine + HR confirmation + 60 min/16 h bounds + off-wrist + daytime nap
+   guard + one main sleep per noon-to-noon day). `SleepDeriver` only summarises a window.
+   Validated on the 2026-10-21 night: 01:13→09:42 EDT vs. the wearer's "~2:00→9:30".
+8. Local time = the DEVICE zone. Profiles used to be saved as hard-coded America/Chicago on
+   an Eastern phone (every time was an hour early); launch now syncs `profile.tz` to
+   `TimeZone.current` and re-derives sleep when it changes. Headline sleep = time asleep
+   (staged light+deep+REM), not bed→wake.
 5. The 0x2B realtime-raw flood: reference clients never disable it; NOOP's "R22Disable"
    is a WHOOP 5/MG feature-flag system (opcode 120), not this command. Icarus leaves it
    on; the opt-in lives in DeviceView → Experimental ("Disable raw sensor flood").
