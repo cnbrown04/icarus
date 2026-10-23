@@ -458,6 +458,35 @@ struct TierBControllerTests {
         _ = await wedged.result
     }
 
+    /// Regression (device log 2026-10-23): the strap streams history and does not answer the 30 s
+    /// TOGGLE_REALTIME_HR re-arm. The re-arm must be written once and left alone, not waited on, timed
+    /// out and retried while the drain runs.
+    @Test func aRealtimeRearmDuringADrainIsWrittenOnceAndNotRetried() async {
+        let h = Harness()
+        await h.controller.connectionOpened()
+        let armsBefore = h.band.opcodes.filter { $0 == 3 }.count
+        // From here on the strap answers everything except the realtime toggle.
+        h.band.setResponder { request, index in request.cmd == 3 ? nil : answerAll(request, index) }
+
+        // A record and its batch metadata every 5 s keep the drain running (quiet deadline 8 s, run cap 60 s)
+        // across the 30 s re-arm, as a streaming strap does.
+        let base = UInt32(ManualClock.origin.timeIntervalSince1970)
+        for step in 0 ..< 7 {
+            h.clock.advance(by: 5)
+            await flush()
+            await h.controller.receive(historicalRecordFrame(unix: base - 3600 + UInt32(step)))
+            await h.controller.receive(metadataFrame(token: [UInt8(step + 1), 0, 0, 0, 1, 0, 0, 0]))
+            await flush()
+        }
+        #expect(await h.controller.drainPhase == .draining)
+        #expect(h.band.opcodes.filter { $0 == 3 }.count == armsBefore + 1, "the re-arm is written once at 30 s")
+
+        // Past the 5 s response timeout a waiting re-arm would retry here. A fire-and-forget one does not.
+        h.clock.advance(by: TierBController.responseTimeout)
+        await flush()
+        #expect(h.band.opcodes.filter { $0 == 3 }.count == armsBefore + 1, "no timeout, no retry")
+    }
+
     @Test func theRuntimeFloodToggleThrowsWhenDisabledOrUnlinked() async {
         let h = Harness(enabled: false)
         await h.controller.connectionOpened()

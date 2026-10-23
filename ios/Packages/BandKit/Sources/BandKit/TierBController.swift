@@ -557,9 +557,15 @@ public actor TierBController {
         }
     }
 
+    /// Re-arms the live HR stream with a write that does not wait for a reply, as NOOP's keep-alive does.
+    /// Routing it through `send` was the stall: the strap does not reliably answer TOGGLE_REALTIME_HR while a
+    /// history drain streams (device log 2026-10-23: 15 `toggleRealtimeHR attempt N failed: timedOut`, every
+    /// one during a drain). Each missed reply became a 5 s wait, retried up to 3 times, and held the
+    /// one-at-a-time command queue, so other commands queued behind a re-arm nobody was waiting for. An
+    /// unmatched reply is only logged, and the realtime HR frames keep arriving on their own.
     private func rearmRealtime() async {
         guard enabled, state == .ready, linkOpen else { return }
-        _ = try? await send(.toggleRealtimeHR(on: true))
+        try? await writeConfirmedWithoutReply(.toggleRealtimeHR(on: true))
     }
 
     // MARK: Realtime-raw flood (PLAN.md 7.2 step 4)
