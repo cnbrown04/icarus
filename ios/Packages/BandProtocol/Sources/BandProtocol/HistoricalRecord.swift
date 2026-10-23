@@ -7,9 +7,12 @@
 ///
 /// ## Record version
 /// The version byte of a type-47 record is the frame's `seq` field. Version 24 is the WHOOP 4.0
-/// DSP record parsed here. Other versions (for example the 85-byte version-12 records in the S8
-/// capture, `shared/golden/frames.json` names `historical_seq0c_*`) have a different layout and are
-/// rejected with `.unsupportedVersion` rather than decoded into wrong numbers.
+/// DSP record parsed here. Version 25 (the 84-byte WHOOP 4.0 firmware layout) is NOT a
+/// `HistoricalRecord`: it has no per-second biometrics the app can use, so `HistoricalRecordV25`
+/// decodes its timestamp only, and this parser rejects it with `.unsupportedVersion(25)`. Other
+/// versions (for example the 85-byte version-12 records in the S8 capture, `shared/golden/frames.json`
+/// names `historical_seq0c_*`) have a different layout and are rejected with `.unsupportedVersion`
+/// rather than decoded into wrong numbers.
 ///
 /// ## Version-24 payload layout
 /// Offsets in the table below are **frame-absolute**, exactly as NOOP's schema numbers them
@@ -33,8 +36,8 @@
 /// | 33 | 2 | PPG green u16 | [Community-verified] |
 /// | 35 | 2 | PPG red/IR u16 | [Community-verified] |
 /// | 40, 44, 48 | 4 each | gravity x, y, z, f32 | [Community-verified] |
-/// | 55 | 1 | skin contact u8 (0 = off-wrist, else on-wrist) | [Community-verified] |
-/// | 56, 60, 64 | 4 each | second gravity triplet f32 | [Community-verified], meaning unknown |
+/// | 55 | 1 | skin contact u8 (0 = off-wrist, else on-wrist) | [Community-verified] offsets; [Disputed] meaning, see `skinContact` |
+/// | 56, 60, 64 | 4 each | second gravity triplet f32 | [Community-verified] offsets; the 12 bytes are a byte-identical copy of 40–51, see `secondaryGravity` |
 /// | 68 | 2 | SpO₂ red raw u16 | [Community-verified] |
 /// | 70 | 2 | SpO₂ IR raw u16 | [Community-verified] |
 /// | 72 | 2 | skin temperature raw u16 | [Community-verified] |
@@ -69,8 +72,26 @@ public struct HistoricalRecord: Sendable, Equatable {
     /// Gravity triplet at offsets 40/44/48, in g.
     public let gravity: Gravity
     /// On-wrist flag (offset 55): 0 = off-wrist, any other value = on-wrist.
+    ///
+    /// [Disputed] Offset and value range are NOT enough to call this a wear flag. OpenStrap
+    /// (`os-protocol/lib/src/records.dart`, `R24.skinContact` doc) reads the same byte as the sign and
+    /// exponent byte of an integer-valued float32 at offsets 52–55 and says not to infer wear state
+    /// from it. Our 44,352 real v24 frames (device3 band log, 2026-10-23) take only the values
+    /// {0, 64–70, 195–198}, the exponent pattern OpenStrap reports; 0 appears in 1,552 of them.
+    /// Left unchanged here, because the sleep pipeline depends on this boolean.
     public let skinContact: Bool
-    /// Second gravity triplet at offsets 56/60/64. Meaning is unknown ([Unverified]).
+    /// Second gravity triplet at offsets 56/60/64, in g.
+    ///
+    /// Verdict (investigated 2026-10-23): the strap DUPLICATES the first triplet. The parser reads the
+    /// right bytes, so this is not a copy/paste or offset bug. Evidence:
+    /// - OpenStrap `os-research/PROTOCOL.md` §5 (inner offsets, +4 for the frame): `[36:48]` accel,
+    ///   `[52:64]` "f32 ×3 — byte-identical mirror of `[36:48]` (not an extra sensor)", validated.
+    /// - OpenStrap `records.dart` (`R24.accelG` doc): inner[52:64] is byte-identical to inner[36:48] in
+    ///   all 1,887 real v24 records.
+    /// - Icarus, device3 band log: frame bytes 40–51 equal bytes 56–67 in 44,352 of 44,352 v24 frames.
+    /// - NOOP `whoop_protocol.json` labels it "2nd accel/gravity triplet" at the same offset 56, with no
+    ///   verified meaning. Its 12 bytes add no information beyond `gravity`, so downstream code must not
+    ///   treat it as an independent measurement.
     public let secondaryGravity: Gravity
     /// SpO₂ red raw (offset 68). No raw-to-percent mapping is verified, so nothing converts it.
     public let spo2Red: UInt16
@@ -163,6 +184,8 @@ public struct HistoricalRecord: Sendable, Equatable {
         static let ppgRedIr = 28
         static let gravity = 33
         static let skinContact = 48
+        // Payload 49 = frame 56 = OpenStrap inner[52]: the byte-identical copy of `gravity` (see
+        // `secondaryGravity`). The offset is right; the strap writes the same 12 bytes twice.
         static let secondaryGravity = 49
         static let spo2Red = 61
         static let spo2Ir = 63
@@ -240,6 +263,68 @@ public struct HistoricalRecord: Sendable, Equatable {
 
     private static func gravity(_ payload: [UInt8], _ offset: Int) -> Gravity {
         Gravity(x: f32(payload, offset), y: f32(payload, offset + 4), z: f32(payload, offset + 8))
+    }
+}
+
+/// A version-25 HISTORICAL_DATA record (WHOOP 4.0, 84-byte frame, `frame.seq == 25`), decoded as far as
+/// the references agree: its unix second, and nothing else.
+///
+/// Offsets are `Frame.payload` offsets (NOOP's frame-absolute offset minus 7):
+/// - unix u32 LE at payload 4 (frame 11). NOOP `PostHooks.swift` v25 branch `u32(frame, 11, limit)`
+///   (~line 353) and `HistoricalStreams.kt` `histU32(11, limit)` (~line 266); OpenStrap
+///   `records.dart` `_parseV25` `getUint32(7)` on `inner` (inner starts at frame byte 4, so frame 11).
+///   Verified on 1,400 real frames (device3 log): within each burst the value rises by 1 per record
+///   (38 records repeat the previous second), and bursts are about 1,154 s apart.
+/// - minimum payload 72 (frame 79): NOOP `frame.count >= 79`; OpenStrap `inner.length < 75` rejects,
+///   and inner = frame[4:], so frame 79.
+///
+/// Deliberately NOT decoded, and why:
+/// - Heart rate and R-R: v25 has no per-second beat field. OpenStrap `_parseV25` returns HR 0 and warns
+///   that a peak pass over the bursts invents a ~60 bpm rhythm from the burst cadence.
+/// - Gravity. NOOP's v25 branch reads i16 / 16384 at frame 73/75/77 (`PostHooks.swift` ~lines 357–371,
+///   `HistoricalStreams.kt` ~lines 267–275). OpenStrap `records.dart` `_parseV25` retracts it: it is not
+///   gravity, and the 'z' axis takes three distinct values. Icarus check on 1,400 real v25 frames
+///   (device3 band log): correlation with the v24 gravity of the same second is -0.19, -0.08 and -0.00,
+///   and the 'y' and 'z' axes take 6 and 3 distinct values. Decoding it would fabricate stillness.
+/// - The 24 Hz optical waveform at frames 23–72 (OpenStrap: "a raw ~24 Hz PPG waveform").
+///
+/// Storage warning: every v25 record shares its unix second with a v24 record from the same drain
+/// (1,400 of 1,400 in the device3 log). `historical_record` is `UNIQUE (band_id, ts_ms)` with
+/// `INSERT OR IGNORE`, so storing a v25 row could shadow the real v24 heart-rate row for that second.
+/// Do not write these to `historical_record`. They add nothing the v24 record lacks.
+public struct HistoricalRecordV25: Sendable, Equatable {
+    /// The record layout this type decodes (the frame `seq` byte).
+    public static let supportedVersion: UInt8 = 25
+
+    /// Version byte of the record: the frame `seq` field. Always `supportedVersion` for a parsed value.
+    public let version: UInt8
+    /// Record time as unix seconds (payload offset 4, u32 LE).
+    public let unixSeconds: UInt32
+
+    /// Minimum payload for a whole v25 frame (frame byte 79). NOOP and OpenStrap both reject shorter ones.
+    private static let minimumLength = 72
+    private static let unixOffset = 4
+
+    /// Decodes one version-25 record from a HISTORICAL_DATA frame.
+    public static func parse(_ frame: Frame) throws(HistoricalRecord.ParseError) -> HistoricalRecordV25 {
+        guard frame.packetType == .historicalData else {
+            throw .notHistoricalData(frame.type)
+        }
+        guard frame.seq == supportedVersion else {
+            throw .unsupportedVersion(frame.seq)
+        }
+        let payload = frame.payload
+        guard payload.count >= minimumLength else {
+            throw .payloadTooShort(length: payload.count, required: minimumLength)
+        }
+        return HistoricalRecordV25(version: frame.seq, unixSeconds: u32(payload, unixOffset))
+    }
+
+    private static func u32(_ payload: [UInt8], _ offset: Int) -> UInt32 {
+        UInt32(payload[offset])
+            | (UInt32(payload[offset + 1]) << 8)
+            | (UInt32(payload[offset + 2]) << 16)
+            | (UInt32(payload[offset + 3]) << 24)
     }
 }
 

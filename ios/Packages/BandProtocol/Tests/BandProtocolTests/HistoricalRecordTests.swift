@@ -219,6 +219,79 @@ struct HistoricalRecordTests {
         }
     }
 
+    /// Investigation (2026-10-23): on real v24 frames the second gravity triplet is the first one again,
+    /// byte for byte (device3 band log, 44,352 of 44,352 frames). The offset 56 is right, so this pins the
+    /// duplicate in place: a future "fix" that moves the offset would have to explain this test.
+    @Test func secondGravityTripletIsTheStrapsCopyOfTheFirst() throws {
+        let frame = try FrameCodec.decode(try bytes(fromHex: Self.realWhoop4FrameHex))
+        let record = try HistoricalRecord.parse(frame)
+        #expect(record.secondaryGravity == record.gravity)
+        #expect(Array(frame.payload[33..<45]) == Array(frame.payload[49..<61]))
+    }
+
+    // MARK: Version 25 (timestamp only)
+
+    /// Three consecutive real version-25 frames from the device3 band log (2026-10-23, 84 bytes each,
+    /// CRC-valid). Their unix seconds are 1,792,681,540, 541 and 542.
+    private static let realV25Hex = [
+        "aa50000c2f1900e1d000004426da6a4845030041b503008afe22004702e6024d030a03bb026402460200029e01100113fd14fb47fc5bff81019802260347036e02e2001d000000384b883d5005010000b951f6ab",
+        "aa50000c2f1900e2d000004526da6a50400300d7cc030032ffd8fe7600be017302a902c102b80220021002e001ba01c0015401a0ffeefee2feb5ff1f00f3005c01a701dc01c601d0801a3d500500000002ed0467",
+        "aa50000c2f1900e3d000004626da6a603b030037e90300bd01fb0139011500c3ff610036003100eeffd8ff69ff39fd20fd60fc02fc30fcd7fbe1fa13fd85ffb2001101d200c00060160e3d50050000000252e146",
+    ]
+
+    /// The first record of the next burst, about 19 minutes later (unix 1,792,682,732).
+    private static let realV25LaterBurstHex =
+        "aa50000c2f1900b9d50000ec2ada6aa04704005cd00200bafe04fd5bfd50045e0fd41aa143b343f526851b9019f60fd00b4205bdfd1af588fb88fe0eff750011fc1afa0dfc42fd88125d3e5005000000d134bb75"
+
+    /// The typed version-25 parse error, or nil when parsing unexpectedly succeeded.
+    private func version25Error(of frame: Frame) -> HistoricalRecord.ParseError? {
+        do {
+            _ = try HistoricalRecordV25.parse(frame)
+            return nil
+        } catch {
+            return error
+        }
+    }
+
+    @Test func decodesTheRealVersion25Timestamps() throws {
+        let records = try Self.realV25Hex.map { hex in
+            try HistoricalRecordV25.parse(try FrameCodec.decode(try bytes(fromHex: hex)))
+        }
+        #expect(records.map(\.version) == [25, 25, 25])
+        #expect(records.map(\.unixSeconds) == [1_792_681_540, 1_792_681_541, 1_792_681_542])
+        // Late October 2026, the capture date.
+        for record in records {
+            #expect((1_792_000_000..<1_793_000_000).contains(record.unixSeconds))
+        }
+    }
+
+    @Test func decodesTheTimestampOfALaterBurst() throws {
+        let frame = try FrameCodec.decode(try bytes(fromHex: Self.realV25LaterBurstHex))
+        #expect(frame.seq == 25)
+        #expect(try HistoricalRecordV25.parse(frame).unixSeconds == 1_792_682_732)
+    }
+
+    /// The v25 layout carries no heart rate, R-R or gravity that the references agree on. Those fields are
+    /// absent from `HistoricalRecordV25`, and the v24 parser must keep refusing v25 so that no
+    /// version-25 row reaches `historical_record` (where it would shadow the same second's v24 row).
+    @Test func versionTwentyFiveIsStillRefusedByTheV24Parser() throws {
+        let frame = try FrameCodec.decode(try bytes(fromHex: Self.realV25Hex[0]))
+        #expect(parseError(of: frame) == .unsupportedVersion(25))
+    }
+
+    @Test func version25RejectsOtherPacketTypesAndVersions() throws {
+        let frame = try FrameCodec.decode(try bytes(fromHex: Self.realV25Hex[0]))
+        let realtime = Frame(type: PacketType.realtimeData.rawValue, seq: 25, cmd: 2, payload: frame.payload)
+        #expect(version25Error(of: realtime) == .notHistoricalData(PacketType.realtimeData.rawValue))
+        #expect(version25Error(of: v24Frame(payload: v24Payload())) == .unsupportedVersion(24))
+    }
+
+    @Test func version25RejectsTooShortPayloads() throws {
+        let frame = try FrameCodec.decode(try bytes(fromHex: Self.realV25Hex[0]))
+        let short = Frame(type: frame.type, seq: 25, cmd: frame.cmd, payload: Array(frame.payload.prefix(71)))
+        #expect(version25Error(of: short) == .payloadTooShort(length: 71, required: 72))
+    }
+
     // MARK: Metadata token
 
     /// The token is `inner[13:21]`, which is `payload[10..<18]` (the inner bytes start at frame
