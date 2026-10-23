@@ -515,6 +515,41 @@ struct TierBControllerTests {
         #expect(historicalEvents() == [[record]], "records flush exactly once")
     }
 
+    /// Persist-then-ack: with a sink installed the batch is stored BEFORE its ack is written, and
+    /// the store's verdict decides whether the ack goes out at all.
+    @Test func aSinkStoresTheBatchBeforeTheAck() async throws {
+        let h = Harness()
+        let stored = SinkRecorder(succeeds: true, band: h.band)
+        await h.controller.setHistoricalSink { await stored.store($0) }
+        await h.controller.connectionOpened()
+        let frame = historicalRecordFrame(unix: UInt32(ManualClock.origin.timeIntervalSince1970) - 3600)
+        await h.controller.receive(frame)
+        let record = try HistoricalRecord.parse(frame)
+
+        let token: [UInt8] = [0x2E, 0x47, 0x01, 0x00, 0x04, 0x00, 0x00, 0x00]
+        await h.controller.receive(metadataFrame(token: token))
+        #expect(await stored.batches == [[record]])
+        #expect(await stored.acksSeenWhileStoring == 0, "the store ran before any ack was written")
+        #expect(h.band.last?.cmd == 23, "the stored batch is acked")
+        // The UI event still follows the store, exactly once.
+        let historical = h.events.all.compactMap { event -> [HistoricalRecord]? in
+            if case let .historical(records) = event { return records }
+            return nil
+        }
+        #expect(historical == [[record]])
+    }
+
+    @Test func aFailedStoreLeavesTheBatchUnacked() async throws {
+        let h = Harness()
+        let stored = SinkRecorder(succeeds: false, band: h.band)
+        await h.controller.setHistoricalSink { await stored.store($0) }
+        await h.controller.connectionOpened()
+        await h.controller.receive(historicalRecordFrame(unix: UInt32(ManualClock.origin.timeIntervalSince1970) - 3600))
+        await h.controller.receive(metadataFrame(token: [0x2E, 0x47, 0x01, 0x00, 0x04, 0x00, 0x00, 0x00]))
+        #expect(await stored.batches.count == 1)
+        #expect(!h.band.opcodes.contains(23), "an unstored batch must not be acked; the strap re-sends it")
+    }
+
     @Test func aLinkDropEmitsThePartialDrain() async throws {
         let h = Harness()
         await h.controller.connectionOpened()
@@ -863,5 +898,24 @@ struct TierBTransportStubTests {
         let transport = SyntheticTransport(seed: 1, maxSamples: 0)
         await transport.setTierBEnabled(false)
         #expect(await transport.tierBRequests == [.setEnabled(false)])
+    }
+}
+
+/// A history sink that records its batches and how many acks the band had seen when each arrived.
+private actor SinkRecorder {
+    let succeeds: Bool
+    let band: FakeBand
+    private(set) var batches: [[HistoricalRecord]] = []
+    private(set) var acksSeenWhileStoring = 0
+
+    init(succeeds: Bool, band: FakeBand) {
+        self.succeeds = succeeds
+        self.band = band
+    }
+
+    func store(_ records: [HistoricalRecord]) -> Bool {
+        batches.append(records)
+        acksSeenWhileStoring += band.opcodes.filter { $0 == 23 }.count
+        return succeeds
     }
 }

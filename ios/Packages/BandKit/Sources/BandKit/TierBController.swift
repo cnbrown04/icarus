@@ -55,6 +55,9 @@ public enum TierBError: Error, Sendable, Equatable {
 /// Only `BandCommand` can be sent, and `BandCommand` only holds whitelisted opcodes, so the denylist
 /// (PLAN.md 5.3.5) holds at the type level. Pure logic: there is no CoreBluetooth in this file.
 /// Every write goes through the injected `CommandWriter`, and every timeout comes from the injected clock.
+/// Durably stores one batch of drained records; true when they are safely written.
+public typealias HistoricalSink = @Sendable ([HistoricalRecord]) async -> Bool
+
 public actor TierBController {
     /// PLAN.md 7.2: 5 s timeout per attempt, at most 3 retries.
     public static let responseTimeout: Double = 5
@@ -109,6 +112,8 @@ public actor TierBController {
     private var offload: HistoricalOffloadHandler
     /// Records decoded since the current drain began; emitted with `.historical` when the drain stops.
     private var historicalRecords: [HistoricalRecord] = []
+    /// Durable store for drained records, awaited BEFORE each batch's ack (`setHistoricalSink`).
+    private var historicalSink: HistoricalSink?
     /// Restarts the offload every `historicalRedrainInterval` while the link is ready.
     private var offloadCadenceTask: Task<Void, Never>?
     /// Sleeps until the active drain's quiet deadline, then fires `.quietElapsed` (PLAN.md 5.3.4).
@@ -716,13 +721,26 @@ public actor TierBController {
                     stopOffloadForLinkLoss()
                 }
             case let .sendResult(token):
+                // Persist-then-ack (CONTEXT.md lesson 4): the ack advances the strap's read cursor
+                // past this batch, so with a sink installed the batch is written to the store FIRST.
+                // Handing records over and acking straight away left them in an in-memory queue,
+                // and every queued batch was lost when iOS suspended or killed the app.
+                if let sink = historicalSink, !historicalRecords.isEmpty {
+                    let records = historicalRecords
+                    historicalRecords = []
+                    guard await sink(records) else {
+                        // Not acked: the cursor stays put, so the next drain re-sends this batch.
+                        BandLog.tierB(.error, "store failed for \(records.count) record(s); batch not acked")
+                        continue
+                    }
+                    emit(.historical(records))
+                }
                 do {
                     try await writeConfirmedWithoutReply(.historicalDataResult(token: token))
                     BandLog.tierB(.info, "acked batch, trim cursor \(Self.tokenValue(token)) (\(offload.recordCount) record(s) so far)")
-                    // The strap permanently trims everything this ack covers, so the decoded records
-                    // must be handed to the app NOW: holding the whole drain in memory until it stops
-                    // would lose every acked record if the app died mid-drain. Repeated stores dedupe
-                    // on (band_id, ts_ms).
+                    // Without a sink the decoded records are handed to the app now: holding the whole
+                    // drain in memory until it stops would lose every acked record if the app died
+                    // mid-drain. Repeated stores dedupe on (band_id, ts_ms).
                     flushRecords()
                     // One emission per acked batch (never per record), throttled to ~2/s. The
                     // end-of-drain emission always carries the final count.
@@ -857,7 +875,26 @@ public actor TierBController {
         let records = historicalRecords
         guard !records.isEmpty else { return }
         historicalRecords = []
-        emit(.historical(records))
+        guard let sink = historicalSink else {
+            emit(.historical(records))
+            return
+        }
+        // Only an unacked tail reaches here with a sink installed (a drain that stopped between
+        // batches): the strap re-sends it next drain, so storing it now is a best-effort preview.
+        let emit = emit
+        Task {
+            if await sink(records) {
+                emit(.historical(records))
+            }
+        }
+    }
+
+    /// Installs the durable store for drained records. While set, each batch is passed to `sink`
+    /// and its ack is written only after `sink` returns true; `.historical` is still emitted, after
+    /// the store, for the UI. `sink` should do the minimum (insert the rows) and return quickly:
+    /// the drain waits on it. Nil restores the emit-only behaviour.
+    public func setHistoricalSink(_ sink: HistoricalSink?) {
+        historicalSink = sink
     }
 
     /// Tears the offload down for a lost link: cancels the cadence, quiet and run-cap watchdogs

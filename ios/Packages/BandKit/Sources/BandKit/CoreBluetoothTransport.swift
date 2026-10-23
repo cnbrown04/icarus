@@ -177,6 +177,12 @@ public final class CoreBluetoothTransport: NSObject, BandTransport, CBCentralMan
         await tierB.fullHistorySummary
     }
 
+    /// Installs the store that drained batches are written to before each ack
+    /// (`TierBController.setHistoricalSink`).
+    public func setHistoricalSink(_ sink: HistoricalSink?) async {
+        await tierB.setHistoricalSink(sink)
+    }
+
     /// App-facing raw-flood toggle (PLAN.md 7.2 step 4): re-enable the 0x2B flood while the raw
     /// band data viewer is open, disable again on close. The handshake disables the flood on every
     /// new connection. Throws when Tier B is off or the link is down.
