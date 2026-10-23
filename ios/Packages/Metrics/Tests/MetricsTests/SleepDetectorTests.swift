@@ -136,6 +136,34 @@ struct SleepDetectorTests {
         #expect(nap.isNap)
     }
 
+    @Test func aShortStillEveningWithoutAHeartRateDipIsNotANight() {
+        // The real 2026-10-22 shape: an hour on the sofa at the waking HR, and no night after it yet.
+        var stream = Stream()
+        stream.add(from: Self.local(22, 10), to: Self.local(22, 20, 40), .moving, bpm: 92)
+        stream.add(from: Self.local(22, 20, 40), to: Self.local(22, 22, 10), .still, bpm: 88)
+        stream.add(from: Self.local(22, 22, 10), to: Self.local(23, 0, 30), .moving, bpm: 92)
+        #expect(SleepDetector.detect(stream.records, in: Self.zone).isEmpty)
+    }
+
+    @Test func aShortNightWithARealDipIsKept() throws {
+        var stream = Stream()
+        stream.add(from: Self.local(22, 16), to: Self.local(23, 3), .moving, bpm: 90)
+        stream.add(from: Self.local(23, 3), to: Self.local(23, 5, 30), .still, bpm: 60)
+        stream.add(from: Self.local(23, 5, 30), to: Self.local(23, 12), .moving, bpm: 90)
+        let night = try #require(SleepDetector.detect(stream.records, in: Self.zone).only)
+        #expect(!night.isNap)
+    }
+
+    @Test func theContactByteIsNotAWearFlag() throws {
+        // OpenStrap PROTOCOL.md §5: the byte is contact quality. A worn night whose byte reads 0
+        // while the heart rate is present is still a night.
+        var stream = Stream()
+        stream.add(from: Self.local(20, 18), to: Self.local(20, 23), .moving, bpm: 88, contact: false)
+        stream.add(from: Self.local(20, 23), to: Self.local(21, 7), .still, bpm: 60, contact: false)
+        stream.add(from: Self.local(21, 7), to: Self.local(21, 12), .moving, bpm: 90, contact: false)
+        #expect(SleepDetector.detect(stream.records, in: Self.zone).count == 1)
+    }
+
     @Test func aStillBlockShorterThanAnHourIsNotSleep() {
         var stream = Stream()
         stream.add(from: Self.local(20, 18), to: Self.local(20, 23), .moving, bpm: 88)

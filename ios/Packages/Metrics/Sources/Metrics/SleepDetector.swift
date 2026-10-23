@@ -24,7 +24,8 @@ import Foundation
 ///    night-continuation chain, held to the bridge's active-time cap and a tighter HR test).
 /// 6. Daytime guard (NOOP #90): a window centred 11:00–20:00 local that also began then is a nap
 ///    only when it lasts ≥ 90 minutes and its resting HR dips ≤ 0.95 × the baseline; sedentary
-///    stillness (a desk, a sofa) does not dip.
+///    stillness (a desk, a sofa) does not dip. A non-daytime window under 3 hours must show the
+///    same dip (an evening on the sofa is not a short night).
 /// 7. Main sleep (van Hees: the sleep period is the single longest block): per noon-to-noon local
 ///    day only the longest non-daytime window is kept. A still evening on the sofa before bed
 ///    passes the HR gate (resting HR is near sleeping HR) but is not the night.
@@ -32,7 +33,8 @@ import Foundation
 /// Deliberate deviation from NOOP: missing records are not evidence of anything. NOOP's off-wrist
 /// proxy counts every long HR gap as off-wrist; here a span with no records at all (a drain that
 /// never reached the store) is unknown and ignored, and only records that are present but off-wrist
-/// count toward the off-wrist fraction.
+/// count toward the off-wrist fraction. On-wrist is "has a heart rate" (`SleepRecord.isOnWrist`), not
+/// the record's contact byte, which is a contact-quality value.
 ///
 /// Honest limit: this detects a REST window from motion + heart rate, not PSG sleep. Onset/offset
 /// are the bounds of sustained wrist stillness.
@@ -90,6 +92,8 @@ public enum SleepDetector {
     public static let daytimeMinSleepSeconds: Int64 = 90 * 60
     /// A daytime nap's resting HR must be ≤ baseline × this.
     public static let daytimeRestingHRMult = 0.95
+    /// A non-daytime window shorter than this must clear the same resting-HR dip as a nap.
+    public static let shortNightSeconds: Int64 = 3 * 60 * 60
 
     // MARK: Resting HR
 
@@ -160,7 +164,7 @@ public enum SleepDetector {
         }
         guard grav.count >= 2 else { return [] }
         let hr = sorted.compactMap { record -> HRPoint? in
-            guard record.skinContact, let bpm = record.bpm, bpmRange.contains(bpm) else { return nil }
+            guard record.isOnWrist, let bpm = record.bpm else { return nil }
             return HRPoint(ts: record.unixSeconds, bpm: bpm)
         }
         let baselines = BaselineCache(hr: hr)
@@ -204,16 +208,23 @@ public enum SleepDetector {
             }
         }
 
-        // 6. Daytime guard.
+        // 6. Daytime guard, and the same HR-dip bar for short nights.
+        func dipsBelowBaseline(_ window: Period) -> Bool {
+            guard let resting = restingHR(window, hr: hr), let baseline = baselines.at(center(window)) else {
+                return false
+            }
+            return resting <= baseline * daytimeRestingHRMult
+        }
         var kept: [Window] = []
         for window in windows {
             let daytime = isDaytime(center(window), in: timeZone) && isDaytime(window.start, in: timeZone)
             if daytime {
-                guard window.duration >= daytimeMinSleepSeconds,
-                      let resting = restingHR(window, hr: hr),
-                      let baseline = baselines.at(center(window)),
-                      resting <= baseline * daytimeRestingHRMult
-                else { continue }
+                guard window.duration >= daytimeMinSleepSeconds, dipsBelowBaseline(window) else { continue }
+            } else if window.duration < shortNightSeconds {
+                // A short "night" must show the same cardiac dip as a nap: an hour still on the
+                // sofa in the evening (real record 2026-10-22 20:39–21:48, HR 88) passes the
+                // ×1.05 confirmation and otherwise became last night.
+                guard dipsBelowBaseline(window) else { continue }
             }
             kept.append(Window(startUnix: window.start, endUnix: window.end, isNap: daytime))
         }
@@ -502,7 +513,7 @@ public enum SleepDetector {
         var bins: [Int64: (on: Int, total: Int)] = [:]
         for record in records where record.unixSeconds >= run.start && record.unixSeconds <= run.end {
             let bin = (record.unixSeconds - run.start) / offWristBinSeconds
-            let on = record.skinContact && (record.bpm.map { bpmRange.contains($0) } ?? false)
+            let on = record.isOnWrist
             bins[bin, default: (0, 0)].total += 1
             if on { bins[bin, default: (0, 0)].on += 1 }
         }

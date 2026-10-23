@@ -10,7 +10,9 @@ public struct SleepRecord: Sendable, Equatable {
     public let bpm: Double?
     /// R-R intervals in milliseconds carried by the record.
     public let rrMs: [Double]
-    /// True when the strap saw skin contact (on-wrist).
+    /// The record's skin-contact byte was non-zero. NOT a wear flag: OpenStrap's PROTOCOL.md §5
+    /// (validated by per-byte variance) calls it a contact-QUALITY value (0–198), and on the real
+    /// strap it reads 0 on ~3.5 % of records that carry a heart rate. Use `isOnWrist`.
     public let skinContact: Bool
     /// Respiratory rate raw (no verified raw-to-breaths-per-minute mapping exists). [Unverified]
     public let respRateRaw: Double?
@@ -19,6 +21,13 @@ public struct SleepRecord: Sendable, Equatable {
     /// Accelerometer gravity vector in g, or nil for rows written before gravity was stored. Sleep
     /// detection's stillness spine (`SleepDetector`) runs on it.
     public let gravity: Gravity?
+
+    /// On-wrist = the strap recorded a physiological heart rate. OpenStrap PROTOCOL.md §8: the
+    /// record's HR is 0 (stored nil) when off-wrist; the WRIST_ON/OFF events are the other
+    /// authoritative source.
+    public var isOnWrist: Bool {
+        bpm.map { SleepDeriver.bpmRange.contains($0) } ?? false
+    }
 
     public struct Gravity: Sendable, Equatable {
         public let x: Double
@@ -137,11 +146,12 @@ public enum SleepDeriver {
     ) -> SleepSession? {
         guard !records.isEmpty, endUnix > startUnix else { return nil }
         let sorted = records.sorted { $0.unixSeconds < $1.unixSeconds }
-        let onWrist = sorted.filter(\.skinContact)
+        // Stored as `contact_fraction`: the share of records that carried a heart rate.
+        let onWrist = sorted.filter(\.isOnWrist)
         let contactFraction = Double(onWrist.count) / Double(sorted.count)
 
-        // Off-wrist and invalid readings pollute every aggregate, so only clean contact-on
-        // records contribute.
+        // Off-wrist and invalid readings pollute every aggregate, so only on-wrist records
+        // contribute.
         let heartRate = onWrist.compactMap { record -> SleepDetector.HRPoint? in
             guard let bpm = record.bpm, bpmRange.contains(bpm) else { return nil }
             return SleepDetector.HRPoint(ts: record.unixSeconds, bpm: bpm)

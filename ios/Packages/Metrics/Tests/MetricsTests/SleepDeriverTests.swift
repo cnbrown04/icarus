@@ -92,8 +92,9 @@ struct SleepDeriverTests {
         let records = run(from: start, until: start + 6 * 60 * 60, cadence: 1) { offset in
             let onWrist = !(offset >= offStart && offset < offStart + 60 * 60)
             let minute = Int(offset - start) / 60
-            // Off-wrist minutes carry garbage readings (200 bpm): they must not reach the median.
-            return record(offset, bpm: onWrist ? 55 : 200, rr: onWrist ? [980 + Double(minute % 5) * 10] : [], contact: onWrist)
+            // Off-wrist minutes carry no heart rate (the strap records 0); the contact byte is a
+            // quality value and plays no part.
+            return record(offset, bpm: onWrist ? 55 : nil, rr: onWrist ? [980 + Double(minute % 5) * 10] : [], contact: true)
         }
 
         let session = try #require(summarize(records))
@@ -101,7 +102,7 @@ struct SleepDeriverTests {
         // 5 h of 6 h on-wrist → 0.8333, fair.
         #expect(abs(session.contactFraction - 5 / 6.0) < 0.0001)
         #expect(session.quality == .fair)
-        #expect(session.restingHeartRate == 55) // the off-wrist 200 bpm readings did not win
+        #expect(session.restingHeartRate == 55)
         #expect(session.rmssdMs != nil) // computed from the on-wrist intervals only
     }
 
@@ -109,7 +110,7 @@ struct SleepDeriverTests {
         let start = unix(2026, 10, 15, 23, 0)
         let records = run(from: start, until: start + 3 * 60 * 60) { offset in
             let minute = Int(offset - start) / 60
-            return record(offset, contact: minute % 10 < 6) // 60% on-wrist
+            return record(offset, bpm: minute % 10 < 6 ? 55 : nil) // 60% on-wrist
         }
         let session = try #require(summarize(records))
         #expect(abs(session.contactFraction - 0.6) < 0.0001)
