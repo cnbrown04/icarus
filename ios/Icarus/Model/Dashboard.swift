@@ -7,7 +7,8 @@ import Store
 /// numbers on a screen come from the same snapshot.
 enum Dashboard {
     /// The profile's zone, or the default when no profile exists yet.
-    static let fallbackZone = TimeZone(identifier: "America/Chicago")!
+    /// The device zone, used before a profile exists.
+    static var fallbackZone: TimeZone { .current }
 
     /// Stress bars are 15-minute averages on every screen that shows them.
     static let stressBucketMs: Int64 = 15 * LocalTime.msPerMinute
@@ -321,6 +322,13 @@ enum Dashboard {
 
             /// True when the store has a hypnogram for this session.
             var isStaged: Bool { !stages.isEmpty }
+
+            /// The headline sleep duration: time asleep (light + deep + REM) when staged, else the
+            /// in-bed span. `durationS` is bed → wake, which counts the lying-awake time too.
+            var asleepS: Int64 {
+                guard isStaged else { return durationS }
+                return Int64((stageTotals[.light] ?? 0) + (stageTotals[.deep] ?? 0) + (stageTotals[.rem] ?? 0))
+            }
         }
 
         let context: Context

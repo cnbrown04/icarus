@@ -67,7 +67,7 @@ struct SleepView: View {
     private func priorNightLabel(_ night: Dashboard.SleepSnapshot.Night) -> some View {
         VStack(alignment: .leading, spacing: Spacing.s8) {
             HStack(alignment: .firstTextBaseline, spacing: Spacing.s8) {
-                Text(Format.duration(night.durationS))
+                Text(Format.duration(night.asleepS))
                     .font(.headline)
                     .monospacedDigit()
                 Spacer(minLength: Spacing.s8)
@@ -160,7 +160,11 @@ private func nightFacts(_ night: Dashboard.SleepSnapshot.Night, timeZone: TimeZo
         Text(sleepWindow(night, in: timeZone))
             .monospacedDigit()
     }
-    LabeledContent("Duration") {
+    LabeledContent("Asleep") {
+        Text(Format.duration(night.asleepS))
+            .monospacedDigit()
+    }
+    LabeledContent("In bed") {
         Text(Format.duration(night.durationS))
             .monospacedDigit()
     }

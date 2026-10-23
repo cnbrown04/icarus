@@ -406,7 +406,7 @@ struct TodayView: View {
             ) {
                 if let latest = sleep?.latest {
                     HStack(alignment: .firstTextBaseline) {
-                        Text(Format.duration(latest.durationS))
+                        Text(Format.duration(latest.asleepS))
                             .font(.metricValue)
                             .monospacedDigit()
                         Spacer(minLength: Spacing.s8)

@@ -124,7 +124,7 @@ struct HomeView: View {
                 if let night = snapshot?.sleep.latest {
                     VStack(alignment: .leading, spacing: Spacing.s8) {
                         HStack(alignment: .firstTextBaseline, spacing: Spacing.s8) {
-                            Text(Format.duration(night.durationS))
+                            Text(Format.duration(night.asleepS))
                                 .font(.metricValue)
                                 .monospacedDigit()
                             Spacer(minLength: Spacing.s8)
@@ -168,7 +168,7 @@ struct HomeView: View {
             return "No sleep recorded yet. Wear the band overnight."
         }
         let rhr = night.restingHR.map { Format.bpm($0) } ?? "resting heart rate unavailable"
-        var value = "\(Format.duration(night.durationS)), \(Format.sleepQuality(night.quality)), "
+        var value = "\(Format.duration(night.asleepS)) asleep, \(Format.sleepQuality(night.quality)), "
             + "\(sleepWindow(night)), \(rhr)"
         if night.isStaged {
             value += ", \(SleepStageTotals.accessibleSummary(night.stageTotals))"
