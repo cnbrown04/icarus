@@ -190,17 +190,11 @@ public actor MetricsWorker {
         if let cache, cache.day == day, closedThrough - cache.computedAtMs < baselineMaxAgeMs {
             stressBaseline = cache.value
         } else {
-            let lookbackStart = LocalTime.localTime(
-                LocalTime.adding(days: -Stress.lookbackDays, to: day),
-                hour: 0,
-                in: timeZone
-            )
-            let dayStart = LocalTime.localTime(day, hour: 0, in: timeZone)
-            let stored = try db.minuteMetricRows(from: lookbackStart, to: dayStart)
+            let lookback = try db.stressLookback(for: day, in: timeZone)
             stressBaseline = StressBaseline.build(
-                windows: FiveMinuteWindow.rebuilt(from: stored),
+                windows: lookback.windows,
                 day: day,
-                in: timeZone,
+                nights: lookback.nights,
                 restingHR: restingHR,
                 maxHR: maxHR
             )

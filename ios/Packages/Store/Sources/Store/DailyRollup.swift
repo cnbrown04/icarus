@@ -4,12 +4,12 @@ import Metrics
 /// Per-day numbers for Trends and Calories. Derived from `minute_metric`, not stored (PLAN.md 10.3).
 public struct DaySummary: Sendable, Equatable {
     public let day: LocalDay
-    /// Lowest 5-minute HR in the night of this day (PLAN.md 8.1).
+    /// Lowest 5-minute HR in the night of this day: the main sleep that ended on this day, else 00:00-06:00.
     public let restingHR: Double?
     /// Mean HR weighted by sample count.
     public let hrAvg: Double?
     public let hrMax: Int?
-    /// Median RMSSD of the valid 5-minute windows that start between 00:00 and 06:00.
+    /// Median RMSSD of the valid 5-minute windows that start inside the night of this day.
     public let rmssdNight: Double?
     public let stressAverage: Double?
     public let kcalTotal: Double?
@@ -24,8 +24,14 @@ public enum DailyRollup {
         Array(Set(days)).sorted { ($0.year, $0.month, $0.day) < ($1.year, $1.month, $1.day) }
     }
 
-    /// `days` may be in any order. The output follows the sorted order of `days`.
-    public static func summaries(days: [LocalDay], minutes: [MinuteMetricRow], in timeZone: TimeZone) -> [DaySummary] {
+    /// `days` may be in any order. The output follows the sorted order of `days`. `minutes` must reach back
+    /// to the start of each day's night, which can begin the evening before (`Database.daySummaries` reads it so).
+    public static func summaries(
+        days: [LocalDay],
+        minutes: [MinuteMetricRow],
+        nights: SleepNights,
+        in timeZone: TimeZone
+    ) -> [DaySummary] {
         let sorted = sortedUnique(days)
         let starts = sorted.map { LocalTime.localTime($0, hour: 0, in: timeZone) }
         var buckets = Array(repeating: [MinuteMetricRow](), count: sorted.count)
@@ -34,7 +40,7 @@ public enum DailyRollup {
             buckets[index].append(row)
         }
         return sorted.indices.map { index in
-            summarize(day: sorted[index], rows: buckets[index], in: timeZone)
+            summarize(day: sorted[index], rows: buckets[index], minutes: minutes, nights: nights)
         }
     }
 
@@ -57,20 +63,27 @@ public enum DailyRollup {
         return ms < end ? index : nil
     }
 
-    private static func summarize(day: LocalDay, rows: [MinuteMetricRow], in timeZone: TimeZone) -> DaySummary {
+    private static func summarize(
+        day: LocalDay,
+        rows: [MinuteMetricRow],
+        minutes: [MinuteMetricRow],
+        nights: SleepNights
+    ) -> DaySummary {
         let withHR = rows.filter { $0.hrAvg != nil }
         let sampleCount = withHR.reduce(0) { $0 + $1.hrN }
         let hrAvg: Double? = sampleCount > 0
             ? withHR.reduce(0.0) { $0 + ($1.hrAvg ?? 0) * Double($1.hrN) } / Double(sampleCount)
             : nil
         let stresses = rows.compactMap(\.stress).map(Double.init)
-        let night = LocalTime.nightWindow(of: day, in: timeZone)
-        let nightRMSSD = rows
-            .filter { night.contains($0.minuteMs) && $0.minuteMs % LocalTime.msPerWindow == 0 }
+        // The night is read from all minutes, not this day's bucket: a detected night starts the evening before.
+        let night = nights.window(of: day)
+        let nightRows = minutes.filter { night.contains($0.minuteMs) }
+        let nightRMSSD = nightRows
+            .filter { $0.minuteMs % LocalTime.msPerWindow == 0 }
             .compactMap(\.rmssdMs)
         return DaySummary(
             day: day,
-            restingHR: RestingHR.lowestWindowMean(withHR.compactMap(\.minuteAggregate), in: night),
+            restingHR: RestingHR.lowestWindowMean(nightRows.compactMap(\.minuteAggregate), in: night),
             hrAvg: hrAvg,
             hrMax: withHR.compactMap(\.hrMax).max(),
             rmssdNight: median(nightRMSSD),
