@@ -63,8 +63,9 @@ final class LiveState {
     }
     @ObservationIgnored private var tierBChangeHandlers: [@MainActor (TierBState) -> Void] = []
     @ObservationIgnored var onBandEvent: (@MainActor (BandEventKind) -> Void)?
-    /// Called on the main actor when a history offload drain completes. The records are NOT stored
-    /// here — the consumer owns their persistence (PLAN.md 5.3.4).
+    /// Called on the main actor for each drained batch. The records are NOT stored here: with a
+    /// sink installed (`installHistoricalSink`) they were already written before the strap was
+    /// acked; otherwise the consumer owns their persistence (PLAN.md 5.3.4).
     @ObservationIgnored var onHistoricalRecords: (@MainActor ([HistoricalRecord]) -> Void)?
     /// Set by `AlarmCoordinator` for the opportunistic alarm pull (PLAN.md 9.3). Called on the main
     /// actor at every band wake-up: the link entering streaming, and every realtime heart-rate
@@ -266,6 +267,15 @@ final class LiveState {
         } catch {
             BandLog.tierB(.error, "app: flood policy \(disabled) failed: \(String(describing: error))")
         }
+    }
+
+    /// Installs the store each drained batch is written to before the strap is acked. Returns
+    /// false when the transport has no history sink (fixture, synthetic): its batches still arrive
+    /// through `onHistoricalRecords` only.
+    func installHistoricalSink(_ sink: @escaping HistoricalSink) -> Bool {
+        guard let sinkTransport = transport as? any HistoricalSinkTransport else { return false }
+        Task { await sinkTransport.setHistoricalSink(sink) }
+        return true
     }
 
     /// Rewinds the strap's read cursor and re-drains its whole stored history (the app-deleted

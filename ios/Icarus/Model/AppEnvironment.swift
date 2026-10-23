@@ -19,6 +19,8 @@ final class AppEnvironment {
     let alarms: AlarmCoordinator
 
     private let metrics: MetricsWorker
+    /// Runs sleep + metric derivation once per settled drain (see `HistoryPipeline`).
+    private let derivation: HistoryDerivationScheduler
     private let ingestor: Ingestor
     private let inputs: AsyncStream<Ingestor.Input>
     private let inputContinuation: AsyncStream<Ingestor.Input>.Continuation
@@ -59,6 +61,7 @@ final class AppEnvironment {
         )
         let metrics = MetricsWorker(database: database)
         self.metrics = metrics
+        self.derivation = HistoryDerivationScheduler(database: database, clock: clock)
         self.ingestor = Ingestor(database: database, metrics: metrics, clock: clock, onFlushed: {
             await sync.enqueueBackgroundUploadIfNeeded()
         })
@@ -144,22 +147,54 @@ final class AppEnvironment {
         inputContinuation.yield(.flush)
     }
 
-    /// Wires the band's history offload into the store (PLAN.md 5.3.4, 7.3). Records flow out of
-    /// LiveState through `onHistoricalRecords`; like live readings, they are attributed to the
-    /// remembered band, else the first band seen. Nothing is wired when the launch does not ingest.
+    /// Wires the band's history offload into the store (PLAN.md 5.3.4, 7.3). Like live readings,
+    /// records are attributed to the remembered band, else the first band seen. Nothing is wired
+    /// when the launch does not ingest.
+    ///
+    /// A transport that takes a history sink (the real strap) writes each batch through
+    /// `HistoryPipeline.persist` BEFORE acking it; its `.historical` event then only schedules
+    /// derivation. A transport without one (fixtures) still emits unacked-by-us batches, which are
+    /// persisted from the event.
     func connectHistoricalRecords(band: LiveState) {
         guard ingestsLiveData else { return }
-        band.onHistoricalRecords = { [weak self, weak band] records in
+        let database = database
+        let derivation = derivation
+        let sinkInstalled = band.installHistoricalSink { [weak band] records in
+            let bandID = await MainActor.run { band?.rememberedID ?? band?.bands.first?.id }
+            guard let bandID else {
+                BandLog.tierB(.error, "app: no band ID for \(records.count) historical record(s)")
+                return false
+            }
+            return await HistoryPipeline.persist(records, from: bandID, in: database)
+        }
+        band.onHistoricalRecords = { [weak band] records in
+            let times = records.map { Int64($0.unixSeconds) * 1000 }
+            guard let fromMs = times.min(), let toMs = times.max() else { return }
+            if sinkInstalled {
+                Task { await derivation.noteStored(fromMs: fromMs, toMs: toMs) }
+                return
+            }
             guard let bandID = band?.rememberedID ?? band?.bands.first?.id else {
                 BandLog.tierB(.error, "app: no band ID for \(records.count) historical record(s)")
                 return
             }
-            self?.offload(records, from: bandID)
+            Task.detached(priority: .utility) {
+                if await HistoryPipeline.persist(records, from: bandID, in: database) {
+                    await derivation.noteStored(fromMs: fromMs, toMs: toMs)
+                }
+            }
         }
         band.onTierBChange = { [weak self, weak band] state in
             guard state == .ready else { return }
             guard let self, let band else { return }
             Task { await self.autoRestoreIfStoreEmpty(band: band) }
+        }
+        // A profile zone that is not the device's, or sessions from an older detection algorithm,
+        // are fixed once at launch, off the main actor.
+        let clock = clock
+        Task.detached(priority: .utility) {
+            await HistoryPipeline.syncProfileTimeZone(in: database, nowMs: clock.nowMs)
+            await HistoryPipeline.rederiveAllIfStale(in: database, nowMs: clock.nowMs)
         }
     }
 
@@ -192,151 +227,11 @@ final class AppEnvironment {
         }
     }
 
-    /// Hands the batch to the store off the main actor; the main actor only converts and yields.
-    private func offload(_ records: [BandProtocol.HistoricalRecord], from bandUUID: UUID) {
-        guard !records.isEmpty else { return }
-        BandLog.tierB(.info, "app: offload starting for \(records.count) record(s)")
-        let database = database
-        let nowMs = clock.nowMs
-        Task.detached(priority: .utility) {
-            await Self.storeHistoricalRecords(records, from: bandUUID, in: database, computedAtMs: nowMs)
-        }
-    }
-
-    /// One write transaction per batch: insert the records (`INSERT OR IGNORE`, so a replayed batch
-    /// dedups), then re-derive sleep for the drained window so the sessions replace their partial
-    /// selves (PLAN.md 5.3.4, 8.1). Nonisolated, so the store work runs off the main actor.
-    private nonisolated static func storeHistoricalRecords(
-        _ records: [BandProtocol.HistoricalRecord],
-        from bandUUID: UUID,
-        in database: AppDatabase,
-        computedAtMs: Int64
-    ) async {
-        let samples = records.map { record in
-            Database.HistoricalSample(
-                peripheralUUID: bandUUID,
-                tsMs: Int64(record.unixSeconds) * 1000,
-                version: Int(record.version),
-                bpm: record.heartRate == 0 ? nil : record.heartRate,
-                contact: record.skinContact,
-                rrMs: record.rrIntervalsMs.map(Double.init),
-                ppgGreen: raw(record.ppgGreen),
-                ppgRedIr: raw(record.ppgRedIr),
-                spo2Red: raw(record.spo2Red),
-                spo2Ir: raw(record.spo2Ir),
-                skinTempRaw: raw(record.skinTempRaw),
-                respRateRaw: raw(record.respRateRaw),
-                signalQuality: raw(record.signalQuality),
-                gravityX: record.gravity.x,
-                gravityY: record.gravity.y,
-                gravityZ: record.gravity.z,
-                gravity2X: record.secondaryGravity.x,
-                gravity2Y: record.secondaryGravity.y,
-                gravity2Z: record.secondaryGravity.z,
-                ambientDrive: raw(record.ambientDrive),
-                ledDrive1: raw(record.ledDrive1),
-                ledDrive2: raw(record.ledDrive2)
-            )
-        }
-        let fromMs = samples.map(\.tsMs).min() ?? 0
-        let toMs = samples.map(\.tsMs).max() ?? 0
-        let inserted: Int
-        do {
-            inserted = try await database.writer.write { db -> Int in
-                let inserted = try db.insertHistoricalSamples(samples)
-                guard let bandID = try String.fetchOne(
-                    db, sql: "SELECT id FROM band WHERE peripheral_uuid = ?",
-                    arguments: [bandUUID.uuidString]
-                ) else {
-                    BandLog.tierB(.error, "app: no band row for \(bandUUID.uuidString); records dropped")
-                    return 0
-                }
-                // Derivation runs over the band's WHOLE stored span, never the batch alone: the
-                // batch (or its ±margin) is a sliding window, so a long night would derive as a
-                // ~30-min clipped session whose start slides one key per batch, spamming
-                // sleep_session with a new row per flush instead of replacing one. With the full
-                // span, session start_ms keys are stable and ON CONFLICT replaces cleanly. Skipped
-                // entirely when the insert added nothing (replayed/duplicate batches).
-                guard inserted > 0 else {
-                    BandLog.tierB(.info, "app: batch deduped to 0 new rows; derivation skipped")
-                    return 0
-                }
-                let zone = try db.profile()?.timeZone ?? Dashboard.fallbackZone
-                let spanMin = try Int64.fetchOne(
-                    db, sql: "SELECT MIN(ts_ms) FROM historical_record WHERE band_id = ?",
-                    arguments: [bandID]
-                ) ?? fromMs
-                let spanMax = try Int64.fetchOne(
-                    db, sql: "SELECT MAX(ts_ms) FROM historical_record WHERE band_id = ?",
-                    arguments: [bandID]
-                ) ?? toMs
-                // Backfill the realtime tables from the drained history: the HR graph reads
-                // hr_sample, which only the realtime ingest writes, so a drained gap (app closed,
-                // strap kept banking) would otherwise stay invisible there forever. Same
-                // physiological gate as ReadingPreparer (PLAN.md 7.3); INSERT OR IGNORE dedupes
-                // against realtime samples and replayed drain batches.
-                let readings = samples.compactMap { sample -> Database.Reading? in
-                    guard let bpm = sample.bpm, (20...250).contains(bpm) else { return nil }
-                    return Database.Reading(
-                        peripheralUUID: bandUUID,
-                        tsMs: sample.tsMs,
-                        bpm: bpm,
-                        contact: sample.contact,
-                        rr: sample.rrMs.enumerated().map { index, ms in
-                            .init(seq: index, rrMs: ms, accepted: true)
-                        }
-                    )
-                }
-                if !readings.isEmpty {
-                    try db.insertReadings(readings)
-                }
-                // Half-open to the millisecond past the last record, so it is included (PLAN.md 10.1).
-                try db.deriveSleepSessions(
-                    from: min(spanMin, fromMs),
-                    to: max(spanMax, toMs) + 1,
-                    bandID: bandID,
-                    in: zone,
-                    computedAtMs: computedAtMs
-                )
-                // Stage the nights the drained batch touched. Session detection above runs over the
-                // whole span (so start_ms keys stay stable), but staging is bounded to sessions
-                // overlapping this batch: an unchanged older night keeps its persisted hypnogram.
-                // Sessions shorter than SleepStager.minimumSessionSeconds are skipped, and the
-                // current algorithm version lets unchanged windows be left alone.
-                let stagedSegments = try db.deriveSleepStageSegments(
-                    from: fromMs,
-                    to: toMs + 1,
-                    bandID: bandID,
-                    computedAtMs: computedAtMs
-                )
-                BandLog.tierB(.info, "app: stored batch; sleep derivation succeeded (\(stagedSegments) stage segment(s) written)")
-                return inserted
-            }
-            // Recompute minute metrics for the WHOLE drained batch range, not a short tail: a
-            // batch from a night's backlog can span hours, and a fresh worker's `recompute`
-            // lookback (30 min on its first run) would leave the earlier hours without rows,
-            // starving RHR/HRV/stress and the day rollups. The worker chunks by local day,
-            // oldest first, so each stress baseline sees the already-recomputed days. Skip when
-            // the batch deduped to zero new rows (a replayed/duplicate batch changes nothing).
-            if inserted > 0 {
-                _ = try await MetricsWorker(database: database)
-                    .recomputeBackfill(fromMs: fromMs, toMs: toMs, nowMs: computedAtMs)
-            }
-        } catch {
-            // A failed batch is safe to drop: the strap replays it until its ack lands, and the
-            // insert dedups on (band, timestamp) (PLAN.md 5.3.4).
-            BandLog.tierB(.error, "app: storeHistoricalRecords failed: \(String(describing: error))")
-        }
-        #if DEBUG
-        await Self.writeDebugDump(from: fromMs, to: toMs, in: database)
-        #endif
-    }
-
     #if DEBUG
     /// A consistent snapshot of the just-drained window plus the latest sessions, written as one
     /// JSON file. File copies of a live WAL database race with checkpoints, so a computer pulls
     /// this instead of `icarus.sqlite` to see what the app really stored.
-    private nonisolated static func writeDebugDump(from fromMs: Int64, to toMs: Int64, in database: AppDatabase) async {
+    nonisolated static func writeDebugDump(from fromMs: Int64, to toMs: Int64, in database: AppDatabase) async {
         struct Dump: Codable, Sendable {
             let fromMs: Int64
             let toMs: Int64
@@ -361,11 +256,6 @@ final class AppEnvironment {
         }
     }
     #endif
-
-    /// A sensor raw byte for the store: 0 means the strap recorded nothing (PLAN.md 10.2 v2).
-    private nonisolated static func raw(_ value: UInt16) -> Int? {
-        value == 0 ? nil : Int(value)
-    }
 
     /// Sync on launch, then on the foreground timer at the chosen interval (PLAN.md 11.2).
     func startSync() {

@@ -42,7 +42,13 @@ protocol FullHistoryDrainTransport: BandTransport {
     func fullHistorySummary() async -> String?
 }
 
+/// A transport that writes each drained history batch through a durable sink before acking it
+/// (`TierBController.setHistoricalSink`). Feature-detected with an `as?` like the others.
+protocol HistoricalSinkTransport: BandTransport {
+    func setHistoricalSink(_ sink: HistoricalSink?) async
+}
+
 // The transport-level bridge lives in BandKit (`CoreBluetoothTransport.setRealtimeRawFlood`),
 // which delegates to `TierBController.setRealtimeRawFlood(enabled:)`. With this conformance the
 // `as?` in `LiveState.setRealtimeRawFlood` matches and RawDataView's flood wiring is live.
-extension CoreBluetoothTransport: RealtimeRawFloodTransport, FullHistoryDrainTransport {}
+extension CoreBluetoothTransport: RealtimeRawFloodTransport, FullHistoryDrainTransport, HistoricalSinkTransport {}
