@@ -42,8 +42,8 @@ struct SleepStoreTests {
         )
     }
 
-    /// 240 two-minute records from 23:00 to 05:58 UTC, so the gaps (120 s) stay far below the
-    /// 30-minute split threshold.
+    /// 240 two-minute records from 23:00 to 06:58 UTC with a fixed wrist vector: eight still,
+    /// on-wrist hours that `SleepDetector` reads as one night.
     private func nightSamples() -> [Database.HistoricalSample] {
         stride(from: 0, to: 8 * 60 * 60, by: 120).map { offset in
             sample(nightStartMs + offset * 1000)
@@ -185,7 +185,8 @@ struct SleepStoreTests {
         let otherPeripheral = UUID()
         let otherSamples = nightSamples().map { sample in
             Database.HistoricalSample(
-                peripheralUUID: otherPeripheral, tsMs: sample.tsMs, version: 24, bpm: 60, contact: true, rrMs: []
+                peripheralUUID: otherPeripheral, tsMs: sample.tsMs, version: 24, bpm: 60, contact: true, rrMs: [],
+                gravityX: 0.012, gravityY: -0.031, gravityZ: 0.999
             )
         }
         _ = try database.writer.write { db in
@@ -207,6 +208,37 @@ struct SleepStoreTests {
         #expect(secondBandSessions.count == 1)
         #expect(secondBandSessions[0].restingHr == 60) // derived from the second band's rows only
         #expect(firstBandSessions.isEmpty) // deriving one band never writes the other's session
+    }
+
+    @Test func staleSessionsInTheRangeAreReplacedWithTheirHypnograms() throws {
+        let database = try seededDatabase()
+        try insertNight(database)
+        let bandID = try storedBandID(of: database)
+        let from = nightStartMs - 3_600_000
+        let to = nightStartMs + 9 * 3_600_000
+        // A version-1 "night": the whole worn evening, keyed an hour before the real night.
+        let staleStart = nightStartMs - 2_400_000
+        try database.writer.write { db in
+            try db.execute(sql: """
+                INSERT INTO sleep_session (band_id, start_ms, end_ms, duration_s, contact_fraction, quality,
+                  record_count, algo_version, computed_at)
+                VALUES (?, ?, ?, ?, 0.95, 'good', 26000, 1, ?)
+                """, arguments: [bandID, staleStart, nightStartMs + 20 * 3_600_000, 20 * 3600 + 2400, testNowMs])
+            try db.replaceSleepStageSegments(
+                [StageSegment(startUnix: staleStart / 1000, endUnix: staleStart / 1000 + 600, stage: .light)],
+                bandID: bandID, sessionStartMs: staleStart, computedAtMs: testNowMs
+            )
+            try db.deriveSleepSessions(from: from, to: to, bandID: bandID, in: Self.utc, computedAtMs: testNowMs)
+        }
+
+        let (sessions, staleSegments) = try database.writer.read { db in
+            (
+                try db.sleepSessionRows(bandID: bandID, from: from, to: to),
+                try db.sleepStageSegmentRows(bandID: bandID, sessionStartMs: staleStart)
+            )
+        }
+        #expect(sessions.map(\.startMs) == [nightStartMs])
+        #expect(staleSegments.isEmpty)
     }
 
     @Test func aRangeWithoutRecordsWritesNothing() throws {

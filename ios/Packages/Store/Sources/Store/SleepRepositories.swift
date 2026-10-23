@@ -195,12 +195,17 @@ extension Database {
         return written
     }
 
-    /// Derives and stores sleep sessions for the records in `[fromMs, toMs)`.
+    /// Re-derives the sleep sessions that start in `[fromMs, toMs)`.
     ///
-    /// The read is widened by `SleepDeriver.maxGapSeconds` on both sides so a session straddling
-    /// the range edge is derived whole, then only sessions overlapping the requested range are
-    /// written. That makes day-by-day incremental recomputes stable: a night recomputed after more
-    /// records landed replaces its earlier partial row.
+    /// `SleepDetector` runs over the range widened by `SleepDeriver.contextSeconds` on both sides, so
+    /// a night crossing the range edge is seen whole and the HR baseline has its day of context. The
+    /// range's stored sessions are then REPLACED: a session the new detection no longer produces is
+    /// deleted with its hypnogram (a night whose start moved as records landed must not linger under
+    /// its old key), and the detected ones are upserted. An unchanged session keeps its hypnogram, so
+    /// `deriveSleepStageSegments` leaves it alone.
+    ///
+    /// Detection reads only timestamp, HR, contact and gravity; the full rows (R-R JSON included) are
+    /// read for the detected windows alone. Returns the number of session rows written.
     @discardableResult
     public func deriveSleepSessions(
         from fromMs: Int64,
@@ -209,12 +214,66 @@ extension Database {
         in timeZone: TimeZone,
         computedAtMs: Int64
     ) throws -> Int {
-        let margin = SleepDeriver.maxGapSeconds * 1000
-        let rows = try historicalRecordRows(bandID: bandID, from: fromMs - margin, to: toMs + margin)
-        let sessions = SleepDeriver.derive(rows.map(\.sleepRecord), in: timeZone).filter { session in
-            session.endUnix * 1000 >= fromMs && session.startUnix * 1000 < toMs
+        guard toMs > fromMs else { return 0 }
+        let context = SleepDeriver.contextSeconds * 1000
+        let detection = try sleepDetectionRecords(bandID: bandID, from: fromMs - context, to: toMs + context)
+        let windows = SleepDetector.detect(detection, in: timeZone).filter { window in
+            window.startUnix * 1000 >= fromMs && window.startUnix * 1000 < toMs
+        }
+        let sessions = try windows.compactMap { window -> SleepSession? in
+            let rows = try historicalRecordRows(
+                bandID: bandID,
+                from: window.startUnix * 1000,
+                to: window.endUnix * 1000 + 1
+            )
+            return SleepDeriver.summarize(rows.map(\.sleepRecord), startUnix: window.startUnix, endUnix: window.endUnix)
+        }
+
+        // Drop the range's sessions the detection no longer produces, hypnograms first.
+        let kept = Set(sessions.map { $0.startUnix * 1000 })
+        let stale = try Int64.fetchAll(self, sql: """
+            SELECT start_ms FROM sleep_session WHERE band_id = ? AND start_ms >= ? AND start_ms < ?
+            """, arguments: [bandID, fromMs, toMs]).filter { !kept.contains($0) }
+        for startMs in stale {
+            try execute(
+                sql: "DELETE FROM sleep_stage_segment WHERE band_id = ? AND session_start_ms = ?",
+                arguments: [bandID, startMs]
+            )
+            try execute(
+                sql: "DELETE FROM sleep_session WHERE band_id = ? AND start_ms = ?",
+                arguments: [bandID, startMs]
+            )
         }
         return try insertSleepSessions(sessions, bandID: bandID, computedAtMs: computedAtMs)
+    }
+
+    /// The detection inputs for `[fromMs, toMs)`, ascending: timestamp, HR, contact and gravity
+    /// only. A raw cursor rather than `HistoricalRecordRow`, because detection reads days of 1 Hz
+    /// records and must not pay for decoding every row's R-R JSON.
+    public func sleepDetectionRecords(bandID: String, from fromMs: Int64, to toMs: Int64) throws -> [SleepRecord] {
+        let cursor = try Row.fetchCursor(self, sql: """
+            SELECT ts_ms, bpm, contact, gravity_x, gravity_y, gravity_z FROM historical_record
+            WHERE band_id = ? AND ts_ms >= ? AND ts_ms < ? ORDER BY ts_ms
+            """, arguments: [bandID, fromMs, toMs])
+        var records: [SleepRecord] = []
+        while let row = try cursor.next() {
+            let tsMs: Int64 = row[0]
+            let bpm: Int? = row[1]
+            let contact: Int? = row[2]
+            let x: Double? = row[3], y: Double? = row[4], z: Double? = row[5]
+            var gravity: SleepRecord.Gravity?
+            if let x, let y, let z {
+                gravity = SleepRecord.Gravity(x: x, y: y, z: z)
+            }
+            records.append(SleepRecord(
+                unixSeconds: tsMs / 1000,
+                bpm: bpm.map { Double($0) },
+                rrMs: [],
+                skinContact: contact == 1,
+                gravity: gravity
+            ))
+        }
+        return records
     }
 
     // MARK: Sleep stage segments

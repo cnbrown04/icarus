@@ -76,7 +76,7 @@ public struct HistoricalRecordRow: Codable, Equatable, Sendable, FetchableRecord
         return values
     }
 
-    /// Derivation input for `SleepDeriver`.
+    /// Summary input for `SleepDeriver` (the full row, R-R included).
     public var sleepRecord: SleepRecord {
         SleepRecord(
             unixSeconds: tsMs / 1000,
@@ -84,8 +84,15 @@ public struct HistoricalRecordRow: Codable, Equatable, Sendable, FetchableRecord
             rrMs: rrMs ?? [],
             skinContact: contact ?? false,
             respRateRaw: respRateRaw.map { Double($0) },
-            skinTempRaw: skinTempRaw.map { Double($0) }
+            skinTempRaw: skinTempRaw.map { Double($0) },
+            gravity: gravity
         )
+    }
+
+    /// The primary gravity vector, or nil for rows written before v3.
+    public var gravity: SleepRecord.Gravity? {
+        guard let gravityX, let gravityY, let gravityZ else { return nil }
+        return SleepRecord.Gravity(x: gravityX, y: gravityY, z: gravityZ)
     }
 }
 
