@@ -7,6 +7,8 @@ struct RestingHRTests {
     private let chicago = TimeZone(identifier: "America/Chicago")!
     private let oct8 = LocalDay(year: 2026, month: 10, day: 8)
 
+    private var nightsWithoutSleep: SleepNights { SleepNights(sleep: [], in: chicago) }
+
     private func minute(_ index: Int64, _ hr: Double, n: Int = 60) -> MinuteAggregate {
         MinuteAggregate(minuteMs: index * 60_000, hrAvg: hr, hrMin: 0, hrMax: 0, hrN: n)
     }
@@ -50,7 +52,7 @@ struct RestingHRTests {
         // Minutes 02:00 to 02:04 local at 55 bpm. The window mean is (55 * 5) / 5 = 55.
         let start = LocalTime.localTime(oct8, hour: 2, in: chicago)
         let minutes = (0..<5).map { MinuteAggregate(minuteMs: start + Int64($0) * 60_000, hrAvg: 55, hrMin: 0, hrMax: 0, hrN: 60) }
-        #expect(RestingHR.forNight(of: oct8, minutes: minutes, in: chicago) == 55)
+        #expect(RestingHR.forNight(of: oct8, minutes: minutes, nights: nightsWithoutSleep) == 55)
     }
 
     @Test func minutesFromSixAreOutsideTheNight() {
@@ -59,7 +61,7 @@ struct RestingHRTests {
         let at0600 = LocalTime.localTime(oct8, hour: 6, in: chicago)
         let minutes = (0..<5).map { MinuteAggregate(minuteMs: at0555 + Int64($0) * 60_000, hrAvg: 66, hrMin: 0, hrMax: 0, hrN: 60) }
             + (0..<5).map { MinuteAggregate(minuteMs: at0600 + Int64($0) * 60_000, hrAvg: 45, hrMin: 0, hrMax: 0, hrN: 60) }
-        #expect(RestingHR.forNight(of: oct8, minutes: minutes, in: chicago) == 66)
+        #expect(RestingHR.forNight(of: oct8, minutes: minutes, nights: nightsWithoutSleep) == 66)
     }
 
     @Test func springForwardNightEndsAtSixLocal() {
@@ -68,6 +70,19 @@ struct RestingHRTests {
         let day = LocalDay(year: 2026, month: 3, day: 8)
         let at0600 = LocalTime.localTime(day, hour: 6, in: chicago)
         let minutes = (0..<5).map { MinuteAggregate(minuteMs: at0600 + Int64($0) * 60_000, hrAvg: 40, hrMin: 0, hrMax: 0, hrN: 60) }
-        #expect(RestingHR.forNight(of: day, minutes: minutes, in: chicago) == nil)
+        #expect(RestingHR.forNight(of: day, minutes: minutes, nights: nightsWithoutSleep) == nil)
+    }
+
+    @Test func nightIsTheDetectedMainSleepThatEndedThatDay() {
+        // Main sleep 23:00 Oct 7 to 07:00 Oct 8. The 23:30 run at 48 bpm is inside it but outside the
+        // 00:00-06:00 fallback. The 03:00 run at 55 bpm is inside both.
+        let sleepStart = LocalTime.localTime(LocalTime.adding(days: -1, to: oct8), hour: 23, in: chicago)
+        let sleepEnd = LocalTime.localTime(oct8, hour: 7, in: chicago)
+        let nights = SleepNights(sleep: [SleepSpan(startMs: sleepStart, endMs: sleepEnd, isNap: false)], in: chicago)
+        let early = (0..<5).map { MinuteAggregate(minuteMs: sleepStart + 30 * 60_000 + Int64($0) * 60_000, hrAvg: 48, hrMin: 0, hrMax: 0, hrN: 60) }
+        let at0300 = LocalTime.localTime(oct8, hour: 3, in: chicago)
+        let late = (0..<5).map { MinuteAggregate(minuteMs: at0300 + Int64($0) * 60_000, hrAvg: 55, hrMin: 0, hrMax: 0, hrN: 60) }
+        #expect(RestingHR.forNight(of: oct8, minutes: early + late, nights: nights) == 48)
+        #expect(RestingHR.forNight(of: oct8, minutes: early + late, nights: nightsWithoutSleep) == 55)
     }
 }

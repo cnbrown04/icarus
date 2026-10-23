@@ -1,6 +1,6 @@
 import Foundation
 
-/// Resting heart rate per local night (PLAN.md 8.1). A proxy until sleep detection exists.
+/// Resting heart rate per local night (PLAN.md 8.1). The night is the detected main sleep (`SleepNights`).
 public enum RestingHR {
     public static let windowMinutes = 5
     /// Every minute in the run must have coverage >= 0.8 (at least 48 of 60 samples).
@@ -27,8 +27,8 @@ public enum RestingHR {
         return lowest
     }
 
-    /// RHR for the local night of `day`, 00:00 to 06:00 in `timeZone`.
-    public static func forNight(of day: LocalDay, minutes: [MinuteAggregate], in timeZone: TimeZone) -> Double? {
-        lowestWindowMean(minutes, in: LocalTime.nightWindow(of: day, in: timeZone))
+    /// RHR for the night of `day`: the main sleep that ended on `day`, else 00:00 to 06:00 local.
+    public static func forNight(of day: LocalDay, minutes: [MinuteAggregate], nights: SleepNights) -> Double? {
+        lowestWindowMean(minutes, in: nights.window(of: day))
     }
 }

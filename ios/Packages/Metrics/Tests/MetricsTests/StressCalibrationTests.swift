@@ -30,7 +30,7 @@ struct StressCalibrationTests {
 
     private func progress(_ windows: [FiveMinuteWindow]) -> StressCalibrationProgress {
         Stress.calibrationProgress(
-            windows: windows, day: oct8, in: chicago, restingHR: 60, maxHR: 180
+            windows: windows, day: oct8, nights: SleepNights(sleep: [], in: chicago), restingHR: 60, maxHR: 180
         )
     }
 
@@ -135,7 +135,7 @@ struct StressCalibrationTests {
             windows += night(offset: offset, valid: 0)
         }
         let baseline = StressBaseline.build(
-            windows: windows, day: oct8, in: chicago, restingHR: 60, maxHR: 180
+            windows: windows, day: oct8, nights: SleepNights(sleep: [], in: chicago), restingHR: 60, maxHR: 180
         )
         let progress = progress(windows)
         #expect(progress.qualifyingDays == baseline.validDays)

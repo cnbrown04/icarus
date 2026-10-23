@@ -118,7 +118,7 @@ struct StressTests {
         nights(offset: 15, valid: 12, hr: 150)
         nights(offset: 0, valid: 12, hr: 200)
 
-        let b = StressBaseline.build(windows: windows, day: oct8, in: chicago, restingHR: 60, maxHR: 180)
+        let b = StressBaseline.build(windows: windows, day: oct8, nights: SleepNights(sleep: [], in: chicago), restingHR: 60, maxHR: 180)
         #expect(b.validDays == 7)
         #expect(b.hrOnlyDays == 13)
         // Offsets 15 and 0 are excluded, so the 60 bpm nights are the only values and the median is 60.
@@ -140,7 +140,7 @@ struct StressTests {
             startMs: start + 11 * 300_000, hrMean: 130, rrCount: 0, rrSumMs: 0, valid: true,
             rmssd: nil, sdnn: nil, lnRmssd: 3.4, baevskySqrt: nil
         ))
-        let b = StressBaseline.build(windows: windows, day: oct8, in: chicago, restingHR: 60, maxHR: 180)
+        let b = StressBaseline.build(windows: windows, day: oct8, nights: SleepNights(sleep: [], in: chicago), restingHR: 60, maxHR: 180)
         #expect(b.validDays == 0)
     }
 }

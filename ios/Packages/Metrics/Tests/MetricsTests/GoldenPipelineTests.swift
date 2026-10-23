@@ -293,7 +293,7 @@ struct GoldenPipelineTests {
         #expect(golden.rhrCases.count >= 5)
         for c in golden.rhrCases {
             let tz = try timeZone(c.tz)
-            let got = RestingHR.forNight(of: c.localDay.localDay, minutes: c.minutes.map(\.minute), in: tz)
+            let got = RestingHR.forNight(of: c.localDay.localDay, minutes: c.minutes.map(\.minute), nights: SleepNights(sleep: [], in: tz))
             expectClose(got, c.expected.rhr, tolerance: golden.tolerance, "\(c.name): rhr")
         }
     }
@@ -360,7 +360,7 @@ struct GoldenPipelineTests {
             let baseline = StressBaseline.build(
                 windows: c.history.map(\.window),
                 day: c.day.localDay,
-                in: tz,
+                nights: SleepNights(sleep: [], in: tz),
                 restingHR: c.restingHr,
                 maxHR: c.maxHr
             )
@@ -393,7 +393,7 @@ struct GoldenPipelineTests {
             let baseline = StressBaseline.build(
                 windows: c.history.map(\.window),
                 day: c.day.localDay,
-                in: tz,
+                nights: SleepNights(sleep: [], in: tz),
                 restingHR: c.restingHr,
                 maxHR: c.maxHr
             )

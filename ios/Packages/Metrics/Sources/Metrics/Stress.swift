@@ -37,7 +37,8 @@ public struct StressResult: Sendable, Equatable {
 
 /// Personal baselines from the 14 local days before the scored day (PLAN.md 8.3).
 ///
-/// Night windows are those starting in [00:00, 06:00) local. Windows in exertion are excluded.
+/// Night windows are those starting inside each lookback day's night: its main sleep when one was
+/// detected (`SleepNights`), else 00:00–06:00 local. Windows in exertion are excluded.
 /// Two baselines exist. The R-R baseline uses valid windows and drives the value state.
 /// The HR-only baseline uses every window with HR and drives the hr_only fallback.
 public struct StressBaseline: Sendable, Equatable {
@@ -77,7 +78,7 @@ public struct StressBaseline: Sendable, Equatable {
     public static func build(
         windows: [FiveMinuteWindow],
         day: LocalDay,
-        in timeZone: TimeZone,
+        nights: SleepNights,
         restingHR: Double?,
         maxHR: Double
     ) -> StressBaseline {
@@ -88,7 +89,7 @@ public struct StressBaseline: Sendable, Equatable {
         var hrOnlyHR: [Double] = []
 
         for night in Stress.nightWindows(
-            windows, day: day, in: timeZone, restingHR: restingHR, maxHR: maxHR
+            windows, day: day, nights: nights, restingHR: restingHR, maxHR: maxHR
         ) {
             if night.valid.count >= Stress.minNightWindowsPerDay {
                 validDays += 1
@@ -116,7 +117,7 @@ public struct StressBaseline: Sendable, Equatable {
 
 /// One night in the stress baseline lookback, as seen by `Stress.calibrationProgress`.
 public struct StressNightProgress: Sendable, Equatable, Identifiable {
-    /// Local day whose night is counted (00:00-06:00 local on that day).
+    /// Local day whose night is counted (the main sleep that ended that day, else 00:00-06:00 local).
     public let day: LocalDay
     /// Nights before the scored day this night is. 1 is the night immediately before it.
     public let offset: Int
@@ -206,13 +207,13 @@ public enum Stress {
     static func nightWindows(
         _ windows: [FiveMinuteWindow],
         day: LocalDay,
-        in timeZone: TimeZone,
+        nights: SleepNights,
         restingHR: Double?,
         maxHR: Double
     ) -> [NightWindows] {
         (1...lookbackDays).map { offset in
             let nightDay = LocalTime.adding(days: -offset, to: day)
-            let night = LocalTime.nightWindow(of: nightDay, in: timeZone)
+            let night = nights.window(of: nightDay)
             let eligible = windows.filter {
                 night.contains($0.startMs)
                     && !HeartRateZones.isExertion(hr: $0.hrMean, restingHR: restingHR, maxHR: maxHR)
@@ -231,12 +232,12 @@ public enum Stress {
     public static func calibrationProgress(
         windows: [FiveMinuteWindow],
         day: LocalDay,
-        in timeZone: TimeZone,
+        nights: SleepNights,
         restingHR: Double?,
         maxHR: Double
     ) -> StressCalibrationProgress {
-        let nights = nightWindows(
-            windows, day: day, in: timeZone, restingHR: restingHR, maxHR: maxHR
+        let lookback = nightWindows(
+            windows, day: day, nights: nights, restingHR: restingHR, maxHR: maxHR
         ).map { night in
             StressNightProgress(
                 day: night.day,
@@ -247,11 +248,11 @@ public enum Stress {
             )
         }
         return StressCalibrationProgress(
-            qualifyingDays: nights.filter(\.qualifiesForRR).count,
+            qualifyingDays: lookback.filter(\.qualifiesForRR).count,
             requiredDays: minQualifyingDays,
             lookbackDays: lookbackDays,
-            hrOnlyDays: nights.filter(\.qualifiesForHROnly).count,
-            nights: nights
+            hrOnlyDays: lookback.filter(\.qualifiesForHROnly).count,
+            nights: lookback
         )
     }
 
