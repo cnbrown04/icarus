@@ -301,6 +301,10 @@ enum Dashboard {
             /// Session start in epoch ms, also the row's identity.
             let id: Int64
             let startMs: Int64
+            /// The band the session belongs to; the sleep-edit writes are band-scoped.
+            let bandID: String
+            /// True when the bed or wake time was corrected by hand (a `sleep_edit` retime).
+            let isEdited: Bool
             let durationS: Int64
             /// True for a daytime nap. Naps are listed, but they never stand in for last night.
             let isNap: Bool
@@ -374,6 +378,8 @@ enum Dashboard {
                 return SleepSnapshot.Night(
                     id: entry.row.startMs,
                     startMs: entry.row.startMs,
+                    bandID: entry.bandID,
+                    isEdited: try isCorrected(entry.row.startMs, bandID: entry.bandID, in: db),
                     durationS: entry.row.durationS,
                     isNap: entry.row.isNap,
                     restingHR: entry.row.restingHr,
@@ -385,6 +391,11 @@ enum Dashboard {
                 )
             }
         return SleepSnapshot(context: context, nights: nights)
+    }
+
+    /// True when the night at `startMs` shows a hand-corrected bed or wake time (a retime keyed by it).
+    private static func isCorrected(_ startMs: Int64, bandID: String, in db: Database) throws -> Bool {
+        try db.sleepEdits(bandID: bandID).contains { $0.kindValue == .retime && $0.newStartMs == startMs }
     }
 
     // MARK: Trends

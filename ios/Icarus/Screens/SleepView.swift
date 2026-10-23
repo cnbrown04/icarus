@@ -9,6 +9,10 @@ struct SleepView: View {
     let environment: AppEnvironment
 
     @State private var snapshot: Dashboard.SleepSnapshot?
+    /// The night whose bed and wake times are being corrected (`SleepEditView`).
+    @State private var editing: Dashboard.SleepSnapshot.Night?
+    /// Bumped after a correction is stored, to reload the list at once.
+    @State private var refreshToken = 0
 
     private var timeZone: TimeZone {
         snapshot?.context.timeZone ?? Dashboard.fallbackZone
@@ -33,11 +37,16 @@ struct SleepView: View {
             }
         }
         .navigationTitle("Sleep")
-        .task {
+        .task(id: refreshToken) {
             for await value in environment.snapshots(every: .seconds(60), { db, nowMs in
                 try Dashboard.sleep(db, nowMs: nowMs)
             }) {
                 snapshot = value
+            }
+        }
+        .sheet(item: $editing) { night in
+            SleepEditView(environment: environment, night: night, timeZone: timeZone) {
+                refreshToken += 1
             }
         }
     }
@@ -49,6 +58,10 @@ struct SleepView: View {
         Section {
             nightStages(night)
             nightFacts(night, timeZone: timeZone)
+            Button("Edit times") {
+                editing = night
+            }
+            .accessibilityIdentifier("sleep.editTimes")
         } header: {
             nightTitle(night)
         }
@@ -61,6 +74,12 @@ struct SleepView: View {
                 SleepNightDetailView(night: night, timeZone: timeZone)
             } label: {
                 priorNightLabel(night)
+            }
+            .swipeActions(edge: .trailing) {
+                Button("Edit times") {
+                    editing = night
+                }
+                .tint(.blue)
             }
         } header: {
             nightTitle(night)
