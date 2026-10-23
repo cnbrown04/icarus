@@ -1,4 +1,5 @@
 import Metrics
+import Store
 import SwiftUI
 
 /// The last 7 days of derived sleep sessions (PLAN.md 8.1, 10.2 v2), main sleep and naps. Sessions come from
@@ -58,6 +59,9 @@ struct SleepView: View {
         Section {
             nightStages(night)
             nightFacts(night, timeZone: timeZone)
+            if let scores = snapshot?.latestScores {
+                nightScores(scores)
+            }
             Button("Edit times") {
                 editing = night
             }
@@ -194,7 +198,7 @@ private func nightFacts(_ night: Dashboard.SleepSnapshot.Night, timeZone: TimeZo
         Text(Format.sleepQuality(night.quality))
             .foregroundStyle(Palette.sleepQuality(night.quality))
     }
-    LabeledContent("Median HR") {
+    LabeledContent("Resting HR") {
         Text(night.restingHR.map { Format.number($0, unit: "bpm") } ?? "--")
             .monospacedDigit()
     }
@@ -202,6 +206,37 @@ private func nightFacts(_ night: Dashboard.SleepSnapshot.Night, timeZone: TimeZo
         Text(night.rmssdMs.map { Format.number($0, unit: "ms") } ?? "--")
             .monospacedDigit()
     }
+}
+
+/// Sleep coaching, breathing and regularity for the latest night. Estimates from published methods
+/// (OpenStrap / NOOP ports), not WHOOP's proprietary Sleep Performance.
+@ViewBuilder
+private func nightScores(_ scores: DailyScores) -> some View {
+    if let sleep = scores.sleep {
+        LabeledContent("Sleep performance") {
+            Text(Format.percent(sleep.performancePct / 100))
+                .monospacedDigit()
+        }
+        LabeledContent("Sleep need") {
+            Text(Format.duration(Int64(sleep.needSec)))
+                .monospacedDigit()
+        }
+        LabeledContent("Sleep debt") {
+            Text(sleep.debtBalanceSec < 0 ? Format.duration(Int64(-sleep.debtBalanceSec)) : "None")
+                .monospacedDigit()
+        }
+    }
+    LabeledContent("Respiratory rate") {
+        Text(scores.respiratoryRateBrpm.map { Format.number($0, unit: "br/min") } ?? "--")
+            .monospacedDigit()
+    }
+    LabeledContent("Regularity (7 days)") {
+        Text(scores.sleepRegularityIndex.map { "\(Int($0.rounded()))" } ?? "--")
+            .monospacedDigit()
+    }
+    Text("Performance, need, debt and breathing are estimates from heart rate and motion, not WHOOP's scores. Breathing is read from heart-rhythm variation and stays blank when the signal is too thin.")
+        .font(.footnote)
+        .foregroundStyle(.secondary)
 }
 
 /// The night is labelled by the day it started (PLAN.md 8.1's evening-to-morning window). A nap says so.

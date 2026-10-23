@@ -334,6 +334,9 @@ enum Dashboard {
         let context: Context
         /// Sessions overlapping the last 7 local days, newest first.
         let nights: [Night]
+        /// Recovery, strain, sleep coaching and regularity for the day the latest main sleep ended
+        /// (`Database.dailyScores`). Nil with no main sleep.
+        let latestScores: DailyScores?
 
         /// The most recent main sleep, for Home and Today. Naps are skipped, so a nap taken after a night's
         /// sleep does not replace it.
@@ -390,7 +393,11 @@ enum Dashboard {
                     efficiency: efficiency
                 )
             }
-        return SleepSnapshot(context: context, nights: nights)
+        let latestScores = try nights.first(where: { !$0.isNap }).map { night in
+            let wakeDay = LocalTime.localDay(containing: night.startMs + night.durationS * 1000, in: context.timeZone)
+            return try db.dailyScores(day: wakeDay, in: context.timeZone)
+        }
+        return SleepSnapshot(context: context, nights: nights, latestScores: latestScores)
     }
 
     /// True when the night at `startMs` shows a hand-corrected bed or wake time (a retime keyed by it).

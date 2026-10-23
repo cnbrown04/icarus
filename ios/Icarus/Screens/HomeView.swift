@@ -10,6 +10,8 @@ private struct HomeSnapshot: Sendable {
     let today: Dashboard.TodaySnapshot
     let sleep: Dashboard.SleepSnapshot
     let calibration: StressCalibrationProgress
+    /// Today's scores; strain accrues all day even when no night ended today.
+    let todayScores: DailyScores
 }
 
 /// The morning dashboard: last night, today's vitals, activity and the next alarm. Home is a summary
@@ -29,6 +31,7 @@ struct HomeView: View {
             TimelineView(.everyMinute) { _ in
                 VStack(alignment: .leading, spacing: Spacing.s24) {
                     greetingHeader
+                    scoresRow
                     lastNightCard
                     vitalsRow
                     activityCard
@@ -54,7 +57,8 @@ struct HomeView: View {
                     return HomeSnapshot(
                         today: today,
                         sleep: try Dashboard.sleep(db, nowMs: now),
-                        calibration: try Dashboard.stressCalibration(db, nowMs: now, context: today.context)
+                        calibration: try Dashboard.stressCalibration(db, nowMs: now, context: today.context),
+                        todayScores: try db.dailyScores(day: today.context.today, in: today.context.timeZone)
                     )
                 }) {
                     snapshot = value
@@ -188,6 +192,96 @@ struct HomeView: View {
     private func sleepWindow(_ night: Dashboard.SleepSnapshot.Night) -> String {
         let wakeMs = night.startMs + night.durationS * 1_000
         return "\(Format.clock(night.startMs, in: sleepTimeZone)) – \(Format.clock(wakeMs, in: sleepTimeZone))"
+    }
+
+    // MARK: Recovery and strain
+
+    private var scores: DailyScores? {
+        snapshot?.sleep.latestScores
+    }
+
+    /// Recovery from last night and today's strain, side by side (stacked at the largest text sizes).
+    private var scoresRow: some View {
+        Group {
+            if dynamicTypeSize >= .xxxLarge {
+                VStack(spacing: Spacing.s8) { scoreTiles }
+            } else {
+                HStack(alignment: .top, spacing: Spacing.s8) { scoreTiles }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var scoreTiles: some View {
+        NavigationLink {
+            SleepView(environment: environment)
+        } label: {
+            HomeVitalTile(
+                title: "Recovery",
+                symbol: "bolt.heart.fill",
+                tint: recoveryTint,
+                value: recoveryValue,
+                unit: recoveryScore == nil ? nil : "%",
+                caption: recoveryCaption,
+                accessibilityLabel: "Recovery",
+                accessibilityValue: "\(recoveryValue) percent, \(recoveryCaption)"
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens sleep")
+
+        NavigationLink {
+            HeartRateDetailView(environment: environment)
+        } label: {
+            HomeVitalTile(
+                title: "Strain",
+                symbol: "flame.fill",
+                tint: Palette.strain,
+                value: strainValue,
+                unit: todayStrain == nil ? nil : "/ 21",
+                caption: todayStrain == nil ? "No data yet" : "Today so far",
+                accessibilityLabel: "Strain",
+                accessibilityValue: todayStrain == nil ? "No data yet" : "\(strainValue) of 21, today so far"
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens heart rate")
+    }
+
+    /// Recovery needs 14 baseline nights before it is trusted (OpenStrap's bar; NOOP scores from 4).
+    private static let recoveryTrustedNights = 14
+
+    private var recoveryScore: Recovery.Score? {
+        if case let .scored(score) = scores?.recovery { return score }
+        return nil
+    }
+
+    private var recoveryValue: String {
+        recoveryScore.map { "\(Int($0.score.rounded()))" } ?? "—"
+    }
+
+    private var recoveryCaption: String {
+        switch scores?.recovery {
+        case let .scored(score)?:
+            let nights = score.hrvBaseline.nValid
+            return nights < Self.recoveryTrustedNights ? "Calibrating · \(nights)/\(Self.recoveryTrustedNights) nights" : "From last night"
+        case let .insufficientBaseline(_, validNights)?:
+            return "Calibrating · \(validNights)/\(Self.recoveryTrustedNights) nights"
+        case nil:
+            return "No night yet"
+        }
+    }
+
+    private var recoveryTint: Color {
+        recoveryScore.map { Palette.recovery($0.band) } ?? Palette.neutral
+    }
+
+    private var todayStrain: DayStrain? {
+        snapshot?.todayScores.strain
+    }
+
+    private var strainValue: String {
+        todayStrain.map { String(format: "%.1f", $0.whoopScale) } ?? "—"
     }
 
     // MARK: Vitals

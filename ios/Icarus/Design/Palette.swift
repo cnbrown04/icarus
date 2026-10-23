@@ -10,6 +10,16 @@ enum Palette {
     static let heartRate = Color.pink
     static let hrv = Color.indigo
     static let sleep = Color.teal
+    static let strain = Color.blue
+
+    /// Recovery bands use the familiar red / yellow / green.
+    static func recovery(_ band: Recovery.Band) -> Color {
+        switch band {
+        case .red: .red
+        case .yellow: .yellow
+        case .green: .green
+        }
+    }
     static let stressLow = Color.green
     static let stressModerate = Color.yellow
     static let stressHigh = Color.red
