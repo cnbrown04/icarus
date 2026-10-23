@@ -110,6 +110,8 @@ public struct SleepSessionRow: Codable, Equatable, Sendable, FetchableRecord {
     public var rmssdMs: Double?
     /// Median of the raw respiratory-rate bytes ([Unverified] mapping to breaths/minute).
     public var respRateRaw: Double?
+    /// Respiratory rate in breaths/min, estimated from R-R (v7). Nil when the session had too little R-R.
+    public var respRateBrpm: Double?
     /// Median of the raw skin-temperature bytes ([Unverified] mapping to celsius).
     public var skinTempRaw: Double?
     /// Fraction of session records with skin contact, 0...1.
@@ -131,6 +133,7 @@ public struct SleepSessionRow: Codable, Equatable, Sendable, FetchableRecord {
         case restingHr = "resting_hr"
         case rmssdMs = "rmssd_ms"
         case respRateRaw = "resp_rate_raw"
+        case respRateBrpm = "resp_rate_brpm"
         case skinTempRaw = "skin_temp_raw"
         case contactFraction = "contact_fraction"
         case quality

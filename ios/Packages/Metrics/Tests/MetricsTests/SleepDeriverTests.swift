@@ -197,4 +197,45 @@ struct SleepDeriverTests {
     @Test func anEmptyStreamYieldsNothing() {
         #expect(SleepDeriver.derive([], in: Self.utc).isEmpty)
     }
+
+    // MARK: Respiratory rate
+
+    /// One record per beat of a stream whose R-R is modulated at `brpm`, each stamped with its whole second as
+    /// the strap writes it, so the estimator sees the real timestamp resolution.
+    private func rsaRecords(brpm: Double, seconds: Double, start: Int64) -> [SleepRecord] {
+        let f = brpm / 60
+        var records: [SleepRecord] = []
+        var t = 0.0
+        while t < seconds {
+            let rr = 1_000 + 40 * sin(2 * Double.pi * f * t)
+            records.append(SleepRecord(unixSeconds: start + Int64(t), bpm: 60_000 / rr, rrMs: [rr], skinContact: true))
+            t += rr / 1_000
+        }
+        return records
+    }
+
+    @Test func respiratoryRateIsEstimatedFromTheRRIntervals() throws {
+        let start = unix(2026, 10, 15, 23, 0)
+        let records = rsaRecords(brpm: 15, seconds: 2_400, start: start)
+        let session = try #require(SleepDeriver.summarize(records, startUnix: start, endUnix: start + 2_400))
+        let rate = try #require(session.respiratoryRateBrpm)
+        #expect(abs(rate - 15) <= 1, "estimated \(rate)")
+    }
+
+    @Test func respiratoryRateIsNilWithoutRR() throws {
+        let start = unix(2026, 10, 15, 23, 0)
+        let records = run(from: start, until: start + 2_400, cadence: 1) { record($0, rr: []) }
+        let session = try #require(SleepDeriver.summarize(records, startUnix: start, endUnix: start + 2_400))
+        #expect(session.respiratoryRateBrpm == nil)
+    }
+
+    @Test func offWristRRDoesNotFeedTheRespiratoryRate() throws {
+        let start = unix(2026, 10, 15, 23, 0)
+        // Every record is off-wrist (no heart rate), so none of its R-R may reach the estimator.
+        let records = rsaRecords(brpm: 15, seconds: 2_400, start: start).map {
+            SleepRecord(unixSeconds: $0.unixSeconds, bpm: nil, rrMs: $0.rrMs, skinContact: false)
+        }
+        let session = try #require(SleepDeriver.summarize(records, startUnix: start, endUnix: start + 2_400))
+        #expect(session.respiratoryRateBrpm == nil)
+    }
 }

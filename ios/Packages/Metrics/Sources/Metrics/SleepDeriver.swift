@@ -86,6 +86,10 @@ public struct SleepSession: Sendable, Equatable {
     public let respRateRawMedian: Double?
     /// Median of the raw skin-temperature bytes. [Unverified] mapping to celsius.
     public let skinTempRawMedian: Double?
+    /// Whole-session respiratory rate, breaths/min, estimated from the on-wrist R-R intervals by
+    /// `RespiratoryRate.nightEstimate` (RSA). Nil when the R-R coverage or agreement is too weak. This is an
+    /// on-device estimate from heart-timing modulation, not a clinical measurement.
+    public let respiratoryRateBrpm: Double?
     /// Fraction of session records that saw skin contact, 0...1.
     public let contactFraction: Double
     public let quality: SleepQuality
@@ -104,11 +108,12 @@ public struct SleepSession: Sendable, Equatable {
 /// This is a clearly-labelled proxy derived from published methods, not a WHOOP sleep score
 /// (PLAN.md §79 "we compute our own clearly labelled metrics").
 public enum SleepDeriver {
-    /// Algorithm version stored with every derived row (PLAN.md 8.5). 3 = session RHR is the lowest gated
+    /// Algorithm version stored with every derived row (PLAN.md 8.5). 4 = session respiratory rate from the
+    /// on-wrist R-R (RSA); 3 = session RHR is the lowest gated
     /// 5-minute bin and RMSSD is the mean of per-window RMSSD, plus the nap flag; 2 = `SleepDetector`
     /// windows with the older median RHR and whole-session RMSSD; 1 was "any contiguous worn run touching
     /// 21:00–06:00", which made whole days into nights.
-    public static let algoVersion = 3
+    public static let algoVersion = 4
 
     /// Context a derivation must read on each side of the span it rewrites: the longest window
     /// (`SleepDetector.maxSleepSeconds`) plus the detector's day of HR baseline context.
@@ -161,6 +166,12 @@ public enum SleepDeriver {
         let beats = onWrist.map { (unixSeconds: $0.unixSeconds, rrMs: $0.rrMs) }
         let rmssd = HRV.windowedRMSSD(beats, startUnix: startUnix)
 
+        // Each R-R value carries its record's timestamp. The estimator clocks beats within a run, so the
+        // record time is the only wall-clock anchor it gets, and it must not be re-stamped.
+        let rrSamples = onWrist.flatMap { record in
+            record.rrMs.map { RRSample(tsMs: record.unixSeconds * 1000, rrMs: $0) }
+        }
+
         return SleepSession(
             startUnix: startUnix,
             endUnix: endUnix,
@@ -169,6 +180,7 @@ public enum SleepDeriver {
             rmssdMs: rmssd,
             respRateRawMedian: Statistics.median(onWrist.compactMap(\.respRateRaw)),
             skinTempRawMedian: Statistics.median(onWrist.compactMap(\.skinTempRaw)),
+            respiratoryRateBrpm: RespiratoryRate.nightEstimate(rrSamples)?.brpm,
             contactFraction: contactFraction,
             quality: quality(contactFraction: contactFraction),
             recordCount: sorted.count,

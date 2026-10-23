@@ -163,12 +163,14 @@ extension Database {
         let statement = try makeStatement(sql: """
         INSERT INTO sleep_session
           (band_id, start_ms, end_ms, duration_s, resting_hr, rmssd_ms, resp_rate_raw,
-           skin_temp_raw, contact_fraction, quality, record_count, is_nap, algo_version, computed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           skin_temp_raw, contact_fraction, quality, record_count, is_nap, algo_version, computed_at,
+           resp_rate_brpm)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (band_id, start_ms) DO UPDATE SET
           end_ms = excluded.end_ms, duration_s = excluded.duration_s, resting_hr = excluded.resting_hr,
           rmssd_ms = excluded.rmssd_ms, resp_rate_raw = excluded.resp_rate_raw,
           skin_temp_raw = excluded.skin_temp_raw, contact_fraction = excluded.contact_fraction,
+          resp_rate_brpm = excluded.resp_rate_brpm,
           quality = excluded.quality, record_count = excluded.record_count, is_nap = excluded.is_nap,
           algo_version = excluded.algo_version, computed_at = excluded.computed_at
         """)
@@ -189,6 +191,7 @@ extension Database {
                 session.isNap ? 1 : 0,
                 SleepDeriver.algoVersion,
                 computedAtMs,
+                session.respiratoryRateBrpm,
             ])
             try statement.execute()
             written += changesCount

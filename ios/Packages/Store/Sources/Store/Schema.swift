@@ -21,6 +21,9 @@ enum Schema {
         migrator.registerMigration("v6") { db in
             try db.execute(sql: v6)
         }
+        migrator.registerMigration("v7") { db in
+            try db.execute(sql: v7)
+        }
     }
 
     /// Migration v1, copied from PLAN.md 10.2. Times are epoch ms UTC.
@@ -139,5 +142,12 @@ enum Schema {
       kind TEXT NOT NULL CHECK (kind IN ('retime', 'dismiss')), created_at INTEGER NOT NULL,
       UNIQUE (band_id, original_start_ms));
     CREATE INDEX sleep_edit_new_start ON sleep_edit(band_id, new_start_ms);
+    """
+    /// Migration v7, nightly respiratory rate. Additive: `resp_rate_brpm` holds the session's respiratory rate
+    /// in breaths/min, estimated from the R-R intervals (`SleepSession.respiratoryRateBrpm`). It is separate
+    /// from `resp_rate_raw`, the raw byte that is a constant on this strap. Existing rows are NULL until the
+    /// `SleepDeriver.algoVersion` bump re-derives them.
+    static let v7 = """
+    ALTER TABLE sleep_session ADD COLUMN resp_rate_brpm REAL;
     """
 }

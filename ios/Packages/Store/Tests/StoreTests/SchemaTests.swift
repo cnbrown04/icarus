@@ -11,8 +11,8 @@ struct SchemaTests {
     ]
     /// v2 added the sleep tables, v3 the nine nullable `historical_record` sensor columns, v4 the
     /// persisted sleep-stage segments, v5 the nap flag on `sleep_session`, v6 the user sleep
-    /// corrections (`sleep_edit`).
-    private static let migrations = ["v1", "v2", "v3", "v4", "v5", "v6"]
+    /// corrections (`sleep_edit`), v7 the nightly respiratory rate on `sleep_session`.
+    private static let migrations = ["v1", "v2", "v3", "v4", "v5", "v6", "v7"]
 
     @Test func migratesEmptyDatabaseToAllTables() throws {
         let database = try AppDatabase.inMemory()
@@ -78,6 +78,14 @@ struct SchemaTests {
             try Int.fetchOne(db, sql: "SELECT is_nap FROM sleep_session")
         }
         #expect(isNap == 0)
+    }
+
+    @Test func v7AddsTheRespiratoryRateColumn() throws {
+        let database = try AppDatabase.inMemory()
+        let columns = try database.writer.read { db in
+            try String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('sleep_session')")
+        }
+        #expect(columns.contains("resp_rate_brpm"))
     }
 
     @Test func profileIsSingleRowWithCheckConstraint() throws {
