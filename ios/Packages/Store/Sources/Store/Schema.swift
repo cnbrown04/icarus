@@ -24,6 +24,9 @@ enum Schema {
         migrator.registerMigration("v7") { db in
             try db.execute(sql: v7)
         }
+        migrator.registerMigration("v8") { db in
+            try db.execute(sql: v8)
+        }
     }
 
     /// Migration v1, copied from PLAN.md 10.2. Times are epoch ms UTC.
@@ -149,5 +152,21 @@ enum Schema {
     /// `SleepDeriver.algoVersion` bump re-derives them.
     static let v7 = """
     ALTER TABLE sleep_session ADD COLUMN resp_rate_brpm REAL;
+    """
+    /// Migration v8, medication profiles and dose overrides. Additive and local-only (no server sync).
+    /// `medication` holds one row per profile. `schedule` and `weekdays` are JSON arrays (minutes of the
+    /// local day; 1 = Sunday ... 7 = Saturday, `[]` = every day). Deletes are soft (`deleted_at`).
+    /// `medication_dose_override` holds per-day corrections: `taken` rows carry `taken_at_ms`, `skipped`
+    /// rows carry none. A day may have several `taken` rows. `local_day` is 'YYYY-MM-DD'.
+    static let v8 = """
+    CREATE TABLE medication (id TEXT PRIMARY KEY /* UUIDv7 */, name TEXT NOT NULL,
+      med_class TEXT NOT NULL, formulation TEXT NOT NULL, onset_min INTEGER NOT NULL, duration_min INTEGER NOT NULL,
+      schedule TEXT NOT NULL /* JSON array of minutes of day */, weekdays TEXT NOT NULL /* JSON array, [] = every day */,
+      active INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL, deleted_at INTEGER);
+    CREATE TABLE medication_dose_override (id TEXT PRIMARY KEY /* UUIDv7 */,
+      medication_id TEXT NOT NULL REFERENCES medication(id), local_day TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('taken', 'skipped')), taken_at_ms INTEGER,
+      created_at INTEGER NOT NULL, CHECK ((kind = 'taken') = (taken_at_ms IS NOT NULL)));
+    CREATE INDEX medication_dose_override_med_day ON medication_dose_override(medication_id, local_day);
     """
 }

@@ -8,11 +8,13 @@ struct SchemaTests {
         "profile", "band", "hr_sample", "rr_interval", "minute_metric", "band_event",
         "alarm", "alarm_delivery", "sync_cursor", "sync_batch_log", "raw_frame",
         "historical_record", "sleep_session", "sleep_stage_segment", "sleep_edit",
+        "medication", "medication_dose_override",
     ]
     /// v2 added the sleep tables, v3 the nine nullable `historical_record` sensor columns, v4 the
     /// persisted sleep-stage segments, v5 the nap flag on `sleep_session`, v6 the user sleep
-    /// corrections (`sleep_edit`), v7 the nightly respiratory rate on `sleep_session`.
-    private static let migrations = ["v1", "v2", "v3", "v4", "v5", "v6", "v7"]
+    /// corrections (`sleep_edit`), v7 the nightly respiratory rate on `sleep_session`, v8 the
+    /// medication profiles and dose overrides.
+    private static let migrations = ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"]
 
     @Test func migratesEmptyDatabaseToAllTables() throws {
         let database = try AppDatabase.inMemory()
