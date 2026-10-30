@@ -46,10 +46,16 @@ public enum LocalTime {
     /// wall-clock time that DST skipped. Two passes settle the offset when a transition falls between
     /// the UTC guess and the answer.
     public static func localTime(_ day: LocalDay, hour: Int, in timeZone: TimeZone) -> Int64 {
-        let wall = utcCalendar.date(
-            from: DateComponents(year: day.year, month: day.month, day: day.day, hour: hour)
+        localTime(day, minuteOfDay: hour * 60, in: timeZone)
+    }
+
+    /// Epoch ms of `minuteOfDay` local on `day` (0 = midnight). Same DST handling as `localTime(_:hour:in:)`.
+    public static func localTime(_ day: LocalDay, minuteOfDay: Int, in timeZone: TimeZone) -> Int64 {
+        let midnight = utcCalendar.date(
+            from: DateComponents(year: day.year, month: day.month, day: day.day, hour: 0)
         )!
-        let wallMs = Int64((wall.timeIntervalSince1970 * 1000).rounded())
+        let wallMs = Int64((midnight.timeIntervalSince1970 * 1000).rounded()) + Int64(minuteOfDay) * msPerMinute
+        let wall = Date(timeIntervalSince1970: Double(wallMs) / 1000)
         var instantMs = wallMs - Int64(timeZone.secondsFromGMT(for: wall)) * 1000
         for _ in 0..<2 {
             let instant = Date(timeIntervalSince1970: Double(instantMs) / 1000)
