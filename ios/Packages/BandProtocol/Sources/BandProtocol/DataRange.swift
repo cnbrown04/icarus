@@ -126,15 +126,16 @@ public enum DataRange {
         return RingState(write: w, read: u, capacity: t)
     }
 
-    /// The ring generation word GET_DATA_RANGE carries after the read pointer (`cmdOff + 20`, u32 LE).
-    /// [Unverified] meaning: on fw 41.17.x it reads 1, the same value as the second word of every
-    /// HISTORICAL_DATA_RESULT cursor token (`[page u32][1 u32]`), so it is read as the epoch / wrap
-    /// count those tokens carry. Nil for a frame too short to hold it.
-    public static func ringEpoch(from frame: [UInt8], cmdOff: Int) -> UInt32? {
-        let offset = cmdOff + 20
+    /// The strap's history READ CURSOR: the u32 LE at `cmdOff + 8` (the second word of the inner payload,
+    /// before NOOP's W/U pair). Hardware finding 2026-10-30, fw 41.17.x: it equals the first word of the
+    /// HISTORICAL_DATA_RESULT token the next drain acks (OpenStrap §4.3: "ACK advances the read cursor"),
+    /// it is the word SET_READ_POINTER (cmd 33) writes, and it persists across connections. Nil for a
+    /// frame too short to hold it.
+    public static func readCursor(from frame: [UInt8], cmdOff: Int) -> Int? {
+        let offset = cmdOff + 8
         guard cmdOff >= 0, offset + 4 <= frame.count else { return nil }
-        return UInt32(frame[offset]) | UInt32(frame[offset + 1]) << 8
-            | UInt32(frame[offset + 2]) << 16 | UInt32(frame[offset + 3]) << 24
+        return Int(frame[offset]) | Int(frame[offset + 1]) << 8 | Int(frame[offset + 2]) << 16
+            | Int(frame[offset + 3]) << 24
     }
 
     public static func pagesBehind(from frame: [UInt8], cmdOff: Int) -> Int? {
