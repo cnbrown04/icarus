@@ -53,6 +53,8 @@ struct ScoreDial: View {
 
             Text(title)
                 .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             if let caption {
                 Text(caption)
                     .font(.footnote)

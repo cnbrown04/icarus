@@ -56,11 +56,14 @@ struct LabeledRow: View {
     var body: some View {
         HStack(spacing: Spacing.s8) {
             Text(title)
+                .layoutPriority(1)
             Spacer(minLength: Spacing.s8)
             Text(value)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         }
+        .lineLimit(1)
+        .minimumScaleFactor(0.85)
         .accessibilityElement(children: .combine)
     }
 }
@@ -103,9 +106,9 @@ private struct ContributorRows: View {
         let prior = snapshot.series.filter { $0.day != day }.compactMap(\.sleepPerformance)
         let reference = prior.count >= HealthMonitor.minimumNights ? HealthMonitor.median(prior) : nil
         return ContributorRow(
-            title: "Sleep performance",
-            tonight: tonight.map { "\(Int($0.rounded())) %" } ?? "—",
-            reference: reference.map { "\(Int($0.rounded())) % over \(prior.count) days" },
+            title: "Sleep Performance",
+            tonight: tonight.map { Format.percent(Int($0.rounded())) } ?? "—",
+            reference: reference.map { "\(prior.count)-night \(Format.percent(Int($0.rounded())))" },
             delta: difference(tonight, reference),
             deltaUnit: "%"
         )
@@ -129,6 +132,8 @@ private struct ContributorRow: View {
         VStack(alignment: .leading, spacing: Spacing.s4) {
             HStack(alignment: .firstTextBaseline, spacing: Spacing.s8) {
                 Text(title)
+                    .lineLimit(1)
+                    .layoutPriority(1)
                 Spacer(minLength: Spacing.s8)
                 Text(tonight)
                     .monospacedDigit()
@@ -139,6 +144,7 @@ private struct ContributorRow: View {
                 if let reference {
                     Text(reference)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
                 Spacer(minLength: Spacing.s8)
                 if let delta {

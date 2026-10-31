@@ -45,29 +45,42 @@ struct MetricRow: View {
     /// When the value was measured, such as "Last night" or "10:42". Nil when there is no time to show.
     let caption: String?
 
+    /// Two lines, as Apple Health lays out a metric: the category glyph and name with the time trailing on top,
+    /// the figure below. Nothing shares a line with the figure, so long names never wrap into it.
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Spacing.s12) {
-            Image(systemName: kind.symbol)
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(kind.category.color)
-            Text(kind.title)
+        VStack(alignment: .leading, spacing: Spacing.s8) {
+            HStack(alignment: .firstTextBaseline, spacing: Spacing.s8) {
+                Label {
+                    Text(kind.title)
+                        .lineLimit(1)
+                } icon: {
+                    Image(systemName: kind.symbol)
+                        .symbolRenderingMode(.hierarchical)
+                }
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(kind.category.color)
-            Spacer(minLength: Spacing.s8)
-            if let caption {
-                Text(caption)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                .layoutPriority(1)
+                Spacer(minLength: Spacing.s8)
+                if let caption {
+                    Text(caption)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
-            Text(value ?? "—")
-                .font(.figure)
-                .monospacedDigit()
-            if let value, let unit {
-                Text(unit)
-                    .font(.figureUnit)
-                    .foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: Spacing.s4) {
+                Text(value ?? "—")
+                    .font(.figure)
+                    .monospacedDigit()
+                if let value, let unit {
+                    Text(unit)
+                        .font(.figureUnit)
+                        .foregroundStyle(.secondary)
+                }
             }
+            .lineLimit(1)
         }
+        .padding(.vertical, Spacing.s4)
         .accessibilityElement(children: .combine)
     }
 }

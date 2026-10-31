@@ -60,38 +60,48 @@ struct SummaryView: View {
 
     private var showsActionSection: Bool { showsJournal || showsBand || showsRepair || showsStorage }
 
+    /// One actionable row: a title and a one-line detail beneath it, neither wrapping.
+    private func actionRow(_ title: String, detail: String, symbol: String, tint: Color = .primary) -> some View {
+        Label {
+            VStack(alignment: .leading, spacing: Spacing.s4) {
+                Text(title)
+                    .foregroundStyle(tint)
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+        } icon: {
+            Image(systemName: symbol)
+                .foregroundStyle(tint == .primary ? Color.secondary : tint)
+        }
+    }
+
     private var actionSection: some View {
         Section {
             if showsJournal {
                 NavigationLink(value: AppRoute.journal(nil)) {
-                    Label("Journal · yesterday", systemImage: Symbol.journal)
+                    actionRow("Log Yesterday", detail: "Journal check-in", symbol: Symbol.journal)
                 }
             }
             if showsBand, let lastData = liveState.lastDataAt {
                 let age = DataAge.text(seconds: environment.clock.now.timeIntervalSince(lastData))
-                Label("Band not connected · last data \(age)", systemImage: Symbol.band)
-                    .foregroundStyle(Palette.warn)
+                actionRow("Band Not Connected", detail: "Last data \(age)", symbol: Symbol.band, tint: Palette.warn)
             }
             if showsRepair {
                 NavigationLink {
                     ServerView(sync: environment.sync)
                 } label: {
-                    VStack(alignment: .leading, spacing: Spacing.s4) {
-                        Label("Server needs re-pairing", systemImage: Symbol.server)
-                        Text("The server rejected this iPhone. Pair again to resume sync.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
+                    actionRow("Pair Server Again", detail: "The server rejected this iPhone", symbol: Symbol.server)
                 }
             }
             if showsStorage {
-                VStack(alignment: .leading, spacing: Spacing.s4) {
-                    Label("Not saved", systemImage: "externaldrive.badge.exclamationmark")
-                        .foregroundStyle(Palette.error)
-                    Text("Data is not saved on this launch.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+                actionRow(
+                    "Not Saved",
+                    detail: "Data from this launch is not stored",
+                    symbol: "externaldrive.badge.exclamationmark",
+                    tint: Palette.error
+                )
             }
         }
     }
@@ -201,7 +211,7 @@ struct SummaryView: View {
     // MARK: Key metrics
 
     private var keyMetricsSection: some View {
-        Section("Key metrics") {
+        Section("Key Metrics") {
             ForEach(SummarySnapshot.keyMetrics, id: \.self) { kind in
                 NavigationLink(value: AppRoute.metric(kind)) {
                     MetricRow(kind: kind, value: displayValue(kind), unit: kind.unit, caption: caption(kind))

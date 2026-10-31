@@ -11,10 +11,12 @@ struct WeeklyAssessmentView: View {
     var body: some View {
         List {
             if hasAnyAverage {
-                Section("Last 7 days") {
+                Section("Last 7 Days") {
                     ForEach(rows, id: \.metric) { row in
                         HStack(spacing: Spacing.s12) {
-                            Text(row.metric.title)
+                            Text(rowTitle(row.metric))
+                                .lineLimit(1)
+                                .layoutPriority(1)
                             Spacer(minLength: Spacing.s8)
                             Text(valueText(row.thisWeek, row.metric))
                                 .monospacedDigit()
@@ -40,7 +42,7 @@ struct WeeklyAssessmentView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle("Weekly assessment")
+        .navigationTitle("Weekly Assessment")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             let clock = environment.clock
@@ -65,6 +67,18 @@ struct WeeklyAssessmentView: View {
     /// True once a week has enough days for at least one average. Below that the table is replaced by one line.
     private var hasAnyAverage: Bool {
         rows.contains { $0.thisWeek != nil }
+    }
+
+    /// Row titles in Title Case; `Metric.title` stays sentence case because the observations embed it mid-sentence.
+    private func rowTitle(_ metric: WeeklyAssessment.Metric) -> String {
+        switch metric {
+        case .recovery: "Recovery"
+        case .sleepPerformance: "Sleep Performance"
+        case .hoursSlept: "Hours Slept"
+        case .strain: "Strain"
+        case .hrv: "HRV"
+        case .restingHR: "Resting HR"
+        }
     }
 
     private func valueText(_ value: Double?, _ metric: WeeklyAssessment.Metric) -> String {

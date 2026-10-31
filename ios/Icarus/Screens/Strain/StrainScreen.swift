@@ -48,7 +48,7 @@ struct StrainView: View {
                 } label: {
                     Image(systemName: Symbol.record)
                 }
-                .accessibilityLabel("Record activity")
+                .accessibilityLabel("Record Activity")
                 .accessibilityIdentifier("strain.record")
             }
         }
@@ -99,16 +99,20 @@ struct StrainView: View {
 
     /// The only live heart rate in the app. Its value updates from the band; the row opens the heart-rate detail.
     private var heartRateRow: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Spacing.s12) {
-            Image(systemName: MetricKind.heartRate.symbol)
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(MetricKind.heartRate.category.color)
-            Text(MetricKind.heartRate.title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(MetricKind.heartRate.category.color)
-            Spacer(minLength: Spacing.s8)
+        // Same two-line layout as `MetricRow`: glyph and name on top, the live figure below.
+        VStack(alignment: .leading, spacing: Spacing.s8) {
+            Label {
+                Text(MetricKind.heartRate.title)
+                    .lineLimit(1)
+            } icon: {
+                Image(systemName: MetricKind.heartRate.symbol)
+                    .symbolRenderingMode(.hierarchical)
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(MetricKind.heartRate.category.color)
             LiveBPMText(liveState: liveState, identifier: "strain.hrValue")
         }
+        .padding(.vertical, Spacing.s4)
         .accessibilityElement(children: .combine)
     }
 
@@ -138,7 +142,7 @@ struct StrainView: View {
             }
         }
         NavigationLink(value: AppRoute.workouts) {
-            Text("Show all")
+            Text("Show All")
         }
     }
 

@@ -4,7 +4,7 @@ import BandProtocol
 import SwiftUI
 
 /// The band: its name and link state, then signal, battery and the age of the last reading (IOS_UI_SPEC, Screen 15).
-/// The Experimental section holds the band channel (Tier B). Turning it on needs the explainer's "Turn on" first.
+/// The Experimental section holds the band channel (Tier B). Turning it on needs the explainer's "Turn On" first.
 struct DeviceView: View {
     let liveState: LiveState
 
@@ -18,7 +18,7 @@ struct DeviceView: View {
     @State private var restoreSummary: String?
 
     private var bandName: String {
-        liveState.bandName ?? "Paired band"
+        liveState.bandName ?? "Paired Band"
     }
 
     var body: some View {
@@ -76,7 +76,7 @@ struct DeviceView: View {
                     LabeledContent {
                         lastDataText
                     } label: {
-                        Label("Last data", systemImage: "clock")
+                        Label("Last Data", systemImage: "clock")
                     }
                 }
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
@@ -106,17 +106,17 @@ struct DeviceView: View {
                     NavigationLink {
                         PairBandView(liveState: liveState)
                     } label: {
-                        Label("Pair band", systemImage: "plus.circle")
+                        Label("Pair Band", systemImage: "plus.circle")
                     }
                 } else {
-                    Button("Forget band", role: .destructive) {
+                    Button("Forget Band", role: .destructive) {
                         confirmsForget = true
                     }
                 }
             }
 
             Section {
-                Button("Sync all pending band data…") {
+                Button("Sync All Pending Band Data…") {
                     showsRestore = true
                 }
                 .disabled(liveState.tierBState != .ready || liveState.drainProgress.isDraining)
@@ -124,40 +124,17 @@ struct DeviceView: View {
                 // Every drain — the connect drain, the 15-minute cadence and the manual restore —
                 // drives the same live state, so the row updates in place instead of appearing
                 // only when the graphs catch up later.
+                // One status row: the title on top and its detail on a left-aligned line below, so long progress
+                // text never wraps into a ragged right-aligned block. A finished manual sync's summary replaces
+                // the routine "Synced" line rather than sitting in a second row.
                 if liveState.drainProgress.isDraining {
-                    LabeledContent {
-                        HStack(spacing: Spacing.s8) {
-                            ProgressView()
-                            Text(liveState.drainProgressText)
-                                .monospacedDigit()
-                                .multilineTextAlignment(.trailing)
-                        }
-                    } label: {
-                        Label("Syncing", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                    .accessibilityIdentifier("device.drainProgress")
-                } else if liveState.drainProgress.lastEndedAt != nil {
-                    LabeledContent {
-                        Text(liveState.drainProgressText)
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.trailing)
-                            .lineLimit(2)
-                    } label: {
-                        Label("Last sync", systemImage: "checkmark.circle")
-                    }
-                    .accessibilityIdentifier("device.drainProgress")
-                }
-                if let restoreSummary {
-                    LabeledContent {
-                        Text(restoreSummary)
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.trailing)
-                    } label: {
-                        Label("Sync result", systemImage: "clock.arrow.circlepath")
-                    }
-                    .accessibilityIdentifier("device.restoreSummary")
+                    historyRow("Syncing", detail: liveState.drainProgressText, systemImage: "arrow.triangle.2.circlepath",
+                               inProgress: true)
+                        .accessibilityIdentifier("device.drainProgress")
+                } else if let detail = restoreSummary ?? (liveState.drainProgress.lastEndedAt != nil
+                    ? liveState.drainProgressText : nil) {
+                    historyRow("Last Sync", detail: detail, systemImage: "checkmark.circle", inProgress: false)
+                        .accessibilityIdentifier("device.drainProgress")
                 }
             } header: {
                 Text("History")
@@ -165,14 +142,14 @@ struct DeviceView: View {
 
             Section {
                 Toggle(isOn: bandChannelBinding) {
-                    Label("Band channel", systemImage: Symbol.band)
+                    Label("Band Channel", systemImage: Symbol.band)
                 }
                 .accessibilityIdentifier("device.bandChannel")
                 LabeledContent {
                     Text(tierBStateText)
                         .foregroundStyle(tierBStateTint)
                 } label: {
-                    Label("Channel status", systemImage: "dot.radiowaves.left.and.right")
+                    Label("Channel Status", systemImage: "dot.radiowaves.left.and.right")
                 }
                 if liveState.tierBState == .unavailable, let reason = liveState.tierBFailure {
                     Text(reason)
@@ -181,19 +158,19 @@ struct DeviceView: View {
                 LabeledContent {
                     lastBandEventText
                 } label: {
-                    Label("Last band event", systemImage: "hand.tap")
+                    Label("Last Band Event", systemImage: "hand.tap")
                 }
-                Button("Test buzz") {
+                Button("Test Buzz") {
                     playTestBuzz()
                 }
                 .disabled(liveState.tierBState != .ready)
                 .accessibilityIdentifier("device.testBuzz")
                 Toggle(isOn: $opportunisticPull) {
-                    Label("Opportunistic alarm pull", systemImage: "bell.badge")
+                    Label("Opportunistic Alarm Pull", systemImage: "bell.badge")
                 }
                 .accessibilityIdentifier("device.opportunisticPull")
                 Toggle(isOn: $floodDisabled) {
-                    Label("Disable raw sensor flood", systemImage: "antenna.radiowaves.left.and.right.slash")
+                    Label("Disable Raw Sensor Flood", systemImage: "antenna.radiowaves.left.and.right.slash")
                 }
                 .accessibilityIdentifier("device.floodDisabled")
                 .onChange(of: floodDisabled) { _, disabled in
@@ -218,7 +195,7 @@ struct DeviceView: View {
             )
         }
         .confirmationDialog("Forget \(bandName)?", isPresented: $confirmsForget, titleVisibility: .visible) {
-            Button("Forget band", role: .destructive) {
+            Button("Forget Band", role: .destructive) {
                 liveState.forgetBand()
             }
             Button("Cancel", role: .cancel) {}
@@ -228,7 +205,7 @@ struct DeviceView: View {
             isPresented: $showsRestore,
             titleVisibility: .visible
         ) {
-            Button("Sync now") {
+            Button("Sync Now") {
                 startRestore()
             }
             Button("Cancel", role: .cancel) {}
@@ -236,6 +213,23 @@ struct DeviceView: View {
             Text("Pulls everything the band has recorded but not yet sent. A large backlog takes a few minutes; live readings keep flowing.")
         }
         .navigationTitle("Band")
+    }
+
+    /// A history status row: the title with its symbol, and the detail on its own secondary line beneath.
+    private func historyRow(_ title: String, detail: String, systemImage: String, inProgress: Bool) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.s4) {
+            HStack(spacing: Spacing.s8) {
+                Label(title, systemImage: systemImage)
+                if inProgress {
+                    Spacer(minLength: Spacing.s8)
+                    ProgressView()
+                }
+            }
+            Text(detail)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
     }
 
     /// Runs the full-history restore. The button and the progress row read the shared
@@ -248,7 +242,7 @@ struct DeviceView: View {
         }
     }
 
-    /// Off switches the channel at once. On only opens the explainer, and the switch moves when "Turn on" is tapped.
+    /// Off switches the channel at once. On only opens the explainer, and the switch moves when "Turn On" is tapped.
     private var bandChannelBinding: Binding<Bool> {
         Binding(
             get: { bandChannelEnabled },

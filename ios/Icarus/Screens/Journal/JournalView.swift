@@ -43,7 +43,7 @@ struct JournalView: View {
                 NavigationLink {
                     JournalInsightsView(environment: environment)
                 } label: {
-                    Text("Journal insights")
+                    Text("Journal Insights")
                 }
                 .accessibilityIdentifier("journal.insights")
             }
@@ -69,7 +69,7 @@ struct JournalView: View {
                 Image(systemName: "chevron.left")
                     .frame(minWidth: MinTouch.size, minHeight: MinTouch.size)
             }
-            .accessibilityLabel("Previous day")
+            .accessibilityLabel("Previous Day")
             .accessibilityIdentifier("journal.previousDay")
 
             Spacer()
@@ -93,7 +93,7 @@ struct JournalView: View {
                     .frame(minWidth: MinTouch.size, minHeight: MinTouch.size)
             }
             .disabled(!JournalFormat.isAfter(model.today, model.day))
-            .accessibilityLabel("Next day")
+            .accessibilityLabel("Next Day")
             .accessibilityIdentifier("journal.nextDay")
         }
         .buttonStyle(.borderless)
@@ -109,14 +109,18 @@ private struct QuestionRow: View {
     var body: some View {
         switch question.kind {
         case .yesno:
-            VStack(alignment: .leading, spacing: Spacing.s8) {
+            // The question on the left, a compact Yes / No control at its natural width on the right.
+            HStack(spacing: Spacing.s12) {
                 Text(question.label)
+                    .lineLimit(2)
+                Spacer(minLength: Spacing.s8)
                 Picker(question.label, selection: Binding<Int?>(get: { answer }, set: { onChange($0) })) {
                     Text("Yes").tag(1 as Int?)
                     Text("No").tag(0 as Int?)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                .fixedSize()
                 .accessibilityIdentifier("journal.\(question.id)")
             }
         case .count:

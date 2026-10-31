@@ -103,6 +103,7 @@ struct MetricDetailView: View {
             Text(readout.caption)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, Spacing.s4)
@@ -140,18 +141,22 @@ struct MetricDetailView: View {
                     LabeledRow(title: "Minimum", value: data.minimum.map { MetricFormat.withUnit($0, kind) } ?? "—")
                     LabeledRow(title: "Maximum", value: data.maximum.map { MetricFormat.withUnit($0, kind) } ?? "—")
                 }
-                if let change = changeText(data) {
-                    LabeledRow(title: "Change", value: change)
+                if let value = data.value, let previous = data.previousValue {
+                    // The comparison is the title and only the change sits on the right, so the row never wraps.
+                    LabeledRow(title: changeTitle(data.range), value: MetricFormat.change(value - previous, kind))
                 }
             }
         }
     }
 
-    /// The change against the previous equal period, e.g. "+3 bpm vs previous 7 days".
-    private func changeText(_ data: MetricDetailData) -> String? {
-        guard let value = data.value, let previous = data.previousValue else { return nil }
-        let comparison = data.range == .day ? "yesterday" : "previous \(data.range.days) days"
-        return "\(MetricFormat.change(value - previous, kind)) vs \(comparison)"
+    /// "Change from Yesterday", "Change from Previous Week", …: what the change on the right compares against.
+    private func changeTitle(_ range: MetricRange) -> String {
+        switch range {
+        case .day: "Change from Yesterday"
+        case .week: "Change from Previous Week"
+        case .month: "Change from Previous Month"
+        case .sixMonths: "Change from Previous 6 Months"
+        }
     }
 }
 
