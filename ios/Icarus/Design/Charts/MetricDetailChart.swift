@@ -42,16 +42,14 @@ struct MetricDetailChart: View {
             .chartXSelection(value: $selection)
             .accessibilityLabel("Calories, Today")
         } else if data.kind.isNightly {
-            // One dot per window reading across the night, as Apple Health draws individual samples.
+            // Last night's window readings as one line across the night.
             Chart {
-                ForEach(data.points, id: \.tsMs) { point in
-                    PointMark(x: .value("Time", Date(epochMs: point.tsMs)), y: .value(data.kind.title, point.value))
-                        .foregroundStyle(color)
-                        .symbolSize(Spacing.s16)
-                }
+                readingLines
                 if let selected = selectedPoint {
                     RuleMark(x: .value("Selected", Date(epochMs: selected.tsMs)))
                         .foregroundStyle(Color.secondary)
+                    PointMark(x: .value("Selected", Date(epochMs: selected.tsMs)), y: .value(data.kind.title, selected.value))
+                        .foregroundStyle(color)
                 }
             }
             .chartXScale(domain: domain)
@@ -100,14 +98,10 @@ struct MetricDetailChart: View {
 
     // MARK: Readings
 
-    /// Every window reading of the span's nights at its own time, as dots, with the period average.
+    /// Every window reading of the span's nights at its own time, one line per night, with the period average.
     private var readingsChart: some View {
         Chart {
-            ForEach(data.points, id: \.tsMs) { point in
-                PointMark(x: .value("Time", Date(epochMs: point.tsMs)), y: .value(data.kind.title, point.value))
-                    .foregroundStyle(color.opacity(0.7))
-                    .symbolSize(data.range == .week ? Spacing.s12 : Spacing.s4)
-            }
+            readingLines
             if let value = data.value {
                 averageRule(value)
             }
@@ -123,6 +117,37 @@ struct MetricDetailChart: View {
         .metricChartStyle()
         .chartXSelection(value: $selection)
         .accessibilityLabel("\(data.kind.title), every reading")
+    }
+
+    /// The readings as straight lines, one series per night: a gap of more than `nightBreakMs` between readings
+    /// is the day between two sleeps, so the line stops there instead of crossing it.
+    @ChartContentBuilder private var readingLines: some ChartContent {
+        ForEach(Self.nights(data.points), id: \.first?.tsMs) { night in
+            ForEach(night, id: \.tsMs) { point in
+                LineMark(x: .value("Time", Date(epochMs: point.tsMs)), y: .value(data.kind.title, point.value),
+                         series: .value("Night", night.first?.tsMs ?? 0))
+                    .interpolationMethod(.linear)
+                    .lineStyle(StrokeStyle(lineWidth: data.range == .sixMonths ? 1 : 1.5))
+                    .foregroundStyle(color)
+            }
+        }
+    }
+
+    /// Longer than any gap inside one night's readings (30-minute respiratory windows, a missing window or two), far
+    /// shorter than the day between nights.
+    static let nightBreakMs: Int64 = 3 * 3_600_000
+
+    /// `points` (oldest first) split wherever consecutive readings are more than `nightBreakMs` apart.
+    static func nights(_ points: [MetricPoint]) -> [[MetricPoint]] {
+        var nights: [[MetricPoint]] = []
+        for point in points {
+            if let last = nights.last?.last, point.tsMs - last.tsMs <= nightBreakMs {
+                nights[nights.count - 1].append(point)
+            } else {
+                nights.append([point])
+            }
+        }
+        return nights
     }
 
     // MARK: Daily
