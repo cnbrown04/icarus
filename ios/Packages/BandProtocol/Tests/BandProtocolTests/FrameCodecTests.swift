@@ -16,7 +16,8 @@ struct FrameCodecTests {
 
     @Test func decodeReturnsFields() throws {
         let frame = try FrameCodec.decode(FrameCodec.encodeCommand(.setAlarmTime, seq: 0x6D, payload: [0x01, 0x02, 0x03]))
-        #expect(frame == Frame(type: 0x23, seq: 0x6D, cmd: 66, payload: [0x01, 0x02, 0x03]))
+        // Commands are zero-padded so [type][seq][cmd][payload] is a multiple of 4 (`encodeCommand`).
+        #expect(frame == Frame(type: 0x23, seq: 0x6D, cmd: 66, payload: [0x01, 0x02, 0x03, 0x00, 0x00]))
         #expect(frame.packetType == .command)
     }
 
@@ -24,7 +25,7 @@ struct FrameCodecTests {
         let payload: [UInt8] = [0xAA, 0xAA, 0x00, 0xAA]
         let bytes = FrameCodec.encodeCommand(.runHapticsPattern, seq: 0x01, payload: payload)
         let frame = try FrameCodec.decode(bytes)
-        #expect(frame.payload == payload)
+        #expect(frame.payload == payload + [0x00])
         #expect(FrameCodec.encodeCommand(.runHapticsPattern, seq: 0x01, payload: payload) == bytes)
     }
 

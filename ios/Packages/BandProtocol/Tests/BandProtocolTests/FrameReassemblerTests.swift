@@ -44,7 +44,7 @@ struct FrameReassemblerTests {
         let first = reassembler.append(Array(bytes[0..<6]))
         #expect(first.isEmpty)
         let results = reassembler.append(Array(bytes[6...]))
-        #expect(results == [.success(Frame(type: 0x23, seq: 0x20, cmd: 79, payload: payload))])
+        #expect(results == [.success(Frame(type: 0x23, seq: 0x20, cmd: 79, payload: payload + [0x00]))])
     }
 
     @Test func partialFrameThenCompletingFrameInSameChunk() throws {

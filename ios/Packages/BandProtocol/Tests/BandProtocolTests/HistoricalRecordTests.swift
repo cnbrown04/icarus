@@ -339,6 +339,7 @@ struct HistoricalRecordTests {
         // The two forms carry the same seconds.
         let eight = try FrameCodec.decode(BandCommand.setClock(unix: 0x11223344).frame(seq: 12))
         #expect(Array(eight.payload[0..<4]) == Array(frame.payload[0..<4]))
-        #expect(eight.payload.count == 8)
+        // 8 payload bytes + 1 zero of command padding (inner 3 + 8 = 11 → 12).
+        #expect(eight.payload.count == 9)
     }
 }

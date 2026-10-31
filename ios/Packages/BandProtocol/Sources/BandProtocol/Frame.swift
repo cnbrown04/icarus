@@ -42,8 +42,19 @@ public enum FrameCodec {
     public static let syncByte: UInt8 = 0xAA
 
     /// The only public encoder for COMMAND (0x23) frames. Opcodes outside `SafeCommand` cannot be sent.
+    /// A COMMAND frame with its inner content (`[type][seq][cmd][payload]`) zero-padded to a 4-byte boundary,
+    /// CRC-32 over the padded form — OpenStrap's `build_frame` (`pad4`), which every working client uses.
+    ///
+    /// Hardware finding 2026-10-30 (fw 41.17.x): the strap silently DISCARDS a command whose inner length is not
+    /// a multiple of 4. Every working command already had an aligned inner (`[0x00]` → 4, ack `[01]+token` → 12,
+    /// legacy 9-byte SET_CLOCK → 12), while the unaligned ones never took effect: the bare-u32
+    /// SET_READ_POINTER (inner 7) was ignored on every restore, and the 8-byte SET_CLOCK (inner 11) was
+    /// "ACKed but not latched" (docs/hardware-findings.md Q5). Of four probe encodings only the 12-byte one
+    /// got a COMMAND_RESPONSE. Padding never changes an already-aligned frame.
     public static func encodeCommand(_ command: SafeCommand, seq: UInt8, payload: [UInt8] = []) -> [UInt8] {
-        encode(type: PacketType.command.rawValue, seq: seq, cmd: command.rawValue, payload: payload)
+        let padding = (4 - (3 + payload.count) % 4) % 4
+        return encode(type: PacketType.command.rawValue, seq: seq, cmd: command.rawValue,
+                      payload: payload + [UInt8](repeating: 0, count: padding))
     }
 
     public static func decode(_ bytes: [UInt8]) throws(FrameError) -> Frame {

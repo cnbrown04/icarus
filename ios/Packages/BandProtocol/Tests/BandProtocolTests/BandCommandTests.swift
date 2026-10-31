@@ -119,29 +119,22 @@ struct BandCommandTests {
         #expect(command.command.rawValue == 33)
         #expect(command.command == .setReadPointer)
         #expect(command.payload == [0xA3, 0x07, 0x01, 0x00])
-        #expect(hex(command.frame(seq: 0x16)) == "aa0b0097231621a3070100628a9d09")
+        #expect(hex(command.frame(seq: 0x16)) == "aa0c00fc231621a3070100007372b771")
         let zero = BandCommand.setReadPointer(offset: 0)
         #expect(zero.payload == [0, 0, 0, 0])
-        #expect(hex(zero.frame(seq: 0x17)) == "aa0b009723172100000000e8c84b81")
+        #expect(hex(zero.frame(seq: 0x17)) == "aa0c00fc23172100000000000fce527c")
         let rewind = BandCommand.setReadPointer(offset: 5_000)
         #expect(rewind.payload == [0x88, 0x13, 0x00, 0x00])
-        #expect(hex(rewind.frame(seq: 0x18)) == "aa0b009723182188130000c0f99046")
+        #expect(hex(rewind.frame(seq: 0x18)) == "aa0c00fc2318218813000000c4bd2049")
     }
 
-    /// The probe's candidate payloads, for page 124980 / epoch 1 / capacity 131072 — the values in the real
-    /// 2026-10-30 ack token `34 E8 01 00 01 00 00 00`.
-    @Test func readPointerProbeEncodings() {
-        func payload(_ encoding: BandCommand.ReadPointerEncoding) -> [UInt8] {
-            BandCommand.setReadPointer(page: 124_980, epoch: 1, capacity: 131_072, encoding: encoding).payload
-        }
-        #expect(payload(.pageU32) == [0x34, 0xE8, 0x01, 0x00])
-        #expect(payload(.pageEpoch) == [0x34, 0xE8, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00])
-        #expect(payload(.statusPageEpoch) == [0x01, 0x34, 0xE8, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00])
-        // 1 × 131072 + 124980 = 256052 = 0x0003_E834.
-        #expect(payload(.absoluteU64) == [0x34, 0xE8, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00])
-        for encoding in BandCommand.ReadPointerEncoding.allCases {
-            #expect(BandCommand.setReadPointer(page: 1, epoch: 1, capacity: 2, encoding: encoding).command == .setReadPointer)
-        }
+    /// Commands are zero-padded to a 4-byte inner (OpenStrap `pad4`): the bare-u32 SET_READ_POINTER was
+    /// discarded by the strap until it carried the trailing zero.
+    @Test func setReadPointerIsPaddedToAFourByteInner() throws {
+        let frame = try FrameCodec.decode(BandCommand.setReadPointer(offset: 125_324).frame(seq: 0x1C))
+        #expect(frame.cmd == 33)
+        #expect(frame.payload == [0x8C, 0xE9, 0x01, 0x00, 0x00])
+        #expect((3 + frame.payload.count) % 4 == 0)
     }
 
     @Test func runHapticsPatternPayloadIsPatternLoopsAndZeros() {
