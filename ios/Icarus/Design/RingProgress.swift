@@ -1,11 +1,12 @@
 import SwiftUI
 
-/// A ring that fills to `fraction`, with round caps and a track (IOS_UI_SPEC, Design).
+/// A ring that fills to `fraction`, with round caps and a track at low opacity of the same colour (Apple Fitness style).
+/// The label sits in the middle. VoiceOver reads `summary` in place of the drawn ring.
 struct RingProgress<Content: View>: View {
     let fraction: Double
     /// Read out by VoiceOver in place of the drawn ring.
     let summary: String
-    var tint: Color = Palette.caloriesActive
+    var tint: Color = Palette.category(.activity)
     var lineWidth: CGFloat = Spacing.s12
     @ViewBuilder let label: () -> Content
 

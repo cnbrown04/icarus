@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// A large score ring for the Overview: a value in the middle, a title and one caption under it. It follows
-/// `RingProgress` (round caps, a tinted track, a fill that animates on state change) and adds an optional target
-/// band drawn on the same track, which the Strain dial uses for the Strain Coach target.
+/// A score ring in the Apple Fitness style: a track at low opacity of the ring colour, round caps, and the value in
+/// the middle. A percent unit is set beside the figure ("47%"); other units sit under it. The optional target band is
+/// drawn on the same track, which the Strain ring uses for the Strain Coach target. The init is shared with the
+/// Strain tab, so keep its parameters.
 struct ScoreDial: View {
     let title: String
     /// Fill of the ring, 0...1. Values outside the range are clamped.
@@ -16,6 +17,7 @@ struct ScoreDial: View {
     let accessibilityValue: String
 
     private static let lineWidth = Spacing.s12
+    private static let diameter = Spacing.s48 * 2
 
     var body: some View {
         VStack(spacing: Spacing.s8) {
@@ -34,29 +36,29 @@ struct ScoreDial: View {
                     .rotationEffect(.degrees(-90))
                     .stateAnimation(fraction)
                 VStack(spacing: Spacing.s4) {
-                    Text(valueText)
-                        .font(.metricValue)
+                    figure
                         .monospacedDigit()
-                        .liveNumberTransition()
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
-                    if let unit {
+                        .liveNumberTransition()
+                    if let unit, unit != "%" {
                         Text(unit)
-                            .font(.caption)
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
                 }
+                .padding(Self.lineWidth)
             }
-            .frame(width: Spacing.s48 * 2, height: Spacing.s48 * 2)
+            .frame(width: Self.diameter, height: Self.diameter)
 
             Text(title)
-                .font(.caption.weight(.semibold))
+                .font(.subheadline.weight(.semibold))
             if let caption {
                 Text(caption)
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                    .lineLimit(2)
+                    .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
         }
@@ -65,5 +67,12 @@ struct ScoreDial: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
         .accessibilityValue(accessibilityValue)
+    }
+
+    /// The figure, with a "%" unit on the same line as the value so it never wraps onto its own line.
+    private var figure: Text {
+        let value = Text(valueText).font(.figure)
+        guard unit == "%" else { return value }
+        return value + Text("%").font(.figureUnit).foregroundStyle(.secondary)
     }
 }
