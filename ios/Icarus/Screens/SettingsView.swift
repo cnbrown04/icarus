@@ -17,6 +17,8 @@ struct SettingsView: View {
     /// with a valid one on the next change.
     @AppStorage(RetentionPolicy.rawDaysKey) private var rawDaysStored = Int(RetentionPolicy.rawDaysDefault)
     @AppStorage(RetentionPolicy.minuteDaysKey) private var minuteDaysStored = Int(RetentionPolicy.minuteDaysDefault)
+    /// Strain Coach: buzz the band once a day when day strain reaches the target (`TargetBuzzController`).
+    @AppStorage(TargetBuzzController.enabledKey) private var buzzOnTarget = false
 
     /// Five taps on the version row opens the hidden Debug screen (PLAN.md §14 row 18).
     private static let debugTapCount = 5
@@ -93,6 +95,17 @@ struct SettingsView: View {
                 Text("Units")
             } footer: {
                 Text("System follows the locale. Storage and sync always use metric (cm, kg, °C); only display changes.")
+            }
+
+            Section {
+                Toggle(isOn: $buzzOnTarget) {
+                    settingsLabel("Buzz at strain target", symbol: "waveform", tint: Palette.strain)
+                }
+                .accessibilityIdentifier("settings.buzzOnTarget")
+            } header: {
+                Text("Coaching")
+            } footer: {
+                Text("The band buzzes once a day, when day strain first reaches the Strain Coach target.")
             }
 
             Section("Band") {
