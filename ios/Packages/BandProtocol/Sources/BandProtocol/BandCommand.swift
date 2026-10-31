@@ -102,6 +102,11 @@ public struct BandCommand: Sendable, Equatable {
         BandCommand(.linkValid, payload: [0x00])
     }
 
+    /// ABORT_HISTORICAL_TRANSMITS (cmd 20). Carries `[0x00]` (OpenStrap `cmd_abort_historical`).
+    public static func abortHistoricalTransmits() -> BandCommand {
+        BandCommand(.abortHistoricalTransmits, payload: [0x00])
+    }
+
     /// GET_DATA_RANGE (cmd 34). Carries `[0x00]` (NOOP, verified on 4.0). [Unverified]
     public static func getDataRange() -> BandCommand {
         BandCommand(.getDataRange, payload: [0x00])

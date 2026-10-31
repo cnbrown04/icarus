@@ -137,6 +137,13 @@ struct BandCommandTests {
         #expect((3 + frame.payload.count) % 4 == 0)
     }
 
+    @Test func abortHistoricalTransmitsIsCmd20WithTheCommandByte() {
+        let command = BandCommand.abortHistoricalTransmits()
+        #expect(command.command.rawValue == 20)
+        #expect(command.payload == [0x00])
+        #expect((3 + command.payload.count) % 4 == 0, "already a 4-byte inner")
+    }
+
     @Test func runHapticsPatternPayloadIsPatternLoopsAndZeros() {
         let command = BandCommand.runHapticsPattern(patternId: 2, loops: 3)
         #expect(command.command == .runHapticsPattern)

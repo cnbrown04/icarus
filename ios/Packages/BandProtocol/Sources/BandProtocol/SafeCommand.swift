@@ -8,6 +8,11 @@ public enum SafeCommand: UInt8, Sendable, CaseIterable {
     case setClock = 10
     case getClock = 11
     case toggleHRBroadcast = 14
+    /// ABORT_HISTORICAL_TRANSMITS (cmd 20, 0x14). Ends the strap's current history-transmit session
+    /// ("cancel sync"); non-destructive — nothing is erased or trimmed. OpenStrap's client sends it with
+    /// `[0x00]` whenever a sync goes idle. Icarus uses it only around a read-cursor rewind, where a
+    /// session's cached position kept streaming from the old place (2026-10-30 hardware finding).
+    case abortHistoricalTransmits = 20
     case sendHistoricalData = 22
     case historicalDataResult = 23
     case getBatteryLevel = 26
