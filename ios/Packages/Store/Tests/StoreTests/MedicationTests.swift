@@ -188,6 +188,6 @@ struct MedicationMigrationTests {
         let applied = try database.writer.read { db in
             try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier")
         }
-        #expect(applied.last == "v8")
+        #expect(applied.contains("v8"))
     }
 }

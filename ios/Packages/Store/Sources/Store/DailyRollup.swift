@@ -115,6 +115,11 @@ public struct HeartRateBucket: Sendable, Equatable {
 public struct ZoneMinutes: Sendable, Equatable {
     public let zone: HeartRateZone
     public let minutes: Int
+
+    public init(zone: HeartRateZone, minutes: Int) {
+        self.zone = zone
+        self.minutes = minutes
+    }
 }
 
 public enum HeartRateSeries {

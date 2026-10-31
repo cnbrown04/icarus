@@ -27,6 +27,9 @@ enum Schema {
         migrator.registerMigration("v8") { db in
             try db.execute(sql: v8)
         }
+        migrator.registerMigration("v9") { db in
+            try db.execute(sql: v9)
+        }
     }
 
     /// Migration v1, copied from PLAN.md 10.2. Times are epoch ms UTC.
@@ -168,5 +171,21 @@ enum Schema {
       kind TEXT NOT NULL CHECK (kind IN ('taken', 'skipped')), taken_at_ms INTEGER,
       created_at INTEGER NOT NULL, CHECK ((kind = 'taken') = (taken_at_ms IS NOT NULL)));
     CREATE INDEX medication_dose_override_med_day ON medication_dose_override(medication_id, local_day);
+    """
+    /// Migration v9, activities (local only; not synced to the server). One row per workout, detected or recorded.
+    /// `source` is `auto` (written by `detectActivities`) or `manual` (recorded or edited by the user). A row the user
+    /// retypes or renames becomes `manual`, so detection never overwrites it. `deleted_at` is a tombstone: detection
+    /// skips any span a tombstone covers, so a deleted auto activity does not come back. `zone_minutes` is a JSON array
+    /// of six minute totals, indexed like `Strain.Score.zoneMinutes`. Strain is on the 0-21 display scale.
+    /// Migration text is self-contained: the v8 medications migration is not referenced here.
+    static let v9 = """
+    CREATE TABLE activity (id TEXT PRIMARY KEY, band_id TEXT REFERENCES band(id),
+      start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('run','walk','cycle','strength','hiit','yoga','sport','other')),
+      source TEXT NOT NULL CHECK (source IN ('auto','manual')), name TEXT,
+      strain REAL, avg_hr REAL, max_hr INTEGER, kcal REAL,
+      zone_minutes TEXT NOT NULL DEFAULT '[]', algo_version INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL, deleted_at INTEGER);
+    CREATE INDEX activity_start ON activity(start_ms);
     """
 }
