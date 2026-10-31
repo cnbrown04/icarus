@@ -113,9 +113,7 @@ private struct InsightRow: View {
         let effect = insight.effect
         guard let difference = effect.difference else { return insight.effect.metric.label }
         let magnitude = Int(abs(difference).rounded())
-        let phrase = insight.isMedication
-            ? "on days \(insight.label) was taken"
-            : "with \(lowercasedFirst(insight.label))"
+        let phrase = "with \(lowercasedFirst(insight.label))"
         let metric = effect.metric.label
         if magnitude == 0 {
             return "\(metric) unchanged \(phrase)"

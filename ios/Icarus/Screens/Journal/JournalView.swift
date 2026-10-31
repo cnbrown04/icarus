@@ -3,7 +3,8 @@ import Metrics
 import Store
 import SwiftUI
 
-/// The morning check-in (IOS_UI_SPEC journal): answers for one day, yes or no, plus the day's medication doses.
+/// The morning check-in (IOS_UI_SPEC journal): behaviour answers for one day, yes or no or a count. Medications are not
+/// part of the check-in; they are set once in Settings-style Medications.
 /// WHOOP asks in the morning about the day before, so the default day is yesterday. Days can be stepped back, and
 /// not forward past today. Pass `day` to open a specific day; leave it nil for yesterday.
 struct JournalView: View {
@@ -31,20 +32,6 @@ struct JournalView: View {
                     }
                 } footer: {
                     Text("Answers feed Journal insights. Turn questions off in the check-in editor.")
-                }
-
-                if !snapshot.medications.isEmpty {
-                    Section {
-                        ForEach(snapshot.medications) { row in
-                            MedicationDoseRow(row: row, timeZone: snapshot.timeZone, model: model)
-                        }
-                    } header: {
-                        Text("Medications")
-                    } footer: {
-                        if snapshot.medications.contains(where: { !$0.isAsNeeded && $0.logged == .none }) {
-                            Text("Scheduled doses count as taken until you log or skip them.")
-                        }
-                    }
                 }
             }
 
@@ -140,139 +127,6 @@ private struct QuestionRow: View {
                     Text("\(answer ?? 0)").monospacedDigit()
                 }
             }
-        }
-    }
-}
-
-/// One active medication on the day.
-///
-/// A scheduled medication shows its schedule as assumed taken, with Taken and Skipped. Once logged, it shows the time
-/// picker or Skipped, and can be reset to the schedule. An as-needed medication (no schedule) shows Not taken until
-/// a dose is logged. Each logged dose is listed and can be removed, and another can be added.
-private struct MedicationDoseRow: View {
-    let row: JournalModel.MedicationRow
-    let timeZone: TimeZone
-    let model: JournalModel
-
-    /// The time the next as-needed dose will be logged at. Starts at now, and resets when the day changes.
-    @State private var asNeededTime: Date
-
-    init(row: JournalModel.MedicationRow, timeZone: TimeZone, model: JournalModel) {
-        self.row = row
-        self.timeZone = timeZone
-        self.model = model
-        _asNeededTime = State(initialValue: Date(epochMs: model.defaultAsNeededMs()))
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.s8) {
-            Text(row.profile.name)
-            Text(statusCaption)
-                .font(.caption)
-                .foregroundStyle(Palette.neutral)
-
-            if row.isAsNeeded || row.scheduledMs.isEmpty {
-                asNeededControls
-            } else {
-                scheduledControls
-            }
-        }
-        .padding(.vertical, Spacing.s4)
-        .onChange(of: model.day) {
-            asNeededTime = Date(epochMs: model.defaultAsNeededMs())
-        }
-    }
-
-    @ViewBuilder
-    private var scheduledControls: some View {
-        switch row.logged {
-        case .none:
-            HStack(spacing: Spacing.s12) {
-                Button("Taken") {
-                    Task { await model.logTaken(row.profile.id, atMs: row.scheduledMs.first ?? model.defaultAsNeededMs()) }
-                }
-                .accessibilityIdentifier("journal.taken.\(row.profile.id)")
-                Button("Skipped") {
-                    Task { await model.logSkipped(row.profile.id) }
-                }
-                .accessibilityIdentifier("journal.skipped.\(row.profile.id)")
-            }
-            .buttonStyle(.bordered)
-        case .taken(let times):
-            if times.count == 1, let atMs = times.first {
-                DatePicker(
-                    "Taken at",
-                    selection: Binding<Date>(
-                        get: { Date(epochMs: atMs) },
-                        set: { newValue in
-                            let next = model.takenMs(for: newValue)
-                            Task { await model.logTaken(row.profile.id, atMs: next) }
-                        }
-                    ),
-                    displayedComponents: .hourAndMinute
-                )
-                .accessibilityIdentifier("journal.takenTime.\(row.profile.id)")
-            } else {
-                Text("Taken at " + times.map { JournalFormat.clock($0, in: timeZone) }.joined(separator: ", "))
-                    .font(.subheadline)
-            }
-            resetButton
-        case .skipped:
-            Text("Skipped")
-                .font(.subheadline)
-            resetButton
-        }
-    }
-
-    @ViewBuilder
-    private var asNeededControls: some View {
-        ForEach(row.takenEntries) { entry in
-            HStack {
-                Text("Taken at " + JournalFormat.clock(entry.override.takenMs ?? 0, in: timeZone))
-                    .font(.subheadline)
-                Spacer()
-                Button {
-                    Task { await model.removeEntry(entry.id) }
-                } label: {
-                    Image(systemName: "minus.circle")
-                        .frame(minWidth: 44, minHeight: 44)
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("Remove dose at " + JournalFormat.clock(entry.override.takenMs ?? 0, in: timeZone))
-            }
-        }
-        DatePicker("Dose time", selection: $asNeededTime, displayedComponents: .hourAndMinute)
-            .accessibilityIdentifier("journal.asNeededTime.\(row.profile.id)")
-        Button("Took one at " + JournalFormat.clock(model.takenMs(for: asNeededTime), in: timeZone)) {
-            Task { await model.addAsNeededDose(row.profile.id, atMs: model.takenMs(for: asNeededTime)) }
-        }
-        .buttonStyle(.bordered)
-        .accessibilityIdentifier("journal.tookOne.\(row.profile.id)")
-    }
-
-    private var resetButton: some View {
-        Button("Reset to schedule") {
-            Task { await model.resetDose(row.profile.id) }
-        }
-        .font(.subheadline)
-        .buttonStyle(.borderless)
-    }
-
-    /// Says in words whether the day is the schedule (assumed) or what was logged.
-    private var statusCaption: String {
-        if row.isAsNeeded {
-            let count = row.takenEntries.count
-            return count == 0 ? "Not taken" : "Taken \(count) \(count == 1 ? "time" : "times")"
-        }
-        if row.scheduledMs.isEmpty {
-            return "Not scheduled today"
-        }
-        switch row.logged {
-        case .none:
-            let times = row.scheduledMs.map { JournalFormat.clock($0, in: timeZone) }.joined(separator: ", ")
-            return "Scheduled \(times) · assumed taken"
-        case .taken, .skipped:
-            return "Logged"
         }
     }
 }
