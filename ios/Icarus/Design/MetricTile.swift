@@ -8,8 +8,10 @@ struct DeltaChip: View {
     private var rounded: Int { Int(change.rounded()) }
 
     private var text: String {
-        let sign = rounded > 0 ? "+" : ""
-        return unit.isEmpty ? "\(sign)\(rounded)" : "\(sign)\(rounded) \(unit)"
+        let sign = rounded > 0 ? "+" : rounded < 0 ? "−" : ""
+        let magnitude = abs(rounded)
+        if unit.isEmpty { return "\(sign)\(magnitude)" }
+        return unit == "%" ? "\(sign)\(magnitude)%" : "\(sign)\(magnitude) \(unit)"
     }
 
     private var symbol: String {

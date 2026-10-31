@@ -252,7 +252,7 @@ enum MetricFormat {
     static func withUnit(_ value: Double, _ kind: MetricKind) -> String {
         let text = number(value, kind)
         guard let unit = kind.unit else { return text }
-        return "\(text) \(unit)"
+        return unit == "%" ? "\(text)%" : "\(text) \(unit)"
     }
 
     /// A signed change, e.g. "+3 bpm" or "−2 bpm".
@@ -260,7 +260,7 @@ enum MetricFormat {
         let text = number(abs(value), kind)
         let sign = value > 0 ? "+" : (value < 0 ? "−" : "")
         guard let unit = kind.unit else { return "\(sign)\(text)" }
-        return "\(sign)\(text) \(unit)"
+        return unit == "%" ? "\(sign)\(text)%" : "\(sign)\(text) \(unit)"
     }
 
     /// "Oct 24–30" within one month, or "Oct 24–Nov 2" across months.
