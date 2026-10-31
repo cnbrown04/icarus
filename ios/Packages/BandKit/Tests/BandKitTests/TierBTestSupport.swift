@@ -259,3 +259,94 @@ func flush() async {
 func littleEndian(_ value: UInt32) -> [UInt8] {
     [UInt8(value & 0xFF), UInt8((value >> 8) & 0xFF), UInt8((value >> 16) & 0xFF), UInt8(value >> 24)]
 }
+
+/// The #791 capture's GET_DATA_RANGE reply payload (the envelope minus its [AA][size][crc8]
+/// head), with the ring words patched: W sits at payload offset 11, U at 15, T at 23. Word offsets
+/// per NOOP's ring layout.
+func ringPayload(write: UInt32, read: UInt32, capacity: UInt32 = 131_072) -> [UInt8] {
+    let capture = "aa4c00a7247e220a01010000000050070100a307010050070100000000000000020035030000" +
+        "c2fc13008046394b00000000bbe1636aa02d0000bbe1636aa02d0000c6e4636ac07c000000000447ea04"
+    var payload: [UInt8] = stride(from: 0, to: capture.count, by: 2).map { off in
+        let start = capture.index(capture.startIndex, offsetBy: off)
+        return UInt8(capture[start ..< capture.index(start, offsetBy: 2)], radix: 16)!
+    }
+    payload.removeFirst(7)
+    payload.replaceSubrange(11 ..< 15, with: littleEndian(write))
+    payload.replaceSubrange(15 ..< 19, with: littleEndian(read))
+    payload.replaceSubrange(23 ..< 27, with: littleEndian(capacity))
+    return payload
+}
+
+/// A scripted strap whose flash is a ring of `capacity` record slots, for the full-history restore.
+/// Slot `s` holds the record `age × secondsPerSlot` seconds before the clock origin, where age
+/// counts back from the newest slot (W − 1). A wrapped ring is full, so its oldest survivors sit at
+/// W and the ring reads oldest-first from W around to W − 1. An unwrapped ring holds only slots
+/// below W. `respond` answers the commands the restore writes: GET_DATA_RANGE (34) reports the
+/// pointers, SET_READ_POINTER (33) moves the persistent cursor, and SEND_HISTORICAL_DATA (22)
+/// streams every record from the cursor up to W in one batch, then closes it with METADATA. A kick
+/// with nothing left answers HISTORY_COMPLETE.
+final class RingStrap: @unchecked Sendable {
+    /// Spacing of the stored records. Only the newest slot (age 0) lands inside the live-edge window.
+    static let secondsPerSlot = 36
+
+    let capacity: Int
+    let write: Int
+    private let lock = NSLock()
+    private var cursor: Int
+    private var slots: [UInt32?]
+    private var rewindOffsets: [UInt32] = []
+
+    /// `newest` is the clock's now when the restore starts: the newest slot is stamped with it, so
+    /// reading that slot lands inside the live-edge window.
+    init(capacity: Int, write: Int, cursor: Int, wrapped: Bool, newest: Date) {
+        self.capacity = capacity
+        self.write = write
+        self.cursor = cursor
+        let origin = UInt32(newest.timeIntervalSince1970)
+        slots = (0 ..< capacity).map { slot in
+            guard wrapped || slot < write else { return nil }
+            let age = (write - 1 - slot + capacity) % capacity
+            return origin - UInt32(age * Self.secondsPerSlot)
+        }
+    }
+
+    /// Every SET_READ_POINTER offset the strap has been asked to seek to, in order.
+    var rewinds: [UInt32] {
+        lock.withLock { rewindOffsets }
+    }
+
+    func respond(to request: Frame) -> [Frame] {
+        switch request.cmd {
+        case 34:
+            let read = lock.withLock { cursor }
+            return [reply(to: request, payload: ringPayload(write: UInt32(write), read: UInt32(read), capacity: UInt32(capacity)))]
+        case 33:
+            let p = request.payload
+            let offset = UInt32(p[0]) | UInt32(p[1]) << 8 | UInt32(p[2]) << 16 | UInt32(p[3]) << 24
+            lock.withLock {
+                rewindOffsets.append(offset)
+                cursor = Int(offset)
+            }
+            return []
+        case 22:
+            return streamBatch()
+        default:
+            return []
+        }
+    }
+
+    private func streamBatch() -> [Frame] {
+        lock.withLock {
+            var frames: [Frame] = []
+            while cursor != write, let unix = slots[cursor] {
+                frames.append(historicalRecordFrame(unix: unix))
+                cursor = (cursor + 1) % capacity
+            }
+            guard !frames.isEmpty else {
+                return [Frame(type: PacketType.metadata.rawValue, seq: 24, cmd: 3, payload: [])]
+            }
+            frames.append(metadataFrame(token: [0x2E, 0x47, 0x01, 0x00, 0x04, 0x00, 0x00, 0x00]))
+            return frames
+        }
+    }
+}

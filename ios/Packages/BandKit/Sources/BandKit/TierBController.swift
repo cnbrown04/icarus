@@ -150,6 +150,10 @@ public actor TierBController {
     public private(set) var ringState: RingState?
     /// One-line state of the last (or running) full-history restore, for the app's UI.
     public private(set) var fullHistorySummary: String?
+    /// Oldest and newest record times kept by the running restore, and by its current pass. Fed by
+    /// `handleOffloadFrame`; reset at the restore's start and at each pass's start.
+    private var restoreSpan = RecordSpan()
+    private var phaseSpan = RecordSpan()
     /// Waiters resumed when the running drain ends (`drainFullHistory` parks here between the
     /// back-to-back kicks).
     private var drainEndWaiters: [CheckedContinuation<Void, Never>] = []
@@ -352,10 +356,16 @@ public actor TierBController {
 
     // MARK: Full-history restore (OpenStrap §4.3: drain the entire stored history)
 
-    /// Runaway guard for `drainFullHistory`: the most back-to-back drains one restore may kick.
-    /// Each drain is already bounded by the ~60 s run cap, so the cap only stops a pathological
-    /// loop (a strap that keeps trickling one record per drain forever).
+    /// Runaway guard for `drainFullHistory`: the most back-to-back drains one restore may kick,
+    /// shared by both passes. Each drain is already bounded by the ~60 s run cap, so the cap only
+    /// stops a pathological loop (a strap that keeps trickling one record per drain forever). The
+    /// 2026-10-28 log drained 107k records in 20 drains, so one full ring plus empty and slack
+    /// drains fits in 64.
     public static let maxFullHistoryDrains = 64
+    /// How far past the write pointer the restore starts (slots). The strap overwrites its oldest
+    /// slot about once a second, so starting at W itself would race the overwrite; the margin skips
+    /// the oldest couple of minutes instead.
+    public static let restoreMarginSlots = 120
 
     /// Positions the strap's persistent read cursor (SET_READ_POINTER, cmd 33). OpenStrap §4.3:
     /// the cursor survives connections and acks, and repositioning it makes the strap re-stream
@@ -373,13 +383,20 @@ public actor TierBController {
 
     /// Re-reads the strap's ENTIRE stored history: the app-deleted restore. After the app's
     /// database is wiped, the strap's persistent read cursor still sits at the last-acked batch,
-    /// so a plain connect would only re-read what came after it. This rewinds the cursor to the
-    /// ring's oldest banked extent first (OpenStrap PROTOCOL.md §4.3: "you can drain the same band
-    /// as many times as you like"), then kicks drains back to back (NOOP's `.autoContinue` flow)
-    /// until the backlog is gone: a drain that kept records is followed by another, and the loop
-    /// stops on an empty drain, HISTORY_COMPLETE, the live edge, or a lost link/channel. Each
-    /// drain's ~60 s run cap slices it, so even a full ~36 h ring (131072 pages) drains in bounded
-    /// slices. Never throws: every failure is logged and leaves the normal drain machinery intact.
+    /// so a plain connect would only re-read what came after it. The flash is a ring
+    /// (`DataRange.ringState`): once the write pointer W has wrapped, the OLDEST surviving data
+    /// sits at W, not at slot 0, so a rewind to 0 skips it. The restore therefore runs two passes:
+    ///
+    /// 1. Rewind to `W + restoreMarginSlots` (mod T) and drain back to back until the live edge.
+    ///    That reads the ring oldest-first, around the wrap, up to W. The margin skips the oldest
+    ///    slots, which the strap overwrites about once a second while the restore runs.
+    /// 2. Only when pass 1 stopped on an empty drain or HISTORY_COMPLETE short of the live edge
+    ///    (a strap that never wrapped, or never wraps its cursor at T − 1), rewind to 0 and drain
+    ///    from the ring start.
+    ///
+    /// Both passes share `maxFullHistoryDrains`. Each drain's ~60 s run cap slices the work, so even
+    /// a full ~36 h ring (131072 pages) drains in bounded slices. Never throws: every failure is
+    /// logged and leaves the normal drain machinery intact.
     public func drainFullHistory() async {
         guard enabled, state == .ready, linkOpen else {
             fullHistorySummary = "restore skipped: the channel is off or the link is not ready"
@@ -410,76 +427,115 @@ public actor TierBController {
                 return
             }
             ringState = ring
-            // The oldest banked extent: once the write pointer has passed the capacity (a
-            // monotonic counter, [Unverified] — every capture so far reads W < T), the ring's
-            // oldest surviving page is `W − T`; otherwise the ring start (0) is the oldest.
-            let target = ring.write >= ring.capacity ? ring.write - ring.capacity : 0
-            if target != ring.read {
-                BandLog.tierB(.info, "rewinding read cursor \(ring.read)→\(target): re-draining the entire stored history")
-                do {
-                    try await rewindReadPointer(to: UInt32(target))
-                } catch {
-                    fullHistorySummary = "restore aborted: the read-cursor rewind failed"
-                    BandLog.tierB(.error, "full-history restore aborted: the SET_READ_POINTER write failed (\(String(describing: error)))")
-                    return
-                }
+            restoreSpan = RecordSpan()
+
+            let phase1Start = (ring.write + Self.restoreMarginSlots) % ring.capacity
+            guard await seekForRestore(phase1Start, from: ring.read) else { return }
+            phaseSpan = RecordSpan()
+            let first = await runFullHistoryPass(budget: Self.maxFullHistoryDrains)
+            logRestorePhase(1, start: phase1Start, pass: first)
+
+            var last = first
+            var drains = first.drains
+            var kept = first.kept
+            if first.stop == .emptyDrain || first.stop == .historyComplete {
+                guard await seekForRestore(0, from: nil) else { return }
+                phaseSpan = RecordSpan()
+                BandLog.tierB(.info, "full-history restore phase 2: pass 1 ended short of the live edge, draining from the ring start")
+                let second = await runFullHistoryPass(budget: Self.maxFullHistoryDrains - first.drains)
+                logRestorePhase(2, start: 0, pass: second)
+                last = second
+                drains += second.drains
+                kept += second.kept
             }
-            // NOOP's .autoContinue flow: back-to-back drains, un-floored (the runaway protection
-            // is this loop's own stop conditions and `maxFullHistoryDrains`). `runDrain`'s quiet
-            // and run-cap watchdogs bound each slice; the acked batches flush as they always do.
-            var totalKept = 0
-            var drains = 0
-            var stopSummary: String?
-            while drains < Self.maxFullHistoryDrains {
-                // A periodic or strap-triggered drain can win the actor race between slices; wait
-                // for it and retry rather than treating the restore as denied.
-                while case .draining = offload.phase {
-                    await waitForDrainEnd()
-                }
-                guard enabled, state == .ready, linkOpen else { break }
-                guard await runDrain(.autoContinue) else {
-                    if case .draining = offload.phase { continue }
-                    stopSummary = "restore stopped: the next drain could not start"
-                    BandLog.tierB(.info, "full-history restore: the next drain was denied — stopping")
-                    break
-                }
-                drains += 1
-                await waitForDrainEnd()
-                // Read the tally and the stop reason in one actor turn (no await between them, so
-                // another drain cannot start and reset the counters in between).
-                let kept = drainKeptRecords
-                let phase = offload.phase
-                totalKept += kept
-                if kept == 0 {
-                    BandLog.tierB(.info, "full-history restore: the last drain completed empty — stopping")
-                    break
-                }
-                if case .stopped(.drainCompleted) = phase {
-                    BandLog.tierB(.info, "full-history restore: HISTORY_COMPLETE after \(totalKept) record(s) — stopping")
-                    break
-                }
-                if case .stopped(.reachedLiveEdge) = phase {
-                    BandLog.tierB(.info, "full-history restore: caught up to the live edge after \(totalKept) record(s) — stopping")
-                    break
-                }
-            }
-            if stopSummary == nil, drains == 0 {
-                stopSummary = "restore stopped: the link closed before the first drain"
-            }
-            if let stopSummary {
-                fullHistorySummary = stopSummary
-            } else if drains == Self.maxFullHistoryDrains {
+
+            if last.stop == .denied {
+                fullHistorySummary = "restore stopped: the next drain could not start"
+            } else if drains == 0 {
+                fullHistorySummary = "restore stopped: the link closed before the first drain"
+            } else if last.stop == .cap {
                 fullHistorySummary = "restore hit the \(Self.maxFullHistoryDrains)-drain cap"
                 BandLog.tierB(.error, "full-history restore hit the \(Self.maxFullHistoryDrains)-drain cap")
             } else {
-                fullHistorySummary = "finished: \(drains) drain(s), \(totalKept) record(s) re-drained"
-                BandLog.tierB(.info, "full-history restore finished: \(drains) drain(s), \(totalKept) record(s) re-drained")
+                let span = restoreSpan.summaryText.map { ", \($0)" } ?? ""
+                fullHistorySummary = "finished: \(drains) drain(s), \(kept.formatted()) record(s)\(span)"
+                BandLog.tierB(.info, "full-history restore finished: \(drains) drain(s), \(kept) record(s)\(span)")
             }
         } catch {
             // `send` failures land here (disabled / notConnected / timedOut after retries).
             fullHistorySummary = "restore aborted: \(String(describing: error))"
             BandLog.tierB(.error, "full-history restore aborted: \(String(describing: error))")
         }
+    }
+
+    /// Positions the read cursor for one restore pass. Skips the write when the cursor is known to
+    /// be at `target` already. Returns false when the write failed; the caller then ends the restore.
+    private func seekForRestore(_ target: Int, from current: Int?) async -> Bool {
+        if let current, current == target { return true }
+        let message = current.map { "rewinding read cursor \($0)→\(target)" } ?? "rewinding read cursor to \(target)"
+        BandLog.tierB(.info, "\(message)")
+        do {
+            try await rewindReadPointer(to: UInt32(target))
+            return true
+        } catch {
+            fullHistorySummary = "restore aborted: the read-cursor rewind failed"
+            BandLog.tierB(.error, "full-history restore aborted: the SET_READ_POINTER write failed (\(String(describing: error)))")
+            return false
+        }
+    }
+
+    /// One pass of NOOP's `.autoContinue` flow: back-to-back drains, un-floored. The pass's own stop
+    /// conditions and `budget` are the runaway protection. `runDrain`'s quiet and run-cap watchdogs
+    /// bound each slice, and the acked batches flush as they always do.
+    private func runFullHistoryPass(budget: Int) async -> RestorePass {
+        var pass = RestorePass()
+        while pass.drains < budget {
+            // A periodic or strap-triggered drain can win the actor race between slices; wait
+            // for it and retry rather than treating the restore as denied.
+            while case .draining = offload.phase {
+                await waitForDrainEnd()
+            }
+            guard enabled, state == .ready, linkOpen else {
+                pass.stop = .linkLost
+                break
+            }
+            guard await runDrain(.autoContinue) else {
+                if case .draining = offload.phase { continue }
+                pass.stop = .denied
+                BandLog.tierB(.info, "full-history restore: the next drain was denied — stopping")
+                break
+            }
+            pass.drains += 1
+            await waitForDrainEnd()
+            // Read the tally and the stop reason in one actor turn (no await between them, so
+            // another drain cannot start and reset the counters in between).
+            let kept = drainKeptRecords
+            let phase = offload.phase
+            pass.kept += kept
+            if kept == 0 {
+                pass.stop = .emptyDrain
+                BandLog.tierB(.info, "full-history restore: the last drain completed empty — stopping")
+                break
+            }
+            if case .stopped(.drainCompleted) = phase {
+                pass.stop = .historyComplete
+                BandLog.tierB(.info, "full-history restore: HISTORY_COMPLETE after \(pass.kept) record(s) — stopping")
+                break
+            }
+            if case .stopped(.reachedLiveEdge) = phase {
+                pass.stop = .liveEdge
+                BandLog.tierB(.info, "full-history restore: caught up to the live edge after \(pass.kept) record(s) — stopping")
+                break
+            }
+        }
+        pass.stop = pass.stop ?? .cap
+        return pass
+    }
+
+    /// One line per restore pass: where it started, what it kept, and the span of those records.
+    private func logRestorePhase(_ number: Int, start: Int, pass: RestorePass) {
+        let range = phaseSpan.rangeText.map { ", \($0)" } ?? ""
+        BandLog.tierB(.info, "full-history restore phase \(number) from slot \(start): \(pass.drains) drain(s), \(phaseSpan.count) record(s) kept\(range), stopped on \(pass.stop.map { "\($0)" } ?? "none")")
     }
 
     /// Resumes when the running drain ends (its `.stop` effect ran `finishDrain`). A drain that
@@ -682,6 +738,8 @@ public actor TierBController {
             } else {
                 drainKeptRecords += 1
                 historicalRecords.append(record)
+                phaseSpan.add(unix: Int(record.unixSeconds))
+                restoreSpan.add(unix: Int(record.unixSeconds))
             }
         }
         if frame.packetType == .metadata, frame.cmd == 2 {
@@ -1239,5 +1297,61 @@ enum BatteryEvent {
     private static func clamp(raw: Double) -> Int? {
         guard raw >= 0, raw <= 100 else { return nil }
         return Int(raw.rounded())
+    }
+}
+
+/// One pass of the full-history restore's back-to-back drain loop: the drains it kicked, the records
+/// they kept, and why the pass stopped (`cap` when it ran out of drains).
+private struct RestorePass {
+    enum Stop: Equatable {
+        /// A drain kept nothing: the strap has no more records from the cursor.
+        case emptyDrain
+        case historyComplete
+        /// A drain reached the live edge: nothing newer is left to read.
+        case liveEdge
+        case cap
+        /// The next drain could not start (the rate gate or the drain state refused it).
+        case denied
+        case linkLost
+    }
+
+    var drains = 0
+    var kept = 0
+    var stop: Stop?
+}
+
+/// The oldest and newest record times a restore kept, for its log lines and summary.
+private struct RecordSpan {
+    private(set) var count = 0
+    private(set) var oldest: Int?
+    private(set) var newest: Int?
+
+    mutating func add(unix: Int) {
+        count += 1
+        oldest = min(oldest ?? unix, unix)
+        newest = max(newest ?? unix, unix)
+    }
+
+    /// "oldest Oct 29 07:12 (36.1 h)" in local time, or nil when nothing was kept.
+    var summaryText: String? {
+        guard let oldest, let newest else { return nil }
+        return "oldest \(Self.clock(oldest)) (\(Self.hours(newest - oldest)) h)"
+    }
+
+    /// "Oct 29 07:12…Oct 30 19:20 (36.1 h)" in local time, or nil when nothing was kept.
+    var rangeText: String? {
+        guard let oldest, let newest else { return nil }
+        return "\(Self.clock(oldest))…\(Self.clock(newest)) (\(Self.hours(newest - oldest)) h)"
+    }
+
+    private static func clock(_ unix: Int) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "MMM d HH:mm"
+        return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(unix)))
+    }
+
+    private static func hours(_ seconds: Int) -> String {
+        String(format: "%.1f", Double(seconds) / 3600)
     }
 }

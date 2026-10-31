@@ -650,22 +650,6 @@ struct TierBControllerTests {
 
     // MARK: Full-history restore (app-deleted repopulation)
 
-    /// The #791 capture's GET_DATA_RANGE reply payload (the envelope minus its [AA][size][crc8]
-    /// head), with the ring words patched: W sits at payload offset 11, U at 15, T at 23 (and stays
-    /// at the capture's 131072). Word offsets per NOOP's ring layout.
-    private func ringPayload(write: UInt32, read: UInt32) -> [UInt8] {
-        let capture = "aa4c00a7247e220a01010000000050070100a307010050070100000000000000020035030000" +
-            "c2fc13008046394b00000000bbe1636aa02d0000bbe1636aa02d0000c6e4636ac07c000000000447ea04"
-        var payload: [UInt8] = stride(from: 0, to: capture.count, by: 2).map { off in
-            let start = capture.index(capture.startIndex, offsetBy: off)
-            return UInt8(capture[start ..< capture.index(start, offsetBy: 2)], radix: 16)!
-        }
-        payload.removeFirst(7)
-        payload.replaceSubrange(11 ..< 15, with: littleEndian(write))
-        payload.replaceSubrange(15 ..< 19, with: littleEndian(read))
-        return payload
-    }
-
     private func historicalEvents(_ events: [BandEvent]) -> [[HistoricalRecord]] {
         events.compactMap { event -> [HistoricalRecord]? in
             if case let .historical(records) = event { return records }
@@ -752,51 +736,105 @@ struct TierBControllerTests {
         #expect(historicalEvents(h.events.all) == [[record1, record2]])
 
         // Drain 1 ends (its quiet deadline is armed by the batch; the run cap is the fallback)
-        // having KEPT records → the restore kicks the next drain, which completes empty and stops
-        // the restore.
+        // having KEPT records, and pass 1 is not at the live edge, so the restore kicks drain 2,
+        // which completes empty; that rewinds to 0 for pass 2, whose drain 3 completes empty too.
         await endRunningDrain(h)
         await task.value
 
-        #expect(h.band.opcodes.filter { $0 == 33 }.count == 1, "exactly one rewind")
-        #expect(h.band.opcodes.filter { $0 == 22 }.count == cmd22Baseline + 2, "the restore stopped after the empty drain")
+        #expect(h.band.opcodes.filter { $0 == 33 }.count == 2, "pass 1 rewinds past the head, pass 2 to 0")
+        #expect(h.band.commands.filter { $0.cmd == 33 }.map(\.payload) == [littleEndian(220), littleEndian(0)])
+        #expect(h.band.opcodes.filter { $0 == 22 }.count == cmd22Baseline + 3, "the restore stopped after the second pass's empty drain")
         #expect(historicalEvents(h.events.all) == [[record1, record2]], "the batch flushed exactly once")
         let lines = BandLog.capturedLines(2000)
-        #expect(lines.contains { $0.contains("rewinding read cursor 40→0") })
-        #expect(lines.contains { $0.contains("full-history restore finished: 2 drain(s), 2 record(s) re-drained") })
+        #expect(lines.contains { $0.contains("rewinding read cursor 40→220") })
+        #expect(lines.contains { $0.contains("full-history restore finished: 3 drain(s), 2 record(s), oldest ") && $0.contains("(1.0 h)") })
         #expect(await h.controller.ringState == RingState(write: 100, read: 40, capacity: 131_072))
     }
 
-    /// HISTORY_COMPLETE is the strap's "the whole store is drained" marker: the restore stops even
-    /// though the last drain kept records.
-    @Test func drainFullHistoryStopsOnHistoryComplete() async throws {
+    /// HISTORY_COMPLETE is the strap's "the whole store is drained" marker for the pass it ends. The
+    /// pass stopped short of the live edge, so the restore runs the ring-start pass after it.
+    @Test func drainFullHistoryStopsEachPassOnHistoryComplete() async throws {
         let h = Harness()
-        let (task, cmd22Baseline) = await startScriptedRestore(h, ring: ringPayload(write: 100, read: 40))
+        let complete = Frame(type: PacketType.metadata.rawValue, seq: 24, cmd: 3, payload: [])
+        let (task, cmd22Baseline) = await startScriptedRestore(h, ring: ringPayload(write: 100, read: 40)) {
+            $0 == 1 ? [] : [complete]
+        }
 
         let frame = historicalRecordFrame(unix: UInt32(ManualClock.origin.timeIntervalSince1970) - 3600)
         await h.controller.receive(frame)
         await h.controller.receive(metadataFrame(token: [1, 0, 0, 0, 1, 0, 0, 0]))
-        await h.controller.receive(Frame(type: PacketType.metadata.rawValue, seq: 24, cmd: 3, payload: []))
+        await h.controller.receive(complete)
         await task.value
 
-        #expect(h.band.opcodes.filter { $0 == 33 }.count == 1)
-        #expect(h.band.opcodes.filter { $0 == 22 }.count == cmd22Baseline + 1, "the restore kicked exactly one drain")
+        #expect(h.band.opcodes.filter { $0 == 33 }.count == 2, "pass 1 then the ring-start pass")
+        #expect(h.band.opcodes.filter { $0 == 22 }.count == cmd22Baseline + 2, "one drain per pass")
         #expect(historicalEvents(h.events.all).count == 1)
         #expect(BandLog.capturedLines(2000).contains { $0.contains("HISTORY_COMPLETE after 1 record(s)") })
     }
 
-    /// The cursor already at the rewind target needs no SET_READ_POINTER write; the restore just
-    /// drains the backlog (the plain connect path's shape, now also available on demand).
-    @Test func drainFullHistorySkipsTheRewindWhenTheCursorIsAlreadyAtTheTarget() async throws {
+    /// The cursor already at pass 1's start needs no SET_READ_POINTER write for that pass; the
+    /// restore goes on to the ring-start pass after HISTORY_COMPLETE, which does rewind.
+    @Test func drainFullHistorySkipsThePassOneRewindWhenTheCursorIsAlreadyPastTheHead() async throws {
         let h = Harness()
-        let (task, cmd22Baseline) = await startScriptedRestore(h, ring: ringPayload(write: 100, read: 0))
+        let complete = Frame(type: PacketType.metadata.rawValue, seq: 24, cmd: 3, payload: [])
+        let (task, cmd22Baseline) = await startScriptedRestore(h, ring: ringPayload(write: 100, read: 220)) {
+            $0 == 1 ? [] : [complete]
+        }
 
         await h.controller.receive(historicalRecordFrame(unix: UInt32(ManualClock.origin.timeIntervalSince1970) - 3600))
-        await h.controller.receive(Frame(type: PacketType.metadata.rawValue, seq: 24, cmd: 3, payload: []))
+        await h.controller.receive(complete)
         await task.value
 
-        #expect(!h.band.opcodes.contains(33), "U == target → no rewind write")
-        #expect(h.band.opcodes.filter { $0 == 22 }.count == cmd22Baseline + 1)
-        #expect(BandLog.capturedLines(2000).contains { $0.contains("full-history restore finished: 1 drain(s), 1 record(s) re-drained") })
+        #expect(h.band.commands.filter { $0.cmd == 33 }.map(\.payload) == [littleEndian(0)], "U == pass 1's start → no pass 1 write")
+        #expect(h.band.opcodes.filter { $0 == 22 }.count == cmd22Baseline + 2)
+        #expect(BandLog.capturedLines(2000).contains { $0.contains("full-history restore finished: 2 drain(s), 1 record(s), oldest ") })
+    }
+
+    /// Runs a restore against a scripted ring strap to its end. The connect drain is ended first,
+    /// and the strap's newest record is stamped with the clock's now at that point. Each pass's
+    /// drain then ends on its own (the batch reaches the live edge or HISTORY_COMPLETE), so the
+    /// clock never has to advance.
+    private func runRingRestore(capacity: Int, write: Int, cursor: Int, wrapped: Bool) async -> (Harness, RingStrap) {
+        let h = Harness()
+        await h.controller.connectionOpened()
+        await endRunningDrain(h)
+        let strap = RingStrap(capacity: capacity, write: write, cursor: cursor, wrapped: wrapped, newest: h.clock.now())
+        h.band.setMultiResponder { request, _ in strap.respond(to: request) }
+        await h.controller.drainFullHistory()
+        return (h, strap)
+    }
+
+    /// A wrapped ring's oldest data sits at W, so the restore starts `restoreMarginSlots` past W
+    /// (mod T) and reads the ring from there, not from slot 0.
+    @Test func restoreStartsPastTheWriteHeadSoTheWrappedSlotsAreReadFirst() async throws {
+        let (_, strap) = await runRingRestore(capacity: 1000, write: 950, cursor: 40, wrapped: true)
+        #expect(strap.rewinds.first == 70, "(950 + 120) % 1000")
+        #expect(BandLog.capturedLines(2000).contains { $0.contains("rewinding read cursor 40→70") })
+        #expect(BandLog.capturedLines(2000).contains { $0.contains("full-history restore phase 1 from slot 70: 1 drain(s), 880 record(s) kept") })
+    }
+
+    /// An unwrapped ring has nothing past its write pointer, so pass 1 completes empty and the
+    /// restore rewinds to the ring start for pass 2.
+    @Test func restoreRewindsToTheRingStartWhenThePastWriteHeadIsEmpty() async throws {
+        let (_, strap) = await runRingRestore(capacity: 1000, write: 100, cursor: 40, wrapped: false)
+        #expect(strap.rewinds == [220, 0], "pass 1 starts at (100 + 120); the empty pass rewinds to 0")
+        #expect(BandLog.capturedLines(2000).contains { $0.contains("full-history restore finished: 2 drain(s), 100 record(s)") })
+    }
+
+    /// Pass 1 that reaches the live edge is the whole restore: no second rewind.
+    @Test func restoreStopsAtTheLiveEdgeWithoutASecondRewind() async throws {
+        let (_, strap) = await runRingRestore(capacity: 1000, write: 950, cursor: 40, wrapped: true)
+        #expect(strap.rewinds == [70], "one rewind, and no ring-start pass")
+        #expect(BandLog.capturedLines(2000).contains { $0.contains("caught up to the live edge after 880 record(s)") })
+    }
+
+    /// The summary carries the kept count and the oldest record's age behind the newest. Slots 70…949
+    /// are 880 records, 36 s apart, so the oldest is 879 × 36 s = 8.8 h behind the newest.
+    @Test func restoreSummaryReportsTheOldestAndNewestRecord() async throws {
+        let (h, _) = await runRingRestore(capacity: 1000, write: 950, cursor: 40, wrapped: true)
+        #expect(await h.controller.fullHistorySummary?.hasPrefix("finished: 1 drain(s), 880 record(s), oldest ") == true)
+        #expect(await h.controller.fullHistorySummary?.hasSuffix("(8.8 h)") == true)
+        #expect(BandLog.capturedLines(2000).contains { $0.contains("phase 1 from slot 70: 1 drain(s), 880 record(s) kept, ") && $0.contains("(8.8 h)") })
     }
 
     /// An unreadable range aborts the restore before anything is written: without the ring state

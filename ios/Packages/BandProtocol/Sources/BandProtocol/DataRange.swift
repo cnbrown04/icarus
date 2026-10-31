@@ -107,6 +107,12 @@ public enum DataRange {
     /// wrapped, `W ≥ T` after ~36 h of 1 Hz history) is rejected here just like in `pagesBehind`.
     /// No real capture has crossed the wrap yet, so the conservative NOOP semantics stand; revisit
     /// when a live capture shows `W ≥ T`.
+    ///
+    /// [Unverified] wrapped-ring reading (the full-history restore relies on it): if W wraps back
+    /// to 0 at T, the OLDEST surviving slot is W itself and the newest is W − 1, so the ring reads
+    /// oldest-first from W around to W − 1. A restore that rewinds to 0 skips the oldest
+    /// `T − W` slots; `TierBController.drainFullHistory` starts past W for that reason. Not yet
+    /// confirmed on hardware: the 2026-10-23 "acked data is gone" finding fits this reading.
     public static func ringState(from frame: [UInt8], cmdOff: Int) -> RingState? {
         guard cmdOff >= 0 else { return nil }
         let payloadOffset = cmdOff + 1
