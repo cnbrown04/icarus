@@ -2,8 +2,9 @@ import Metrics
 import Store
 import SwiftUI
 
-/// Tonight's nightly vitals against the user's own 30-night range: a summary ("3 of 4 in range") and one
-/// row per vital with its typical band and tonight's marker. Vitals without enough nights say so.
+/// Tonight's nightly vitals against the user's own 30-night range, as an inset list: a summary ("3 of 4 in range")
+/// and one row per vital with its typical band and tonight's marker. Each vital with a metric opens that metric's
+/// detail page. Vitals without enough nights say so.
 struct HealthMonitorView: View {
     let environment: AppEnvironment
     let liveState: LiveState
@@ -20,19 +21,19 @@ struct HealthMonitorView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.s24) {
-                summaryCard
-                if snapshot != nil {
-                    vitalsCard
+        List {
+            summarySection
+            if snapshot != nil {
+                Section {
+                    ForEach(statuses) { status in
+                        VitalRowLink(status: status, priorNights: snapshot?.vitals.priorNights ?? 0)
+                    }
                 }
             }
-            .pagePadding()
-            .padding(.vertical, Spacing.s8)
-            .redacted(reason: snapshot == nil ? .placeholder : [])
         }
-        .dashboardBackground()
-        .navigationTitle("Health Monitor")
+        .listStyle(.insetGrouped)
+        .redacted(reason: snapshot == nil ? .placeholder : [])
+        .navigationTitle("Vitals")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable {
             await environment.sync.runNow()
@@ -49,57 +50,68 @@ struct HealthMonitorView: View {
 
     // MARK: Summary
 
-    private var summaryCard: some View {
-        VStack(alignment: .leading, spacing: Spacing.s8) {
+    @ViewBuilder private var summarySection: some View {
+        Section {
             if let snapshot, snapshot.vitals.tonight.isEmpty {
-                Text("No main sleep ended on \(snapshot.dayLabel).")
-                    .font(.headline)
-                Text("Vitals come from the night's sleep, so they appear after the band syncs it.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Button("Sync now") {
-                    Task { await environment.sync.runNow() }
+                VStack(alignment: .leading, spacing: Spacing.s8) {
+                    Text("No main sleep ended on \(snapshot.dayLabel)")
+                        .font(.subheadline)
+                    EmptyStateRow(
+                        text: "Vitals come from the night's sleep, so they appear after the band syncs it.",
+                        actionTitle: "Sync now"
+                    ) {
+                        Task { await environment.sync.runNow() }
+                    }
                 }
-                .buttonStyle(.bordered)
-                .padding(.top, Spacing.s4)
             } else if summary.evaluated == 0 {
-                Text("Calibrating")
-                    .font(.headline)
-                Text("\(snapshot?.vitals.priorNights ?? 0)/\(HealthMonitor.minimumNights) nights. A personal range needs \(HealthMonitor.minimumNights) nights with a value.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("\(summary.inRange) of \(summary.evaluated) in range")
-                    .font(.metricValue)
-                    .monospacedDigit()
-                Text("Tonight against your last \(HealthMonitor.baselineNights) nights")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Spacing.s16)
-        .cardBackground()
-    }
-
-    // MARK: Vitals
-
-    private var vitalsCard: some View {
-        VStack(alignment: .leading, spacing: Spacing.s16) {
-            ForEach(statuses) { status in
-                if status.vital != statuses.first?.vital {
-                    Divider()
+                VStack(alignment: .leading, spacing: Spacing.s4) {
+                    Text("Calibrating")
+                        .font(.figure)
+                    Text("\(snapshot?.vitals.priorNights ?? 0) of \(HealthMonitor.minimumNights) nights. A personal range needs \(HealthMonitor.minimumNights) nights with a value.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
-                VitalRow(status: status, priorNights: snapshot?.vitals.priorNights ?? 0)
+            } else {
+                VStack(alignment: .leading, spacing: Spacing.s4) {
+                    Text("\(summary.inRange) of \(summary.evaluated) in range")
+                        .font(.figure)
+                        .monospacedDigit()
+                    Text("Tonight against your last \(HealthMonitor.baselineNights) nights")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Spacing.s16)
-        .cardBackground()
     }
 }
 
-/// One vital: its name, tonight's value, the typical range, the state and a range bar.
+/// The metric a vital's row opens, or nil for a vital with no metric page (skin temperature).
+private func metricKind(for vital: HealthMonitor.Vital) -> MetricKind? {
+    switch vital {
+    case .restingHR: .restingHR
+    case .hrv: .hrv
+    case .respiratoryRate: .respiratoryRate
+    case .skinTemp: nil
+    }
+}
+
+/// One vital row: its name and tonight's value, the range bar, and the state word with the typical range. A row
+/// with a metric links to that metric's page.
+private struct VitalRowLink: View {
+    let status: HealthMonitor.Status
+    let priorNights: Int
+
+    var body: some View {
+        if let kind = metricKind(for: status.vital) {
+            NavigationLink(value: AppRoute.metric(kind)) {
+                VitalRow(status: status, priorNights: priorNights)
+            }
+        } else {
+            VitalRow(status: status, priorNights: priorNights)
+        }
+    }
+}
+
 private struct VitalRow: View {
     let status: HealthMonitor.Status
     let priorNights: Int
@@ -123,8 +135,7 @@ private struct VitalRow: View {
         let offset = vital.isRelative ? baseline.center : 0
         let low = vital.text(baseline.low - offset)
         let high = vital.text(baseline.high - offset)
-        let typical = vital.isRelative ? "\(low) to \(high) \(vital.unit)" : "\(low) to \(high)"
-        return "Typical \(typical)"
+        return "Typical \(low) to \(high)"
     }
 
     private var stateText: String {
@@ -133,15 +144,14 @@ private struct VitalRow: View {
         case .above: "Above range"
         case .below: "Below range"
         case .noTonight: "No value tonight"
-        case .calibrating: "Calibrating · \(priorNights)/\(HealthMonitor.minimumNights) nights"
+        case .calibrating: "Calibrating · \(priorNights) of \(HealthMonitor.minimumNights) nights"
         }
     }
 
     private var stateTint: Color {
         switch status.state {
         case .above, .below: Palette.warn
-        case .inRange: Palette.syncOK
-        case .noTonight, .calibrating: Palette.neutral
+        case .inRange, .noTonight, .calibrating: .secondary
         }
     }
 
@@ -149,10 +159,10 @@ private struct VitalRow: View {
         VStack(alignment: .leading, spacing: Spacing.s8) {
             HStack(alignment: .firstTextBaseline, spacing: Spacing.s8) {
                 Text(vital.title)
-                    .font(.headline)
+                    .font(.body)
                 Spacer(minLength: Spacing.s8)
                 Text(tonightText)
-                    .font(.metricValue)
+                    .font(.figure)
                     .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
@@ -164,7 +174,6 @@ private struct VitalRow: View {
                     value: value,
                     inRange: status.state == .inRange
                 )
-                .padding(.vertical, Spacing.s4)
             }
             HStack(spacing: Spacing.s8) {
                 Text(stateText)
@@ -175,9 +184,10 @@ private struct VitalRow: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .font(.caption)
+            .font(.footnote)
             .monospacedDigit()
         }
+        .padding(.vertical, Spacing.s4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
     }
