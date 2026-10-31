@@ -15,6 +15,8 @@ struct MetricDetailChart: View {
     var body: some View {
         if data.range == .day {
             dayChart
+        } else if data.showsReadings {
+            readingsChart
         } else {
             dailyChart
         }
@@ -94,6 +96,33 @@ struct MetricDetailChart: View {
     private var selectedPoint: MetricPoint? {
         guard let selection else { return nil }
         return data.nearestPoint(to: selection)
+    }
+
+    // MARK: Readings
+
+    /// Every window reading of the span's nights at its own time, as dots, with the period average.
+    private var readingsChart: some View {
+        Chart {
+            ForEach(data.points, id: \.tsMs) { point in
+                PointMark(x: .value("Time", Date(epochMs: point.tsMs)), y: .value(data.kind.title, point.value))
+                    .foregroundStyle(color.opacity(0.7))
+                    .symbolSize(data.range == .week ? Spacing.s12 : Spacing.s4)
+            }
+            if let value = data.value {
+                averageRule(value)
+            }
+            if let selected = selectedPoint {
+                RuleMark(x: .value("Selected", Date(epochMs: selected.tsMs)))
+                    .foregroundStyle(Color.secondary)
+                PointMark(x: .value("Selected", Date(epochMs: selected.tsMs)), y: .value(data.kind.title, selected.value))
+                    .foregroundStyle(color)
+            }
+        }
+        .chartXScale(domain: Date(epochMs: data.dayStartMs)...Date(epochMs: data.dayEndMs))
+        .chartYScale(domain: ChartDomain.line(data.points.map(\.value)))
+        .metricChartStyle()
+        .chartXSelection(value: $selection)
+        .accessibilityLabel("\(data.kind.title), every reading")
     }
 
     // MARK: Daily

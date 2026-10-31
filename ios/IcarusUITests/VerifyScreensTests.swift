@@ -96,19 +96,19 @@ final class VerifyScreensTests: XCTestCase {
         if pickRange("6M") {
             shot(String(format: "04-%02d-%@-6m", index + 1, slug))
         }
-        // Nightly vitals: last night's readings (D) and every night's readings (Show All Data).
+        // Nightly vitals: last night's readings (D), then the Average / All Readings switch.
         if ["Resting Heart Rate", "Heart Rate Variability", "Respiratory Rate"].contains(metric) {
             if pickRange("D") {
                 shot(String(format: "04-%02d-%@-d", index + 1, slug))
                 scrollShot(String(format: "04-%02d-%@-d-scrolled", index + 1, slug))
             }
-            let all = app.buttons["metric.showAllData"].firstMatch
-            scrollTo(all)
-            if all.waitForExistence(timeout: 5) {
-                all.tap()
-                settle()
-                shot(String(format: "04-%02d-%@-all", index + 1, slug))
-                back()
+            // Every reading behind the nightly values, on the week and 6M charts.
+            for range in ["W", "6M"] where pickRange(range) {
+                let readings = app.buttons["All Readings"].firstMatch
+                if tapIfExists(readings) {
+                    shot(String(format: "04-%02d-%@-%@-readings", index + 1, slug, range.lowercased()))
+                    tapIfExists(app.buttons["Average"].firstMatch)
+                }
             }
         }
         back()

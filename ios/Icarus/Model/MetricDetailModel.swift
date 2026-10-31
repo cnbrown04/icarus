@@ -66,7 +66,8 @@ struct MetricDetailData: Sendable {
     /// Local midnight today and the next midnight, the span the day view charts.
     let dayStartMs: Int64
     let dayEndMs: Int64
-    /// Intraday values for today, oldest first. Empty for daily ranges.
+    /// Intraday values for today, oldest first; a nightly vital's readings (see `showsReadings`). Empty for other
+    /// daily ranges.
     let points: [MetricPoint]
     /// One row per local day, oldest first. Empty for the day range.
     let rows: [MetricDayRow]
@@ -91,6 +92,9 @@ struct MetricDetailData: Sendable {
     /// The night the day view shows, for nightly vitals: `points` are its readings and `dayStartMs`–`dayEndMs` its
     /// span. Nil for other metrics and ranges, or before any main sleep.
     var night: VitalNight? = nil
+    /// True when `points` are every window reading of a nightly vital over W, M or 6M, spanning `dayStartMs` (the
+    /// first day's midnight) to `dayEndMs`. `rows` stay the nightly values.
+    var showsReadings = false
 
     var isEmpty: Bool {
         value == nil && points.isEmpty && rows.allSatisfy { $0.value == nil }
@@ -112,7 +116,15 @@ struct MetricDetailData: Sendable {
 /// Reads a metric page's data. Every value comes from `MetricSeries` (or the existing score and stress readers
 /// that feed the same number), so a value is the same on every screen that shows it.
 enum MetricDetailModel {
-    static func load(_ db: Database, nowMs: Int64, kind: MetricKind, range: MetricRange) throws -> MetricDetailData {
+    /// `readings`: for a nightly vital over W, M or 6M, `points` carry every window reading of the span's nights
+    /// (`MetricDetailData.showsReadings`). The header and details stay the nightly values.
+    static func load(
+        _ db: Database,
+        nowMs: Int64,
+        kind: MetricKind,
+        range: MetricRange,
+        readings: Bool = false
+    ) throws -> MetricDetailData {
         let context = try Dashboard.Context.load(db, nowMs: nowMs)
         let zone = context.timeZone
         let today = context.today
@@ -128,6 +140,7 @@ enum MetricDetailModel {
         var caption: String
 
         var night: VitalNight?
+        var showsReadings = false
 
         if range == .day, kind.isNightly {
             // Last night's window readings; the value is the night's own (their floor, mean or median), which is
@@ -190,6 +203,11 @@ enum MetricDetailModel {
             previousValue = aggregate(previous.compactMap(\.value), kind)
             let label = MetricFormat.rangeLabel(first, today, in: zone)
             caption = "\(kind.aggregation == .sum ? "Total" : "Average") · \(label)"
+            if readings, kind.isNightly {
+                points = try db.vitalReadings(kind, from: first, through: today, in: zone)
+                showsReadings = true
+                dayStartMs = LocalTime.localTime(first, hour: 0, in: zone)
+            }
         }
 
         var zones: [ZoneMinutes] = []
@@ -244,7 +262,8 @@ enum MetricDetailModel {
             calibration: calibration,
             calories: calories,
             snapshot: snapshot,
-            night: night
+            night: night,
+            showsReadings: showsReadings
         )
     }
 

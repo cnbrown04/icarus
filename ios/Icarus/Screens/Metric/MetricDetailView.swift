@@ -14,6 +14,8 @@ struct MetricDetailView: View {
     @State private var data: MetricDetailData?
     @State private var selection: Date?
     @State private var aboutExpanded = false
+    /// Nightly vitals over W, M and 6M: one value per night (Average) or every reading behind them (All Readings).
+    @State private var display: ChartDisplay = .average
 
     init(kind: MetricKind, environment: AppEnvironment, liveState: LiveState) {
         self.kind = kind
@@ -41,6 +43,15 @@ struct MetricDetailView: View {
                 MetricDetailChart(data: data ?? .placeholder(kind: kind, range: range), selection: $selection)
                     .frame(height: ChartHeight.detail)
                     .accessibilityHidden(data == nil)
+                if kind.isNightly, range != .day {
+                    Picker("Show", selection: $display) {
+                        ForEach(ChartDisplay.allCases) { option in
+                            Text(option.label).tag(option)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("metric.display")
+                }
                 if !visibleMedication.isEmpty {
                     Text("Shaded: stimulant active")
                         .font(.footnote)
@@ -51,16 +62,6 @@ struct MetricDetailView: View {
             detailsSection
 
             MetricSpecificSections(data: data ?? .placeholder(kind: kind, range: range))
-
-            if kind.isNightly {
-                // Apple Health's entry to every sample behind a metric: here, each night's window readings.
-                Section {
-                    NavigationLink("Show All Data") {
-                        VitalReadingsView(kind: kind, environment: environment)
-                    }
-                    .accessibilityIdentifier("metric.showAllData")
-                }
-            }
 
             Section {
                 DisclosureGroup("About", isExpanded: $aboutExpanded) {
@@ -80,16 +81,20 @@ struct MetricDetailView: View {
         .refreshable {
             await environment.sync.runNow()
         }
-        .task(id: range) {
+        .task(id: LoadKey(range: range, display: display)) {
             let kind = kind
             let range = range
+            let readings = display == .readings
             for await value in environment.snapshots(every: .seconds(60), { db, nowMs in
-                try MetricDetailModel.load(db, nowMs: nowMs, kind: kind, range: range)
+                try MetricDetailModel.load(db, nowMs: nowMs, kind: kind, range: range, readings: readings)
             }) {
                 data = value
             }
         }
         .onChange(of: range) {
+            selection = nil
+        }
+        .onChange(of: display) {
             selection = nil
         }
     }
@@ -127,6 +132,10 @@ struct MetricDetailView: View {
         if let selection {
             if data.range == .day, let point = data.nearestPoint(to: selection) {
                 return (MetricFormat.number(point.value, kind), Format.clock(point.tsMs, in: data.timeZone))
+            }
+            if data.showsReadings, let point = data.nearestPoint(to: selection) {
+                let date = MetricFormat.shortDate(Date(epochMs: point.tsMs), in: data.timeZone)
+                return (MetricFormat.number(point.value, kind), "\(date), \(Format.clock(point.tsMs, in: data.timeZone))")
             }
             if let row = data.nearestRow(to: selection), let value = row.value {
                 return (MetricFormat.number(value, kind), MetricFormat.shortDate(row.date, in: data.timeZone))
@@ -188,6 +197,29 @@ struct MetricDetailView: View {
         case .sixMonths: "Change from Previous 6 Months"
         }
     }
+}
+
+/// What a nightly vital's W, M and 6M chart draws.
+enum ChartDisplay: String, CaseIterable, Identifiable {
+    /// One value per night: the resting floor, the HRV mean or the respiratory median.
+    case average
+    /// Every window reading those nightly values summarise.
+    case readings
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .average: "Average"
+        case .readings: "All Readings"
+        }
+    }
+}
+
+/// What a metric page's data depends on: a change to either reloads it.
+private struct LoadKey: Hashable {
+    let range: MetricRange
+    let display: ChartDisplay
 }
 
 extension MetricDetailData {
