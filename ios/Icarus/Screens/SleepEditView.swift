@@ -38,6 +38,11 @@ struct SleepEditView: View {
 
     private var endMs: Int64 { night.startMs + night.durationS * 1_000 }
 
+    /// The night's start day, such as "Oct 30", for the delete confirmation.
+    private var nightName: String {
+        Date(epochMs: night.startMs).formatted(.dateTime.month(.abbreviated).day())
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -47,7 +52,7 @@ struct SleepEditView: View {
                     DatePicker("Wake", selection: $wake, displayedComponents: [.date, .hourAndMinute])
                         .accessibilityIdentifier("sleepEdit.wake")
                 } footer: {
-                    Text("Times are in the device time zone. A night must be 30 minutes to 16 hours long, cannot end in the future, and needs band data inside it.")
+                    Text("Between 30 minutes and 16 hours, in the past, with band data.")
                 }
 
                 Section {
@@ -62,13 +67,13 @@ struct SleepEditView: View {
                         .accessibilityIdentifier("sleepEdit.restore")
                     }
                 } footer: {
-                    Text("A deleted night stays deleted: detection will not bring it back.")
+                    Text("A deleted night stays deleted.")
                 }
 
                 if let errorMessage {
                     Section {
                         Text(errorMessage)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(.secondary)
                             .accessibilityIdentifier("sleepEdit.error")
                     }
                 }
@@ -91,7 +96,7 @@ struct SleepEditView: View {
                     .accessibilityIdentifier("sleepEdit.save")
                 }
             }
-            .confirmationDialog("Delete this night?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            .confirmationDialog("Delete the night of \(nightName)?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Delete night", role: .destructive) {
                     deleteNight()
                 }
