@@ -32,7 +32,7 @@ struct MetricDetailChart: View {
                 }
                 if let selected = selectedPoint {
                     RuleMark(x: .value("Selected", Date(epochMs: selected.tsMs)))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.secondary)
                 }
             }
             .chartXScale(domain: domain)
@@ -45,7 +45,7 @@ struct MetricDetailChart: View {
                 MedicationWindowsOverlay.marks(data.medication, yRange: range)
                 ForEach(data.points, id: \.tsMs) { point in
                     LineMark(x: .value("Time", Date(epochMs: point.tsMs)), y: .value(data.kind.title, point.value))
-                        .interpolationMethod(.catmullRom)
+                        .interpolationMethod(.linear)
                         .foregroundStyle(color)
                 }
                 if let value = data.value {
@@ -53,7 +53,7 @@ struct MetricDetailChart: View {
                 }
                 if let selected = selectedPoint {
                     RuleMark(x: .value("Selected", Date(epochMs: selected.tsMs)))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.secondary)
                     PointMark(x: .value("Selected", Date(epochMs: selected.tsMs)), y: .value(data.kind.title, selected.value))
                         .foregroundStyle(color)
                 }
@@ -106,7 +106,7 @@ struct MetricDetailChart: View {
                 }
                 if let selected = selectedRow {
                     RuleMark(x: .value("Selected", selected.date, unit: .day))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.secondary)
                 }
             }
             .chartYScale(domain: ChartDomain.line(data.rows.flatMap { [$0.low, $0.high].compactMap { $0 } }))
@@ -123,7 +123,7 @@ struct MetricDetailChart: View {
                 }
                 if let selected = selectedRow {
                     RuleMark(x: .value("Selected", selected.date, unit: .day))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.secondary)
                 }
             }
             .metricChartStyle()
@@ -131,11 +131,19 @@ struct MetricDetailChart: View {
             .accessibilityLabel("\(data.kind.title) by day")
         } else {
             Chart {
+                // Straight segments between consecutive days only: a missing day breaks the line (each run is its
+                // own series), so sparse history never draws a curve across weeks with no data.
+                ForEach(Self.runs(data.rows), id: \.self) { run in
+                    ForEach(run, id: \.self) { index in
+                        let row = data.rows[index]
+                        LineMark(x: .value("Day", row.date, unit: .day), y: .value(data.kind.title, row.value ?? 0),
+                                 series: .value("Run", run.first ?? 0))
+                            .interpolationMethod(.linear)
+                            .foregroundStyle(color)
+                    }
+                }
                 ForEach(data.rows) { row in
                     if let value = row.value {
-                        LineMark(x: .value("Day", row.date, unit: .day), y: .value(data.kind.title, value))
-                            .interpolationMethod(.catmullRom)
-                            .foregroundStyle(color)
                         PointMark(x: .value("Day", row.date, unit: .day), y: .value(data.kind.title, value))
                             .foregroundStyle(color)
                             .symbolSize(Spacing.s16)
@@ -146,7 +154,7 @@ struct MetricDetailChart: View {
                 }
                 if let selected = selectedRow {
                     RuleMark(x: .value("Selected", selected.date, unit: .day))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.secondary)
                 }
             }
             .chartYScale(domain: ChartDomain.line(data.rows.compactMap(\.value)))
@@ -154,6 +162,22 @@ struct MetricDetailChart: View {
             .chartXSelection(value: $selection)
             .accessibilityLabel("\(data.kind.title) by day")
         }
+    }
+
+    /// Indices of `rows` grouped into runs of consecutive days that all have a value.
+    static func runs(_ rows: [MetricDayRow]) -> [[Int]] {
+        var runs: [[Int]] = []
+        var current: [Int] = []
+        for (index, row) in rows.enumerated() {
+            if row.value != nil {
+                current.append(index)
+            } else if !current.isEmpty {
+                runs.append(current)
+                current = []
+            }
+        }
+        if !current.isEmpty { runs.append(current) }
+        return runs
     }
 
     private var selectedRow: MetricDayRow? {
@@ -166,7 +190,7 @@ struct MetricDetailChart: View {
     /// The period average: the only dashed line, in neutral grey.
     private func averageRule(_ value: Double) -> some ChartContent {
         RuleMark(y: .value("Average", value))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Color.secondary)
             .lineStyle(StrokeStyle(lineWidth: 1, dash: [Spacing.s4, Spacing.s4]))
     }
 }
