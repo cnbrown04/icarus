@@ -171,19 +171,26 @@ APNs `.p8` key + signing capability), TestFlight (no ASC secrets), Apple Watch, 
 
 - All packages green (2026-10-30): BandProtocol 117, BandKit 172, Metrics 336, Store 197, SyncKit 59,
   AlarmKitBridge 27. App + test targets build for device (no iPhone simulator installed on this Mac).
-- **Navigation (2026-10-30, WHOOP-style; replaces Home + Today)**: tabs **Overview · Sleep · Strain ·
-  Health**; toolbar on every tab: Journal, Alarms, Settings (sheets). Plan and per-feature status:
-  `docs/whoop-app-roadmap.md`.
-  - **Overview**: day pager (chevrons/swipe, not past today) + Sleep / Recovery / Strain `ScoreDial`s
-    (strain shows the `StrainCoach` target band); cards: log-yesterday prompt, Health Monitor summary,
-    activities, sleep planner, next alarm, sync line, weekly assessment.
-  - **Sleep**: `SleepView` + `SleepPlannerCard` (Peak/Perform/Get-by bedtimes).
-  - **Strain**: live HR hero, strain dial + coach band (optional once-a-day band buzz on reaching it,
-    Settings → Coaching), zones, calories, activities (auto-detected from HR + manual recording, v9).
-  - **Health**: RHR/HRV/stress row, stress-today card, Health Monitor (vitals vs 30-night range; skin
-    temp relative only), Recovery detail, Trends (7/30/90 d), Journal insights, HR/stress/calorie details.
-  - Journal (v10): morning check-in on yesterday's behaviours + insights (≥ 5 days each side; correlation).
-  - Appearance defaults to Dark (Settings). Medication windows shade the HR and stress charts.
+- **Navigation (2026-10-31, Apple Health–style; plan `~/.claude/plans/humming-watching-raven.md`)**: tabs
+  **Summary · Sleep · Strain · Browse**; ONE profile button (`ProfileSheet`: profile, band, medications,
+  alarms, display, coaching, server, storage, advanced, about) trails every tab root. Rule: each piece of
+  information has exactly one page. Pages link by `AppRoute` (`Screens/AppRoute.swift`); `AppRouteDestination`
+  is the only route → page switch, registered once per tab stack in `MainTabView`.
+  - **Summary**: three rings (Sleep %, Recovery, Strain + coach band) → Sleep tab / Recovery page / Strain tab;
+    key metrics (`MetricRow`: resting HR, HRV, stress, respiratory rate) + Vitals; ≤ 2 weekly highlights;
+    rows only when actionable (journal yesterday, band not connected, re-pair, storage).
+  - **Sleep** owns sleep: D/W/M/6M (hypnogram / stacked nightly bars), stages, scores, tonight's planner, nights.
+  - **Strain**: strain ring, live HR → Heart rate page, zones, calories, today's workouts, "+" records one.
+  - **Browse**: every metric by category (no values) + Journal, Insights, Weekly assessment.
+  - **Metric page** (`MetricDetailView`, one template for every metric but sleep): D/W/M/6M, header follows
+    the drag, details (avg/min/max/change), one per-metric section, and the "About" disclosure — the ONLY
+    place for method/estimate text.
+  - Data: every screen reads `MetricSeries` (`metricLatest/metricDays/metricIntraday/heartRateRange`) over
+    the `daily_score` cache (v11, refreshed per day after drains, backfilled 180 d at launch). Resting HR/HRV
+    come from the main sleep session; sleep need/debt from the SleepDebt ledger — one source each.
+  - Design tokens: `MetricCategory` colors (heart pink, activity orange, recovery green, sleep teal, mind
+    purple, respiratory blue) only on category glyphs and chart series; `Symbol` (one SF Symbol per concept);
+    `Font.figure*`; `.metricChartStyle()`; `EmptyStateRow`. Appearance follows the system.
 - **Sleep staging**: faithful port of NOOP `SleepStagerV2` (30 s epochs; gravity movement/jerk,
   HR mean/flatness, R-R RSA regularity, cycle prior + REM-latency guard, Viterbi smoothing).
   Runs during sleep derivation, persisted in `sleep_stage_segment` (schema v4), keyed by
