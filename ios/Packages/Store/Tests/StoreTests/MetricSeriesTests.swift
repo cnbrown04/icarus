@@ -284,11 +284,46 @@ struct MetricSeriesTests {
         #expect(values.dropLast().allSatisfy { $0.value == nil })
     }
 
-    @Test func heartRateHasNoDayColumnSoItsDaysAreNil() throws {
-        let database = try seededWithScores()
+    /// Minute averages of 60, 66 and 90 bpm (plus one minute with no heart rate) on `day`.
+    private func seedHeartRateMinutes(_ database: AppDatabase) throws {
+        let nineAM = localMs(day, 9)
+        try insertMinuteRows([
+            minuteRow(nineAM, hr: 60),
+            minuteRow(nineAM + LocalTime.msPerMinute, hr: 66),
+            minuteRow(nineAM + 2 * LocalTime.msPerMinute, hr: nil),
+            minuteRow(localMs(day, 10), hr: 90),
+        ], into: database)
+    }
+
+    @Test func heartRateCacheIsTheMeanMinAndMaxOfTheMinuteAverages() throws {
+        let database = try seededDatabase()
+        try seedHeartRateMinutes(database)
+        try database.writer.write { db in
+            try db.refreshDailyScores(from: day, through: day, in: chicago, nowMs: testNowMs)
+        }
+        let row = try #require(database.writer.read { db in
+            try DailyScoreRow.fetchOne(db, sql: "SELECT * FROM daily_score WHERE local_day = '2026-10-20'")
+        })
+        // (60 + 66 + 90) / 3, with the null minute ignored.
+        #expect(row.hrAvg == 72)
+        #expect(row.hrMin == 60)
+        #expect(row.hrMax == 90)
         let values = try database.writer.read {
             try $0.metricDays(.heartRate, from: day, through: day, in: chicago)
         }
-        #expect(values == [MetricDayValue(day: day, value: nil)])
+        #expect(values == [MetricDayValue(day: day, value: 72)])
+    }
+
+    @Test func heartRateRangeListsOnlyDaysWithMinutes() throws {
+        let database = try seededDatabase()
+        try seedHeartRateMinutes(database)
+        let first = LocalTime.adding(days: -2, to: day)
+        try database.writer.write { db in
+            try db.refreshDailyScores(from: first, through: day, in: chicago, nowMs: testNowMs)
+        }
+        let ranges = try database.writer.read {
+            try $0.heartRateRange(from: first, through: day, in: chicago)
+        }
+        #expect(ranges == [HeartRateDayRange(day: day, min: 60, max: 90)])
     }
 }

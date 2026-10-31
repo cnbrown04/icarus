@@ -26,6 +26,13 @@ public struct MetricDayValue: Sendable, Equatable {
     public let value: Double?
 }
 
+/// One local day's heart-rate range, the lowest and highest minute average, in bpm.
+public struct HeartRateDayRange: Sendable, Equatable {
+    public let day: LocalDay
+    public let min: Double
+    public let max: Double
+}
+
 /// One intraday value at a timestamp: a minute's value, or an hour's total for calories.
 public struct MetricPoint: Sendable, Equatable {
     /// Epoch ms UTC. For hourly calories, the start of the local hour.
@@ -61,6 +68,10 @@ public struct DailyScoreRow: Codable, Equatable, Sendable, FetchableRecord, Pers
     public var respRate: Double?
     public var stressAvg: Double?
     public var kcal: Double?
+    /// Mean, lowest and highest of the day's minute heart-rate averages, bpm.
+    public var hrAvg: Double?
+    public var hrMin: Double?
+    public var hrMax: Double?
     public var computedAt: Int64
 
     enum CodingKeys: String, CodingKey {
@@ -77,6 +88,9 @@ public struct DailyScoreRow: Codable, Equatable, Sendable, FetchableRecord, Pers
         case respRate = "resp_rate"
         case stressAvg = "stress_avg"
         case kcal
+        case hrAvg = "hr_avg"
+        case hrMin = "hr_min"
+        case hrMax = "hr_max"
         case computedAt = "computed_at"
     }
 }
@@ -92,13 +106,11 @@ extension Database {
     }
 
     /// The day values for `kind` over `from` through `last`, one entry per local day, oldest first. Reads `daily_score`
-    /// only. A day with no row, or with a missing value, is nil. Heart rate has no day column, so every day is nil
-    /// for it: its W, M and 6M views come from a later schema change, not from `minute_metric` at read time.
+    /// only. A day with no row, or with a missing value, is nil. Heart rate is the day's mean of minute averages.
     public func metricDays(_ kind: MetricKind, from first: LocalDay, through last: LocalDay, in timeZone: TimeZone) throws -> [MetricDayValue] {
         let days = Self.days(from: first, through: last)
-        guard let column = Self.dailyColumn(kind), !days.isEmpty else {
-            return days.map { MetricDayValue(day: $0, value: nil) }
-        }
+        guard !days.isEmpty else { return [] }
+        let column = Self.dailyColumn(kind)
         let rows = try Row.fetchAll(self, sql: """
         SELECT local_day, \(column) AS value FROM daily_score WHERE local_day BETWEEN ? AND ?
         """, arguments: [Self.dayKey(first), Self.dayKey(last)])
@@ -109,6 +121,26 @@ extension Database {
             }
         }
         return days.map { MetricDayValue(day: $0, value: values[Self.dayKey($0)]) }
+    }
+
+    /// Each local day's lowest and highest minute heart-rate average from `first` through `last`, oldest first, for a
+    /// daily range bar chart. Reads `daily_score` only. Days with no heart-rate minutes are left out.
+    public func heartRateRange(from first: LocalDay, through last: LocalDay, in timeZone: TimeZone) throws -> [HeartRateDayRange] {
+        let days = Self.days(from: first, through: last)
+        guard !days.isEmpty else { return [] }
+        let rows = try Row.fetchAll(self, sql: """
+        SELECT local_day, hr_min, hr_max FROM daily_score
+        WHERE local_day BETWEEN ? AND ? AND hr_min IS NOT NULL AND hr_max IS NOT NULL ORDER BY local_day
+        """, arguments: [Self.dayKey(first), Self.dayKey(last)])
+        var byKey: [String: HeartRateDayRange] = [:]
+        for row in rows {
+            let key: String = row["local_day"]
+            let lowest: Double = row["hr_min"]
+            let highest: Double = row["hr_max"]
+            guard let day = days.first(where: { Self.dayKey($0) == key }) else { continue }
+            byKey[key] = HeartRateDayRange(day: day, min: lowest, max: highest)
+        }
+        return days.compactMap { byKey[Self.dayKey($0)] }
     }
 
     /// The intraday values for `kind` on local `day`, oldest first. Heart rate is each minute's average, stress is
@@ -183,8 +215,8 @@ extension Database {
     /// How old a `daily_score` row may be before `metricLatest` rebuilds it.
     static let dailyScoreMaxAgeMs: Int64 = 5 * LocalTime.msPerMinute
 
-    /// The `daily_score` column behind a day value. Nil for heart rate, which the cache does not store per day.
-    static func dailyColumn(_ kind: MetricKind) -> String? {
+    /// The `daily_score` column behind a day value.
+    static func dailyColumn(_ kind: MetricKind) -> String {
         switch kind {
         case .recovery: "recovery"
         case .strain: "strain"
@@ -194,7 +226,7 @@ extension Database {
         case .hrv: "rmssd_ms"
         case .respiratoryRate: "resp_rate"
         case .stress: "stress_avg"
-        case .heartRate: nil
+        case .heartRate: "hr_avg"
         }
     }
 
@@ -219,6 +251,13 @@ extension Database {
         )
         let night = try mainSleepByDay(from: day, through: day, in: timeZone)[day]
         let summary = try daySummaries([day], in: timeZone).first
+        let heartRate = try Row.fetchOne(self, sql: """
+        SELECT AVG(hr_avg) AS mean, MIN(hr_avg) AS lowest, MAX(hr_avg) AS highest FROM minute_metric
+        WHERE minute_ms >= ? AND minute_ms < ? AND hr_avg IS NOT NULL
+        """, arguments: [
+            LocalTime.localTime(day, hour: 0, in: timeZone),
+            LocalTime.localTime(LocalTime.adding(days: 1, to: day), hour: 0, in: timeZone),
+        ])
 
         var recovery: Double?
         var calibrating: Bool?
@@ -245,6 +284,9 @@ extension Database {
             respRate: night?.respRateBrpm,
             stressAvg: summary?.stressAverage,
             kcal: summary?.kcalTotal,
+            hrAvg: heartRate?["mean"],
+            hrMin: heartRate?["lowest"],
+            hrMax: heartRate?["highest"],
             computedAt: nowMs
         )
     }
@@ -356,5 +398,5 @@ public enum DailyScoreCache {
     public static let backfillDays = 180
     /// Bump to the date of any change to the score math (`dailyScores`, the single sources). Rows computed before
     /// it are rebuilt by the next launch. Nothing else in the cache needs versioning.
-    public static let algoSinceMs: Int64 = 1_793_318_400_000
+    public static let algoSinceMs: Int64 = 1_793_413_200_000
 }

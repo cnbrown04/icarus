@@ -97,7 +97,7 @@ struct SchemaTests {
         }
         for column in ["local_day", "recovery", "recovery_calibrating", "strain", "sleep_performance", "asleep_sec",
                        "sleep_need_sec", "sleep_debt_sec", "resting_hr", "rmssd_ms", "resp_rate", "stress_avg",
-                       "kcal", "computed_at"] {
+                       "kcal", "hr_avg", "hr_min", "hr_max", "computed_at"] {
             #expect(columns.contains(column), "missing column \(column)")
         }
         let primaryKey = try database.writer.read { db in

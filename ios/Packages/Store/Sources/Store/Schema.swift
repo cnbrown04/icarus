@@ -225,11 +225,13 @@ enum Schema {
     /// `Database.refreshDailyScores` rewrites a row from `dailyScores` and the single sources, after each history
     /// derivation and at launch. Nothing reads it except `metricDays` and `metricLatest`, so a row can always be
     /// rebuilt. `local_day` is 'YYYY-MM-DD'. Columns are nullable where the value can be missing for a day.
+    /// `hr_avg`, `hr_min` and `hr_max` are the mean, lowest and highest of the day's minute averages (`minute_metric.hr_avg`).
     /// `recovery_calibrating` is 1 while the baseline is too thin to score. `asleep_sec`, `sleep_need_sec` and
     /// `sleep_debt_sec` are whole seconds. `strain` is WHOOP's 0 to 21 scale.
     static let v11 = """
     CREATE TABLE daily_score (local_day TEXT PRIMARY KEY, recovery REAL, recovery_calibrating INTEGER,
       strain REAL, sleep_performance REAL, asleep_sec INTEGER, sleep_need_sec INTEGER, sleep_debt_sec INTEGER,
-      resting_hr REAL, rmssd_ms REAL, resp_rate REAL, stress_avg REAL, kcal REAL, computed_at INTEGER NOT NULL);
+      resting_hr REAL, rmssd_ms REAL, resp_rate REAL, stress_avg REAL, kcal REAL,
+      hr_avg REAL, hr_min REAL, hr_max REAL, computed_at INTEGER NOT NULL);
     """
 }
