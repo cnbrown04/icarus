@@ -59,7 +59,7 @@ struct WeeklyAssessmentTests {
             thisWeek: week(hrv: 48, restingHR: 58),
             previousWeek: week(hrv: 55, restingHR: 58)
         )
-        #expect(report.observations == ["HRV averaged 48 ms, down 7 ms on the week before."])
+        #expect(report.observations == ["HRV averaged 48 ms, down 7 ms from the week before."])
     }
 
     @Test func smallMovesBelowThresholdAreNotMentioned() {
@@ -79,8 +79,8 @@ struct WeeklyAssessmentTests {
             previousWeek: week(hrv: 50, restingHR: 56, recovery: 70, sleep: 85)
         )
         #expect(report.observations.count == 3)
-        #expect(report.observations[0].hasPrefix("Recovery averaged 50 %"))
-        #expect(report.observations[1].hasPrefix("Sleep performance averaged 70 %"))
+        #expect(report.observations[0].hasPrefix("Recovery averaged 50%"))
+        #expect(report.observations[1].hasPrefix("Sleep performance averaged 70%"))
         #expect(report.observations[2].hasPrefix("HRV averaged 40 ms"))
     }
 
@@ -89,7 +89,7 @@ struct WeeklyAssessmentTests {
             thisWeek: week(restingHR: 60),
             previousWeek: week(restingHR: 52)
         )
-        #expect(report.observations == ["Resting HR averaged 60 bpm, up 8 bpm on the week before."])
+        #expect(report.observations == ["Resting HR averaged 60 bpm, up 8 bpm from the week before."])
         #expect(WeeklyAssessment.Metric.restingHR.higherIsBetter == false)
     }
 
@@ -98,8 +98,8 @@ struct WeeklyAssessmentTests {
             thisWeek: week(strain: 14.5, hours: 6.0),
             previousWeek: week(strain: 11.0, hours: 7.0)
         )
-        #expect(report.observations.contains("Strain averaged 14.5, up 3.5 on the week before."))
-        #expect(report.observations.contains("Hours slept averaged 6.0 h, down 1.0 h on the week before."))
+        #expect(report.observations.contains("Strain averaged 14.5, up 3.5 from the week before."))
+        #expect(report.observations.contains("Hours slept averaged 6.0 h, down 1.0 h from the week before."))
     }
 
     @Test func rowsCoverEveryMetricInOrder() {

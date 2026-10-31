@@ -180,20 +180,25 @@ public enum WeeklyAssessment {
         Metric.allCases.contains { $0.value(in: day) != nil }
     }
 
-    /// Numbers first, then the change. e.g. "HRV averaged 48 ms, down 7 ms on the week before."
+    /// Numbers first, then the change. e.g. "HRV averaged 48 ms, down 7 ms from the week before." A change in a
+    /// percentage is in points ("up 30 points"): "up 30%" would read as a relative change.
     /// Only called for rows whose delta clears the threshold.
     static func sentence(for row: Row) -> String {
         guard let current = row.thisWeek, let delta = row.delta else { return "" }
         let direction = delta > 0 ? "up" : "down"
         let value = format(current, unit: row.metric.unit)
-        let change = format(abs(delta), unit: row.metric.unit)
-        return "\(row.metric.title) averaged \(value), \(direction) \(change) on the week before."
+        let change = row.metric.unit == "%"
+            ? "\(Int(abs(delta).rounded())) points"
+            : format(abs(delta), unit: row.metric.unit)
+        return "\(row.metric.title) averaged \(value), \(direction) \(change) from the week before."
     }
 
+    /// "92%" (no space before a percent sign), "9.0 h", "48 ms", "11.4" (strain has no unit).
     static func format(_ value: Double, unit: String) -> String {
         let text = unit == "h" || unit.isEmpty
-            ? String(format: "%.1f", value)
+            ? value.formatted(.number.precision(.fractionLength(1)))
             : "\(Int(value.rounded()))"
-        return unit.isEmpty ? text : "\(text) \(unit)"
+        if unit.isEmpty { return text }
+        return unit == "%" ? "\(text)%" : "\(text) \(unit)"
     }
 }
