@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The app's colour scheme, set in Settings and applied at the root. Dark is the default: WHOOP is dark-first.
+/// The app's colour scheme, set in Settings and applied at the root. Follows the system setting by default.
 /// Stored under `@AppStorage("appearance")` as the raw value.
 enum AppAppearance: String, CaseIterable, Identifiable {
     case system

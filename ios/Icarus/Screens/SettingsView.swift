@@ -19,8 +19,8 @@ struct SettingsView: View {
     @AppStorage(RetentionPolicy.minuteDaysKey) private var minuteDaysStored = Int(RetentionPolicy.minuteDaysDefault)
     /// Strain Coach: buzz the band once a day when day strain reaches the target (`TargetBuzzController`).
     @AppStorage(TargetBuzzController.enabledKey) private var buzzOnTarget = false
-    /// Applied at the app root (`IcarusApp`). Dark is the default.
-    @AppStorage("appearance") private var appearance: AppAppearance = .dark
+    /// Applied at the app root (`IcarusApp`). Follows the system by default.
+    @AppStorage("appearance") private var appearance: AppAppearance = .system
 
     /// Five taps on the version row opens the hidden Debug screen (PLAN.md §14 row 18).
     private static let debugTapCount = 5
@@ -109,7 +109,7 @@ struct SettingsView: View {
             } header: {
                 Text("Appearance")
             } footer: {
-                Text("Dark is the default. System follows the iPhone setting.")
+                Text("System follows the iPhone setting. Light or Dark overrides it.")
             }
 
             Section {
