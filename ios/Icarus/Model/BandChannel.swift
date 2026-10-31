@@ -34,13 +34,12 @@ protocol RealtimeRawFloodTransport: BandTransport {
     func setHandshakeRealtimeRawFloodDisabled(_ disabled: Bool) async throws
 }
 
-/// A transport whose Tier B controller can rewind its read cursor and re-drain the strap's whole
-/// stored history (the app-deleted restore). Feature-detected with an `as?`, so a transport
+/// A transport whose Tier B controller can sync the strap's pending (unacked) history on demand
+/// (the History "Sync all pending band data" button). Feature-detected with an `as?`, so a transport
 /// without the capability is a logged no-op, not a build break.
 protocol FullHistoryDrainTransport: BandTransport {
     func drainFullHistory() async
     func fullHistorySummary() async -> String?
-    func probeReadPointer() async -> String
 }
 
 /// A transport that writes each drained history batch through a durable sink before acking it

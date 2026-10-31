@@ -120,7 +120,7 @@ struct DeviceView: View {
             }
 
             Section {
-                Button("Drain full band history…") {
+                Button("Sync all pending band data…") {
                     showsRestore = true
                 }
                 .disabled(liveState.tierBState != .ready || liveState.drainProgress.isDraining)
@@ -159,14 +159,14 @@ struct DeviceView: View {
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.trailing)
                     } label: {
-                        Label("Restore", systemImage: "clock.arrow.circlepath")
+                        Label("Sync result", systemImage: "clock.arrow.circlepath")
                     }
                     .accessibilityIdentifier("device.restoreSummary")
                 }
             } header: {
                 Text("History")
             } footer: {
-                Text("Re-reads everything still in the band's storage and rebuilds heart rate, sleep and the graphs from it. Use after deleting the app, or whenever history looks wrong.")
+                Text("Pulls everything the band has recorded but not yet sent, until it is caught up. The band keeps about two weeks, but data it has already handed to the app cannot be sent again.")
             }
 
             Section {
@@ -230,16 +230,16 @@ struct DeviceView: View {
             Button("Cancel", role: .cancel) {}
         }
         .confirmationDialog(
-            "Drain the band's full history?",
+            "Sync all pending band data?",
             isPresented: $showsRestore,
             titleVisibility: .visible
         ) {
-            Button("Drain full history") {
+            Button("Sync now") {
                 startRestore()
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The band's stored history is re-read and everything already stored dedupes. Draining a full ring takes a few minutes; live readings keep flowing.")
+            Text("Pulls everything the band has recorded but not yet sent. A large backlog takes a few minutes; live readings keep flowing.")
         }
         .navigationTitle("Band")
     }

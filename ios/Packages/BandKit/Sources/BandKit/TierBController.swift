@@ -167,16 +167,14 @@ public actor TierBController {
     private static let drainProgressMinInterval: TimeInterval = 0.5
     /// The decoded ring-buffer state of the strap's GET_DATA_RANGE reply (NOOP's DataRange words):
     /// write pointer, persistent read pointer, ring capacity, and the page backlog. Set from every
-    /// decoded GET_DATA_RANGE reply (the handshake's and `drainFullHistory`'s); nil until the first
-    /// readable reply. The app reads it for diagnostics and the full-history restore reads it to
-    /// compute the rewind target.
+    /// decoded GET_DATA_RANGE reply; nil until the first readable reply. The app reads it for
+    /// diagnostics (`pagesBehind`).
     public private(set) var ringState: RingState?
     /// One-line state of the last (or running) full-history restore, for the app's UI.
     public private(set) var fullHistorySummary: String?
-    /// Oldest and newest record times kept by the running restore, and by its current pass. Fed by
-    /// `handleOffloadFrame`; reset at the restore's start and at each pass's start.
+    /// Oldest and newest record times kept by the running sync. Fed by `handleOffloadFrame`; reset at
+    /// the sync's start.
     private var restoreSpan = RecordSpan()
-    private var phaseSpan = RecordSpan()
     /// Waiters resumed when the running drain ends (`drainFullHistory` parks here between the
     /// back-to-back kicks).
     private var drainEndWaiters: [CheckedContinuation<Void, Never>] = []
@@ -381,206 +379,55 @@ public actor TierBController {
         await runDrain(trigger)
     }
 
-    // MARK: Full-history restore (OpenStrap §4.3: drain the entire stored history)
+    // MARK: Sync of pending band data (the History "Sync all pending band data" button)
 
-    /// Runaway guard for `drainFullHistory`: the most back-to-back drains one restore may kick,
-    /// shared by both passes. Each drain is already bounded by the ~60 s run cap, so the cap only
-    /// stops a pathological loop. A full ring is 131072 pages × ~9 records ≈ 1.2 M records (13.6 days,
-    /// 2026-10-30 finding); drains keep ~5–7k records each, so a whole ring needs ~200–240 drains
-    /// (~3–4 h connected).
+    /// Runaway guard for `drainFullHistory`: the most back-to-back drains one sync may kick. Each
+    /// drain is already bounded by the ~60 s run cap, so the cap only stops a pathological loop.
+    /// Drains keep ~5–7k records each, so even a large unacked backlog needs a few dozen drains.
     public static let maxFullHistoryDrains = 320
-    /// How far past the write pointer the restore starts (pages). The strap fills a page about every
-    /// 9 s, overwriting the oldest one, so starting at W itself would race the overwrite; the margin skips
-    /// the oldest ~18 minutes, and the restore reads ~10 pages/s, far outrunning the writer.
-    public static let restoreMarginSlots = 120
 
-    /// Positions the strap's persistent read cursor (SET_READ_POINTER, cmd 33). OpenStrap §4.3:
-    /// the cursor survives connections and acks, and repositioning it makes the strap re-stream
-    /// history it already drained — the mechanism behind the app-deleted restore.
+    /// Drains everything the strap has recorded but not yet sent to the app (its unacked backlog),
+    /// back to back, until the strap reports it is caught up. The name is kept from the earlier
+    /// rewind-based restore; the behaviour is now a plain sync. Never throws: every outcome lands in
+    /// `fullHistorySummary` and the log.
     ///
-    /// The write goes out as a confirmed (with-response) GATT write without awaiting a command
-    /// response: OpenStrap's reference client sends every command that way
-    /// (`research_playground.py:send` — a `write_gatt_char(response=True)` and move on), and no
-    /// capture shows a cmd-33 COMMAND_RESPONSE. Whether some firmware echoes one is
-    /// [Unverified]; a reply, if it ever comes, is ignored like any other unsolicited response.
-    public func rewindReadPointer(to offset: UInt32) async throws {
-        try await writeConfirmedWithoutReply(.setReadPointer(offset: offset))
-        BandLog.tierB(.info, "read pointer set to \(offset) (cmd 33, no reply awaited)")
-    }
-
-    /// The strap's cursor words from one GET_DATA_RANGE: the ring (W, U, T) and the read cursor.
-    private func readCursorState() async throws -> (ring: RingState, cursor: Int)? {
-        let raw = FrameCodec.reencode(try await send(BandCommand.getDataRange()))
-        guard let ring = DataRange.ringState(from: raw, cmdOff: 6),
-              let cursor = DataRange.readCursor(from: raw, cmdOff: 6) else { return nil }
-        ringState = ring
-        return (ring, cursor)
-    }
-
-    /// The page in the first HISTORICAL_DATA_RESULT token a drain acks (the token's first word): where that
-    /// drain really streamed from. Reset by the read-pointer probe before each of its drains.
-    private var firstAckedPage: Int?
-
-    /// Hardware test of whether SET_READ_POINTER steers where a drain streams from (2026-10-30).
-    ///
-    /// Two earlier probes moved the read-cursor word below U and the next drain still started just above the
-    /// old cursor: U looks like a floor. This one stays ABOVE U. Step 1 moves the cursor FORWARD to W − 1 and
-    /// drains; step 2 moves it BACK to the original cursor and drains. If step 1 starts at W − 1 the cursor
-    /// steers streaming; if step 2 re-reads the skipped pages, rewinding works anywhere at or above U. Risk,
-    /// accepted by the user: if step 1's acks lift U past the skipped pages, those ~(W − cursor) pages (about a
-    /// minute) cannot be re-read. Every step is logged as `read-pointer probe`.
-    public func probeReadPointer() async -> String {
-        guard enabled, state == .ready, linkOpen else { return "probe skipped: the channel is not ready" }
-        if case .draining = offload.phase { return "probe skipped: a drain is running, try again in a minute" }
-        func log(_ label: String, _ state: (ring: RingState, cursor: Int)) {
-            BandLog.tierB(.info, "read-pointer probe: \(label) cursor=\(state.cursor) W=\(state.ring.write) U=\(state.ring.read)")
-        }
-        /// Moves the cursor, reads it back, runs one drain; returns (cursor after the write, first acked page, kept).
-        func step(_ label: String, to target: Int) async throws -> (cursor: Int, first: Int?, kept: Int)? {
-            try await rewindReadPointer(to: UInt32(target))
-            guard let moved = try await readCursorState() else { return nil }
-            log("\(label) after write (target \(target))", moved)
-            firstAckedPage = nil
-            guard await runDrain(.manual) else { return (moved.cursor, nil, 0) }
-            await waitForDrainEnd()
-            let result = (moved.cursor, firstAckedPage, drainKeptRecords)
-            if let settled = try await readCursorState() { log("\(label) after drain", settled) }
-            BandLog.tierB(.info, "read-pointer probe: \(label) drain first acked page \(result.1.map(String.init) ?? "none"), kept \(result.2)")
-            return result
-        }
-        do {
-            guard let start = try await readCursorState() else { return "probe aborted: ring state unreadable" }
-            log("start", start)
-            guard start.ring.write - start.cursor >= 3 else {
-                return "probe skipped: only \(start.ring.write - start.cursor) page(s) of backlog; wait a minute and retry"
-            }
-            let ahead = start.ring.write - 1
-            guard let skip = try await step("skip", to: ahead) else { return "probe aborted: unreadable after the skip" }
-            guard let back = try await step("back", to: start.cursor) else { return "probe aborted: unreadable after going back" }
-            let line = "skip: wanted \(ahead), drain began at \(skip.first.map(String.init) ?? "–") (kept \(skip.kept)); "
-                + "back: wanted \(start.cursor), drain began at \(back.first.map(String.init) ?? "–") (kept \(back.kept)); U was \(start.ring.read)"
-            BandLog.tierB(.info, "read-pointer probe result: \(line)")
-            return line
-        } catch {
-            return "probe aborted: \(String(describing: error))"
-        }
-    }
-
-    /// Re-reads the strap's ENTIRE stored history: the app-deleted restore. After the app's
-    /// database is wiped, the strap's persistent read cursor still sits at the last-acked batch,
-    /// so a plain connect would only re-read what came after it. The flash is a ring
-    /// (`DataRange.ringState`): once the write pointer W has wrapped, the OLDEST surviving data
-    /// sits at W, not at slot 0, so a rewind to 0 skips it. The restore therefore runs two passes:
-    ///
-    /// 1. Rewind to `W + restoreMarginSlots` (mod T) and drain back to back until the live edge.
-    ///    That reads the ring oldest-first, around the wrap, up to W. The margin skips the oldest
-    ///    slots, which the strap overwrites about once a second while the restore runs.
-    /// 2. Only when pass 1 stopped on an empty drain or HISTORY_COMPLETE short of the live edge
-    ///    (a strap that never wrapped, or never wraps its cursor at T − 1), rewind to 0 and drain
-    ///    from the ring start.
-    ///
-    /// Both passes share `maxFullHistoryDrains`. Each drain's ~60 s run cap slices the work, so even
-    /// a full ~13.6-day ring (131072 pages) drains in bounded slices. Never throws: every failure is
-    /// logged and leaves the normal drain machinery intact.
+    /// It does NOT rewind the read cursor, and it cannot re-read history the app already acknowledged.
+    /// Hardware, 2026-10-30 (fw 41.17.x): SET_READ_POINTER (cmd 33) is accepted and the GET_DATA_RANGE
+    /// cursor word takes the new value, but the next drain still streams from the strap's own internal
+    /// position (just after the last acked page), whether the cursor was moved backwards or forwards.
+    /// A rewind therefore never re-sent acked data, so no rewind is made here.
     public func drainFullHistory() async {
         guard enabled, state == .ready, linkOpen else {
-            fullHistorySummary = "restore skipped: the channel is off or the link is not ready"
-            BandLog.tierB(.info, "full-history restore skipped: the channel is off or the link is not ready")
+            fullHistorySummary = "sync skipped: the channel is off or the link is not ready"
+            BandLog.tierB(.info, "full-history sync skipped: the channel is off or the link is not ready")
             return
         }
         fullHistorySummary = "draining…"
-        BandLog.tierB(.info, "full-history restore begins")
-        do {
-            // The connect trigger kicks its own drain as soon as Tier B goes ready, so an
-            // auto-restore (or a manual tap) can land while that drain is still running. Waiting
-            // it out keeps the restore's first kick from being denied and reported as "0 drains".
-            while case .draining = offload.phase {
-                await waitForDrainEnd()
-            }
-            guard enabled, state == .ready, linkOpen else {
-                fullHistorySummary = "restore aborted: the link closed before the restore started"
-                BandLog.tierB(.error, "full-history restore aborted: the link closed before the restore started")
-                return
-            }
-            // The reply's ring state is ALSO decoded into `ringState` by `handleDataRangeReply`
-            // when the notification lands; decoding the resolved frame here keeps the rewind
-            // decision independent of that event's ordering.
-            let rangeFrame = try await send(BandCommand.getDataRange())
-            guard let ring = DataRange.ringState(from: FrameCodec.reencode(rangeFrame), cmdOff: 6) else {
-                fullHistorySummary = "restore aborted: the band's ring state is unreadable"
-                BandLog.tierB(.error, "full-history restore aborted: the GET_DATA_RANGE reply's ring state is unreadable")
-                return
-            }
-            ringState = ring
-            restoreSpan = RecordSpan()
-
-            let phase1Start = (ring.write + Self.restoreMarginSlots) % ring.capacity
-            guard await seekForRestore(phase1Start, from: ring.read) else { return }
-            phaseSpan = RecordSpan()
-            let first = await runFullHistoryPass(budget: Self.maxFullHistoryDrains)
-            logRestorePhase(1, start: phase1Start, pass: first)
-
-            var last = first
-            var drains = first.drains
-            var kept = first.kept
-            if first.stop == .emptyDrain || first.stop == .historyComplete {
-                guard await seekForRestore(0, from: nil) else { return }
-                phaseSpan = RecordSpan()
-                BandLog.tierB(.info, "full-history restore phase 2: pass 1 ended short of the live edge, draining from the ring start")
-                let second = await runFullHistoryPass(budget: Self.maxFullHistoryDrains - first.drains)
-                logRestorePhase(2, start: 0, pass: second)
-                last = second
-                drains += second.drains
-                kept += second.kept
-            }
-
-            if last.stop == .denied {
-                fullHistorySummary = "restore stopped: the next drain could not start"
-            } else if drains == 0 {
-                fullHistorySummary = "restore stopped: the link closed before the first drain"
-            } else if last.stop == .cap {
-                fullHistorySummary = "restore hit the \(Self.maxFullHistoryDrains)-drain cap"
-                BandLog.tierB(.error, "full-history restore hit the \(Self.maxFullHistoryDrains)-drain cap")
-            } else {
-                let span = restoreSpan.summaryText.map { ", \($0)" } ?? ""
-                fullHistorySummary = "finished: \(drains) drain(s), \(kept.formatted()) record(s)\(span)"
-                BandLog.tierB(.info, "full-history restore finished: \(drains) drain(s), \(kept) record(s)\(span)")
-            }
-        } catch {
-            // `send` failures land here (disabled / notConnected / timedOut after retries).
-            fullHistorySummary = "restore aborted: \(String(describing: error))"
-            BandLog.tierB(.error, "full-history restore aborted: \(String(describing: error))")
+        BandLog.tierB(.info, "full-history sync begins")
+        // The connect trigger kicks its own drain as soon as Tier B goes ready, so a manual tap or the
+        // auto-sync can land while that drain is still running. Waiting it out keeps the first kick
+        // from being denied and reported as "0 drains".
+        while case .draining = offload.phase {
+            await waitForDrainEnd()
         }
-    }
-
-    /// Positions the read cursor for one restore pass, then READS IT BACK: until 2026-10-30 every restore's
-    /// rewind was silently discarded (unpadded frame) and the restore reported success anyway. Returns false
-    /// — and the restore ends with a summary saying so — when the write failed or the strap's read cursor
-    /// did not land on `target`. Skips the write when the cursor is known to be at `target` already.
-    private func seekForRestore(_ target: Int, from current: Int?) async -> Bool {
-        if let current, current == target { return true }
-        let message = current.map { "rewinding read cursor \($0)→\(target)" } ?? "rewinding read cursor to \(target)"
-        BandLog.tierB(.info, "\(message)")
-        do {
-            // No settle delay: the strap handles commands in order, so the GET_DATA_RANGE below is answered
-            // after the cmd-33 write (2026-10-30 log: the cmd-33 response precedes the next range reply).
-            try await rewindReadPointer(to: UInt32(target))
-            guard let after = try await readCursorState() else {
-                fullHistorySummary = "restore aborted: could not read the cursor back"
-                BandLog.tierB(.error, "full-history restore aborted: GET_DATA_RANGE unreadable after the rewind")
-                return false
-            }
-            guard after.cursor == target || after.ring.read == target else {
-                fullHistorySummary = "restore aborted: the band ignored the rewind (cursor \(after.cursor), wanted \(target))"
-                BandLog.tierB(.error, "full-history restore aborted: read cursor \(after.cursor) / U \(after.ring.read) after rewinding to \(target)")
-                return false
-            }
-            BandLog.tierB(.info, "read cursor confirmed at \(after.cursor) (U \(after.ring.read))")
-            return true
-        } catch {
-            fullHistorySummary = "restore aborted: the read-cursor rewind failed"
-            BandLog.tierB(.error, "full-history restore aborted: the SET_READ_POINTER write failed (\(String(describing: error)))")
-            return false
+        guard enabled, state == .ready, linkOpen else {
+            fullHistorySummary = "sync aborted: the link closed before the sync started"
+            BandLog.tierB(.error, "full-history sync aborted: the link closed before the sync started")
+            return
+        }
+        restoreSpan = RecordSpan()
+        let pass = await runFullHistoryPass(budget: Self.maxFullHistoryDrains)
+        if pass.stop == .denied {
+            fullHistorySummary = "sync stopped: the next drain could not start"
+        } else if pass.drains == 0 {
+            fullHistorySummary = "sync stopped: the link closed before the first drain"
+        } else if pass.stop == .cap {
+            fullHistorySummary = "sync hit the \(Self.maxFullHistoryDrains)-drain cap"
+            BandLog.tierB(.error, "full-history sync hit the \(Self.maxFullHistoryDrains)-drain cap")
+        } else {
+            let span = restoreSpan.summaryText.map { ", \($0)" } ?? ""
+            fullHistorySummary = "synced: \(pass.drains) drain(s), \(pass.kept.formatted()) record(s)\(span)"
+            BandLog.tierB(.info, "full-history sync finished: \(pass.drains) drain(s), \(pass.kept) record(s)\(span)")
         }
     }
 
@@ -630,12 +477,6 @@ public actor TierBController {
         }
         pass.stop = pass.stop ?? .cap
         return pass
-    }
-
-    /// One line per restore pass: where it started, what it kept, and the span of those records.
-    private func logRestorePhase(_ number: Int, start: Int, pass: RestorePass) {
-        let range = phaseSpan.rangeText.map { ", \($0)" } ?? ""
-        BandLog.tierB(.info, "full-history restore phase \(number) from slot \(start): \(pass.drains) drain(s), \(phaseSpan.count) record(s) kept\(range), stopped on \(pass.stop.map { "\($0)" } ?? "none")")
     }
 
     /// Resumes when the running drain ends (its `.stop` effect ran `finishDrain`). A drain that
@@ -878,7 +719,6 @@ public actor TierBController {
             } else {
                 drainKeptRecords += 1
                 historicalRecords.append(record)
-                phaseSpan.add(unix: Int(record.unixSeconds))
                 restoreSpan.add(unix: Int(record.unixSeconds))
             }
         }
@@ -941,9 +781,6 @@ public actor TierBController {
                 }
                 do {
                     try await writeConfirmedWithoutReply(.historicalDataResult(token: token))
-                    if firstAckedPage == nil {
-                        firstAckedPage = Int(Self.tokenValue(Array(token.prefix(4))))
-                    }
                     BandLog.tierB(.info, "acked batch, trim cursor \(Self.tokenValue(token)) (\(offload.recordCount) record(s) so far)")
                     // Without a sink the decoded records are handed to the app now: holding the whole
                     // drain in memory until it stops would lose every acked record if the app died

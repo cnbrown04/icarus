@@ -166,20 +166,14 @@ public final class CoreBluetoothTransport: NSObject, BandTransport, CBCentralMan
         await tierB.armAlarms(date.map { [$0] } ?? [])
     }
 
-    /// App-facing full-history restore (the app-deleted case): rewinds the strap's read cursor to
-    /// its oldest banked extent and drains back-to-back until caught up. The one-line state lands
-    /// in `fullHistorySummary` for the app's UI.
+    /// App-facing sync of the strap's pending history: drains back to back until the strap is caught
+    /// up. The one-line state lands in `fullHistorySummary` for the app's UI.
     public func drainFullHistory() async {
         await tierB.drainFullHistory()
     }
 
     public func fullHistorySummary() async -> String? {
         await tierB.fullHistorySummary
-    }
-
-    /// Debug-only hardware check of SET_READ_POINTER (`TierBController.probeReadPointer`).
-    public func probeReadPointer() async -> String {
-        await tierB.probeReadPointer()
     }
 
     /// Installs the store that drained batches are written to before each ack

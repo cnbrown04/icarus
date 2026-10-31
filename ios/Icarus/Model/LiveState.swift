@@ -288,22 +288,14 @@ final class LiveState {
         return true
     }
 
-    /// Rewinds the strap's read cursor and re-drains its whole stored history (the app-deleted
-    /// restore). A transport without the capability (fixture, synthetic) logs and does nothing.
+    /// Syncs everything the strap has recorded but not yet sent to the app. A transport without the
+    /// capability (fixture, synthetic) logs and does nothing.
     func drainFullHistory() async {
         guard let drain = transport as? any FullHistoryDrainTransport else {
-            BandLog.tierB(.info, "app: full-history restore skipped: transport has no drain control")
+            BandLog.tierB(.info, "app: full-history sync skipped: transport has no drain control")
             return
         }
         await drain.drainFullHistory()
-    }
-
-    /// Rewinds the read cursor ~10 min, reads it back and runs one drain to show where it starts (Debug screen).
-    func probeReadPointer() async -> String {
-        guard let drain = transport as? any FullHistoryDrainTransport else {
-            return "probe skipped: transport has no drain control"
-        }
-        return await drain.probeReadPointer()
     }
 
     /// The one-line state of the last (or running) full-history restore, for the Band screen.

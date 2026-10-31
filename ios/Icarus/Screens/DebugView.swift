@@ -25,8 +25,6 @@ struct DebugView: View {
     @State private var showsRecomputeConfirm = false
     @State private var isRecomputing = false
     @State private var recomputeResult: String?
-    @State private var isProbingReadPointer = false
-    @State private var readPointerProbeResult: String?
 
     var body: some View {
         let frames = liveState.frameLog.latest(Self.listLimit)
@@ -34,27 +32,6 @@ struct DebugView: View {
             dataServerSection
             metricsInspectorSection
             recomputeSection
-
-            Section {
-                Button(isProbingReadPointer ? "Probing…" : "Probe read pointer") {
-                    isProbingReadPointer = true
-                    Task {
-                        readPointerProbeResult = await liveState.probeReadPointer()
-                        isProbingReadPointer = false
-                    }
-                }
-                .disabled(isProbingReadPointer || liveState.tierBState != .ready || liveState.drainProgress.isDraining)
-                .accessibilityIdentifier("debug.probeReadPointer")
-                if let readPointerProbeResult {
-                    Text(readPointerProbeResult)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            } header: {
-                Text("Band history")
-            } footer: {
-                Text("Moves the band's read cursor ahead about a minute and syncs, then moves it back and syncs again, to show whether the cursor steers where syncing starts. May lose up to a minute of data.")
-            }
 
             Section {
                 NavigationLink {
