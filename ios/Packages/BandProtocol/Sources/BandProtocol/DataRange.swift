@@ -126,6 +126,17 @@ public enum DataRange {
         return RingState(write: w, read: u, capacity: t)
     }
 
+    /// The ring generation word GET_DATA_RANGE carries after the read pointer (`cmdOff + 20`, u32 LE).
+    /// [Unverified] meaning: on fw 41.17.x it reads 1, the same value as the second word of every
+    /// HISTORICAL_DATA_RESULT cursor token (`[page u32][1 u32]`), so it is read as the epoch / wrap
+    /// count those tokens carry. Nil for a frame too short to hold it.
+    public static func ringEpoch(from frame: [UInt8], cmdOff: Int) -> UInt32? {
+        let offset = cmdOff + 20
+        guard cmdOff >= 0, offset + 4 <= frame.count else { return nil }
+        return UInt32(frame[offset]) | UInt32(frame[offset + 1]) << 8
+            | UInt32(frame[offset + 2]) << 16 | UInt32(frame[offset + 3]) << 24
+    }
+
     public static func pagesBehind(from frame: [UInt8], cmdOff: Int) -> Int? {
         guard let state = ringState(from: frame, cmdOff: cmdOff) else { return nil }
         let behind = state.pagesBehind

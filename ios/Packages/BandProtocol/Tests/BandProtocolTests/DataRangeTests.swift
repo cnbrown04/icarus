@@ -187,4 +187,18 @@ struct DataRangeTests {
         #expect(DataRange.newestUnix(from: FrameCodec.reencode(frame), wallNowUnix: wallNow, futureSkewSeconds: skew48h) == realNewest)
         #expect(DataRange.oldestUnix(from: FrameCodec.reencode(frame)) == nil)
     }
+
+    // MARK: ring state + epoch, real fw 41.17.x capture (2026-10-30 20:46:30)
+
+    /// GET_DATA_RANGE reply captured just before the restore whose rewind the strap ignored. The epoch word
+    /// at raw offset 26 equals the second word of the strap's own ack tokens (`[124980][1]`).
+    @Test func realCaptureDecodesRingStateAndEpoch() {
+        let raw = hex("aa4c00a7246f2235010" + "1c0e9010034e80100afe9010030e80100010000000000020095"
+            + "0d00000af11300efa72a6af8700000592de56ad00100007c2de56a784a00005d3ae56a006e00000000" + "22c44669")
+        let ring = DataRange.ringState(from: raw, cmdOff: 6)
+        #expect(ring == RingState(write: 125_359, read: 124_976, capacity: 131_072))
+        #expect(ring?.pagesBehind == 383)
+        #expect(DataRange.ringEpoch(from: raw, cmdOff: 6) == 1)
+        #expect(DataRange.ringEpoch(from: Array(raw.prefix(29)), cmdOff: 6) == nil)
+    }
 }

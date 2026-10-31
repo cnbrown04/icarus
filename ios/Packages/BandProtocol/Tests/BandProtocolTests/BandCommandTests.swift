@@ -128,6 +128,22 @@ struct BandCommandTests {
         #expect(hex(rewind.frame(seq: 0x18)) == "aa0b009723182188130000c0f99046")
     }
 
+    /// The probe's candidate payloads, for page 124980 / epoch 1 / capacity 131072 — the values in the real
+    /// 2026-10-30 ack token `34 E8 01 00 01 00 00 00`.
+    @Test func readPointerProbeEncodings() {
+        func payload(_ encoding: BandCommand.ReadPointerEncoding) -> [UInt8] {
+            BandCommand.setReadPointer(page: 124_980, epoch: 1, capacity: 131_072, encoding: encoding).payload
+        }
+        #expect(payload(.pageU32) == [0x34, 0xE8, 0x01, 0x00])
+        #expect(payload(.pageEpoch) == [0x34, 0xE8, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00])
+        #expect(payload(.statusPageEpoch) == [0x01, 0x34, 0xE8, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00])
+        // 1 × 131072 + 124980 = 256052 = 0x0003_E834.
+        #expect(payload(.absoluteU64) == [0x34, 0xE8, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00])
+        for encoding in BandCommand.ReadPointerEncoding.allCases {
+            #expect(BandCommand.setReadPointer(page: 1, epoch: 1, capacity: 2, encoding: encoding).command == .setReadPointer)
+        }
+    }
+
     @Test func runHapticsPatternPayloadIsPatternLoopsAndZeros() {
         let command = BandCommand.runHapticsPattern(patternId: 2, loops: 3)
         #expect(command.command == .runHapticsPattern)
