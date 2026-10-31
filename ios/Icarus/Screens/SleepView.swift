@@ -9,7 +9,7 @@ struct SleepView: View {
     let environment: AppEnvironment
 
     @State private var snapshot: SleepModel.Snapshot?
-    @State private var range: SleepModel.Range = .week
+    @State private var range: SleepModel.Range = .day
     /// The night on show. Nil means the latest main sleep.
     @State private var selectedID: Int64?
     /// The night whose bed and wake times are being corrected (`SleepEditView`).
@@ -320,9 +320,11 @@ private func scoreRow(_ title: String, _ value: String?) -> some View {
     }
 }
 
-/// The night is labelled by the day it started. A nap says so.
+/// A night is labelled by the morning it ended ("Thu, Oct 30"), as Apple Health does and as its scores are keyed.
+/// A nap says so.
 private func nightTitle(_ night: Dashboard.SleepSnapshot.Night) -> Text {
-    let date = Text(Date(epochMs: night.startMs), style: .date)
+    let wake = Date(epochMs: night.startMs + night.durationS * 1_000)
+    let date = Text(wake, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day())
     return night.isNap ? Text("\(date) · Nap") : date
 }
 

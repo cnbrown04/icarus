@@ -17,12 +17,12 @@ struct MetricChartModifier: ViewModifier {
             .chartYAxis {
                 AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { _ in
                     AxisGridLine().foregroundStyle(Color.secondary.opacity(0.2))
-                    AxisValueLabel().font(.caption2).foregroundStyle(.secondary)
+                    AxisValueLabel().font(.caption2).foregroundStyle(Color.secondary)
                 }
             }
             .chartXAxis {
                 AxisMarks { _ in
-                    AxisValueLabel().font(.caption2).foregroundStyle(.secondary)
+                    AxisValueLabel().font(.caption2).foregroundStyle(Color.secondary)
                 }
             }
             .chartLegend(.hidden)

@@ -49,6 +49,9 @@ enum SleepModel {
 
         var isStaged: Bool { !totals.isEmpty }
 
+        /// When the night ended: the day a night is dated by.
+        var wakeMs: Int64 { startMs + durationS * 1_000 }
+
         /// Time asleep: light + deep + REM when staged, else the in-bed span.
         var asleepS: Int64 {
             guard isStaged else { return durationS }

@@ -149,7 +149,8 @@ struct SleepStageChart: View {
     }
 }
 
-/// One stacked bar per night for the W, M and 6M ranges: hours of each stage, deepest at the bottom. An unstaged
+/// One stacked bar per night for the W, M and 6M ranges, dated by the morning it ended (Apple Health's convention, and
+/// the day its scores belong to): hours of each stage, deepest at the bottom. An unstaged
 /// night is one grey bar of its time asleep. Dragging across the chart selects the nearest night.
 struct SleepNightBars: View {
     let days: [SleepModel.Day]
@@ -161,14 +162,14 @@ struct SleepNightBars: View {
                 if day.isStaged {
                     ForEach(SleepStage.stackOrder, id: \.self) { stage in
                         BarMark(
-                            x: .value("Night", Date(epochMs: day.startMs), unit: .day),
+                            x: .value("Night", Date(epochMs: day.wakeMs), unit: .day),
                             y: .value("Hours", Self.hours(day.totals[stage] ?? 0))
                         )
                         .foregroundStyle(Palette.sleepStage(stage))
                     }
                 } else {
                     BarMark(
-                        x: .value("Night", Date(epochMs: day.startMs), unit: .day),
+                        x: .value("Night", Date(epochMs: day.wakeMs), unit: .day),
                         y: .value("Hours", Self.hours(Int(day.asleepS)))
                     )
                     .foregroundStyle(Color.secondary.opacity(0.35))
@@ -197,7 +198,7 @@ struct SleepNightBars: View {
 
     private func nearest(to date: Date) -> SleepModel.Day? {
         let target = date.timeIntervalSince1970 * 1_000
-        return days.min { abs(Double($0.startMs) - target) < abs(Double($1.startMs) - target) }
+        return days.min { abs(Double($0.wakeMs) - target) < abs(Double($1.wakeMs) - target) }
     }
 
     private static func hours(_ seconds: Int) -> Double {
