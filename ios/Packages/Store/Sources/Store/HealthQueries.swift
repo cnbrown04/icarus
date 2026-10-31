@@ -28,12 +28,14 @@ public struct DailyScorePoint: Sendable, Equatable {
 /// The nightly vitals for one day and the 30-night personal range each is judged against.
 public struct VitalsBaseline: Sendable, Equatable {
     public let day: LocalDay
-    /// Tonight's value per vital. Skin temperature is the nightly mean of `skin_temp_raw` (raw units).
+    /// Tonight's value per vital.
     public let tonight: [HealthMonitor.Vital: Double]
     /// The range per vital. A vital is absent when fewer than `HealthMonitor.minimumNights` prior nights have a value.
     public let baselines: [HealthMonitor.Vital: HealthMonitor.Baseline]
     /// Main sleeps in the `HealthMonitor.baselineNights` days before `day`, whether or not each has every vital.
     public let priorNights: Int
+    /// Prior nights that carry each vital: what a calibrating vital counts toward `HealthMonitor.minimumNights`.
+    public let nightsWithValue: [HealthMonitor.Vital: Int]
 
     /// Tonight judged against the ranges. See `HealthMonitor.evaluate`.
     public var statuses: [HealthMonitor.Status] {
@@ -83,8 +85,7 @@ extension Database {
     /// Tonight's vitals for `day` and the range each is judged against: the main sleep that ended on `day`
     /// versus the `HealthMonitor.baselineNights` days before it. Tonight is never in its own range.
     ///
-    /// Reads one sleep-session range, plus one `historical_record` average per session for skin temperature.
-    /// Nightly RHR, HRV and respiratory rate come from the sessions, the same values Recovery uses.
+    /// Reads one sleep-session range. Nightly RHR, HRV and respiratory rate come from the sessions, the same values Recovery uses.
     public func vitalsBaseline(day: LocalDay, in timeZone: TimeZone) throws -> VitalsBaseline {
         let first = LocalTime.adding(days: -HealthMonitor.baselineNights, to: day)
         let mainSleeps = try mainSleepByDay(from: first, through: day, in: timeZone)
@@ -94,14 +95,14 @@ extension Database {
         for offset in 1...HealthMonitor.baselineNights {
             guard let row = mainSleeps[LocalTime.adding(days: -offset, to: day)] else { continue }
             priorNights += 1
-            for (vital, value) in try Self.vitals(of: row, skinTemp: nightlySkinTemp(row)) {
+            for (vital, value) in Self.vitals(of: row) {
                 nightly[vital, default: []].append(value)
             }
         }
 
         var tonight: [HealthMonitor.Vital: Double] = [:]
         if let row = mainSleeps[day] {
-            for (vital, value) in try Self.vitals(of: row, skinTemp: nightlySkinTemp(row)) {
+            for (vital, value) in Self.vitals(of: row) {
                 tonight[vital] = value
             }
         }
@@ -111,7 +112,13 @@ extension Database {
                 baselines[vital] = range
             }
         }
-        return VitalsBaseline(day: day, tonight: tonight, baselines: baselines, priorNights: priorNights)
+        return VitalsBaseline(
+            day: day,
+            tonight: tonight,
+            baselines: baselines,
+            priorNights: priorNights,
+            nightsWithValue: nightly.mapValues(\.count)
+        )
     }
 
     // MARK: - Helpers
@@ -133,21 +140,12 @@ extension Database {
         return byDay
     }
 
-    /// Mean raw skin-temperature byte over one session's records. Nil when the session has none.
-    private func nightlySkinTemp(_ row: SleepSessionRow) throws -> Double? {
-        try Double.fetchOne(self, sql: """
-        SELECT AVG(skin_temp_raw) FROM historical_record
-        WHERE band_id = ? AND ts_ms >= ? AND ts_ms < ? AND skin_temp_raw IS NOT NULL
-        """, arguments: [row.bandID, row.startMs, row.endMs])
-    }
-
     /// The vitals one session carries, skipping any that are missing.
-    private static func vitals(of row: SleepSessionRow, skinTemp: Double?) -> [(HealthMonitor.Vital, Double)] {
+    private static func vitals(of row: SleepSessionRow) -> [(HealthMonitor.Vital, Double)] {
         var values: [(HealthMonitor.Vital, Double)] = []
         if let value = row.restingHr { values.append((.restingHR, value)) }
         if let value = row.rmssdMs { values.append((.hrv, value)) }
         if let value = row.respRateBrpm { values.append((.respiratoryRate, value)) }
-        if let value = skinTemp { values.append((.skinTemp, value)) }
         return values
     }
 

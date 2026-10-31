@@ -66,10 +66,7 @@ struct HealthQueriesTests {
         #expect(statuses[.restingHR]?.state == .above)
         #expect(statuses[.hrv]?.state == .below)
         #expect(statuses[.respiratoryRate]?.state == .inRange)
-        // Skin temperature is the nightly mean, judged as a deviation from the 30-night mean (100).
-        #expect(statuses[.skinTemp]?.state == .above)
-        #expect(statuses[.skinTemp]?.deviation == 3)
-        #expect(HealthMonitor.summary(vitals.statuses) == HealthMonitor.Summary(inRange: 1, evaluated: 4))
+        #expect(HealthMonitor.summary(vitals.statuses) == HealthMonitor.Summary(inRange: 1, evaluated: 3))
     }
 
     @Test func fewPriorNightsLeaveEveryVitalCalibrating() throws {
@@ -85,11 +82,18 @@ struct HealthQueriesTests {
         #expect(HealthMonitor.summary(vitals.statuses).evaluated == 0)
     }
 
-    @Test func skinTempTonightIsTheNightlyMeanOfRecords() throws {
+    /// A vital missing on some nights calibrates on its own count, not on the number of nights slept.
+    @Test func eachVitalCountsOnlyTheNightsThatCarryIt() throws {
         let database = try seededDatabase()
-        try insertNight(endingOn: day, skinTemp: [100, 102, 101], into: database)
+        for offset in 1...7 {
+            try insertNight(endingOn: LocalTime.adding(days: -offset, to: day), rmssd: offset <= 3 ? 50 : nil,
+                            into: database)
+        }
         let vitals = try database.writer.read { try $0.vitalsBaseline(day: day, in: chicago) }
-        #expect(vitals.tonight[.skinTemp] == 101)
+        #expect(vitals.priorNights == 7)
+        #expect(vitals.nightsWithValue[.restingHR] == 7)
+        #expect(vitals.nightsWithValue[.hrv] == 3)
+        #expect(vitals.baselines[.hrv] == nil)
     }
 
     // MARK: Score series

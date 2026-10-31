@@ -28,14 +28,6 @@ struct HealthMonitorTests {
         #expect(range.high == 16)
     }
 
-    @Test func skinTempCentreIsMeanNotMedian() throws {
-        // Eight zeros and one 10: the mean is 10/9, while the median is 0.
-        var values = Array(repeating: 0.0, count: 8)
-        values.append(10)
-        let range = try #require(HealthMonitor.baseline(for: .skinTemp, nightly: values))
-        #expect(abs(range.center - 10.0 / 9.0) < 1e-9)
-    }
-
     @Test func evaluateClassifiesTonightAgainstRange() throws {
         let rhr = try #require(HealthMonitor.baseline(for: .restingHR, nightly: Array(repeating: 55.0, count: 10)))
         let hrv = try #require(HealthMonitor.baseline(for: .hrv, nightly: Array(repeating: 60.0, count: 10)))
@@ -48,7 +40,6 @@ struct HealthMonitorTests {
         #expect(byVital[.restingHR]?.deviation == 5)
         #expect(byVital[.hrv]?.state == .inRange)
         #expect(byVital[.respiratoryRate]?.state == .calibrating)
-        #expect(byVital[.skinTemp]?.state == .calibrating)
         #expect(statuses.map(\.vital) == HealthMonitor.Vital.allCases)
     }
 
@@ -74,10 +65,10 @@ struct HealthMonitorTests {
         let hrv = try #require(HealthMonitor.baseline(for: .hrv, nightly: Array(repeating: 60.0, count: 10)))
         let resp = try #require(HealthMonitor.baseline(for: .respiratoryRate, nightly: Array(repeating: 15.0, count: 10)))
         let statuses = HealthMonitor.evaluate(
-            tonight: [.restingHR: 55, .hrv: 30, .respiratoryRate: 15, .skinTemp: 0.1],
+            tonight: [.restingHR: 55, .hrv: 30, .respiratoryRate: 15],
             baseline: [.restingHR: rhr, .hrv: hrv, .respiratoryRate: resp]
         )
-        // Skin temp has no range, so three vitals are evaluated and two of them are in range.
+        // HRV 30 is below its range, so two of the three are in range.
         let summary = HealthMonitor.summary(statuses)
         #expect(summary.evaluated == 3)
         #expect(summary.inRange == 2)

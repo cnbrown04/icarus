@@ -121,11 +121,6 @@ struct ProfileSheet: View {
                             Text(unit.label).tag(unit)
                         }
                     }
-                    Picker("Temperature", selection: $units.temperature) {
-                        ForEach(TemperatureUnits.allCases) { unit in
-                            Text(unit.label).tag(unit)
-                        }
-                    }
                     Picker("Appearance", selection: $appearance) {
                         ForEach(AppAppearance.allCases) { option in
                             Text(option.label).tag(option)

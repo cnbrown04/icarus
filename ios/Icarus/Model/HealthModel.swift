@@ -100,34 +100,36 @@ struct RecoveryReadout {
 extension HealthMonitor.Vital {
     var title: String {
         switch self {
-        case .restingHR: "Resting HR"
-        case .hrv: "HRV"
+        case .restingHR: "Resting Heart Rate"
+        case .hrv: "Heart Rate Variability"
         case .respiratoryRate: "Respiratory Rate"
-        case .skinTemp: "Skin Temperature"
         }
     }
 
-    /// Unit shown after a value. Skin temperature is raw sensor units, so it is labelled relative.
+    /// Unit shown after a value.
     var unit: String {
         switch self {
         case .restingHR: "bpm"
         case .hrv: "ms"
         case .respiratoryRate: "br/min"
-        case .skinTemp: "relative"
         }
     }
 
-    /// Skin temperature is shown as a deviation from its 30-night mean, so its range is centred on zero.
-    var isRelative: Bool { self == .skinTemp }
-
-    /// A value in display units, numbers before the unit. Skin temperature is signed and has no unit text
-    /// here: the caller shows `unit` beside it.
-    func text(_ value: Double) -> String {
+    /// The number alone, in display precision: whole bpm and ms, one decimal for breaths.
+    func number(_ value: Double) -> String {
         switch self {
-        case .restingHR: Format.bpm(value)
-        case .hrv: Format.ms(value)
-        case .respiratoryRate: "\(value.formatted(.number.precision(.fractionLength(1)))) br/min"
-        case .skinTemp: value.formatted(.number.precision(.fractionLength(1)).sign(strategy: .always()))
+        case .restingHR, .hrv: Int(value.rounded()).formatted()
+        case .respiratoryRate: value.formatted(.number.precision(.fractionLength(1)))
         }
+    }
+
+    /// A value with its unit, such as "62 bpm".
+    func text(_ value: Double) -> String {
+        "\(number(value)) \(unit)"
+    }
+
+    /// A range with one unit, such as "60–69 bpm".
+    func rangeText(_ low: Double, _ high: Double) -> String {
+        "\(number(low))–\(number(high)) \(unit)"
     }
 }

@@ -17,9 +17,7 @@ public enum HealthMonitor {
         case hrv
         /// Respiratory rate, breaths/min.
         case respiratoryRate
-        /// Nightly mean skin temperature. Raw sensor units, shown only as a deviation from the 30-night mean
-        /// and labelled "relative": the byte-to-degree mapping is not verified.
-        case skinTemp
+        // No skin temperature: the band's raw byte has no verified mapping to degrees, so it is not shown.
     }
 
     /// Nights before the day that form the range.
@@ -35,7 +33,6 @@ public enum HealthMonitor {
         case .restingHR: 2
         case .hrv: 5
         case .respiratoryRate: 1
-        case .skinTemp: 0.5
         }
     }
 
@@ -44,7 +41,7 @@ public enum HealthMonitor {
         public let vital: Vital
         /// Nights with a value in the window.
         public let nights: Int
-        /// The reference value: the median for every vital except skin temperature, which uses the mean.
+        /// The reference value: the median of the nights.
         public let center: Double
         /// Lower edge of the typical band.
         public let low: Double
@@ -62,12 +59,7 @@ public enum HealthMonitor {
     public static func baseline(for vital: Vital, nightly values: [Double]) -> Baseline? {
         guard values.count >= minimumNights, let median = Statistics.median(values),
               let mad = Statistics.mad(values) else { return nil }
-        let center: Double
-        if vital == .skinTemp {
-            center = values.reduce(0, +) / Double(values.count)
-        } else {
-            center = median
-        }
+        let center = median
         let halfWidth = max(minimumHalfWidth(for: vital), madToSigma * mad)
         return Baseline(
             vital: vital,
@@ -100,7 +92,6 @@ public enum HealthMonitor {
         public var id: Vital { vital }
 
         /// Tonight minus the range's reference value. Nil without both a value and a range.
-        /// For skin temperature this is the relative deviation from the 30-night mean.
         public var deviation: Double? {
             guard let tonight, let baseline else { return nil }
             return tonight - baseline.center
