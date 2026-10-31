@@ -3,31 +3,33 @@ import GRDB
 import Metrics
 import Store
 
-/// Read models for the Strain tab and the coaching cards. Each `load` runs inside one read, so the numbers on a
-/// screen come from the same snapshot. The rules live in Metrics and Store; this file only assembles them.
+/// Read models for the Strain tab. Each `load` runs inside one read, so the numbers on a screen come from the same
+/// snapshot. The rules live in Metrics and Store; this file only assembles them.
 enum StrainModel {
     /// What the Strain tab shows for the local day.
     struct Snapshot: Sendable {
-        /// Today's live numbers: last 15 minutes of heart rate, zone minutes, calories, the 7-day window.
+        /// Today's zone minutes and the rest of the day's summary.
         let today: Dashboard.TodaySnapshot
-        /// Today's zone runs for the timeline chart.
-        let zoneTimeline: HRZoneTimeline
-        /// Local midnight in epoch ms, the left edge of the day charts.
-        let dayStartMs: Int64
-        /// Day strain, recovery, tonight's need and the planned wake time.
+        /// Recovery and tonight's need, which set the Strain Coach target band.
         let coaching: CoachingInputs
+        /// Day strain on 0 to 21, read through `MetricSeries` (`metricLatest(.strain)`).
+        let strain: Double?
+        /// Day kilocalories, read through `MetricSeries` (`metricLatest(.calories)`).
+        let calories: Double?
+        /// Today's workouts, oldest first.
+        let activities: [ActivityRow]
         let timeZone: TimeZone
     }
 
     static func load(_ db: Database, nowMs: Int64) throws -> Snapshot {
         let today = try Dashboard.today(db, nowMs: nowMs)
         let zone = today.context.timeZone
-        let dayStart = LocalTime.localTime(today.context.today, hour: 0, in: zone)
         return Snapshot(
             today: today,
-            zoneTimeline: try Dashboard.hrZoneTimeline(db, nowMs: nowMs, fromMs: dayStart, context: today.context),
-            dayStartMs: dayStart,
             coaching: try db.coachingInputs(nowMs: nowMs, in: zone),
+            strain: try db.metricLatest(.strain, nowMs: nowMs, in: zone).value,
+            calories: try db.metricLatest(.calories, nowMs: nowMs, in: zone).value,
+            activities: try ActivitiesModel.day(db, day: today.context.today).activities,
             timeZone: zone
         )
     }
