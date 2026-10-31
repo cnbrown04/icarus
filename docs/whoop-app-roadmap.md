@@ -23,7 +23,7 @@ Scores stay labelled proxies (published methods, not WHOOP's proprietary models)
 | 10 | Journal insights: recovery / sleep with vs without each behaviour | None | Journal |
 | 11 | Medications as a set-once calculation input (Settings only; scheduled doses assumed, as-needed doses logged there), shaded effect windows. No daily tracking in Journal (user, 2026-10-30) | Data layer (wave 1) | Journal (UI) + Med-stress |
 | 12 | Medication-aware stress baseline; "stimulant active at bedtime" sleep flag | None | Med-stress |
-| 13 | Device: charging state, battery events, link keep-alive, firmware/console diagnostics | Battery poll only | Band |
+| 13 | Device: charging state, battery events, link keep-alive, firmware/console diagnostics | Built 2026-10-30 (LINK_VALID 30 s, charging 7/8, cmd 98 raw-logged, console ring, alarm read-back); reply layouts [Unverified] on hardware; memfault 61080007 deferred | Band |
 | 14 | Smart alarm (wake in light sleep inside a window) | None | Later: needs an overnight live-staging spike |
 | 15 | Home-screen widgets / workout Live Activity | None | Later: needs an app-group DB move |
 
@@ -61,7 +61,9 @@ Feature streams expose a public entry view each and do NOT edit `RootView.swift`
 
 ## Waves
 
-1. Done/running: full-history drain wrap fix, stress v2 (awake baseline), medication data layer.
-2. Parallel feature streams: Health, Strain (+coaching), Activities, Journal (+medication UI), Med-stress, Band.
-3. Shell: tabs, Overview dials + day pager, wiring every entry view; then full test run and device install.
+1. Done: full-history drain wrap fix, stress v2 (awake baseline), medication data layer.
+2. Done: Health, Strain (+coaching), Activities, Journal, Med-stress (stress v3), Band; medications trimmed to a
+   settings-only calculation input.
+3. Done: Shell (tabs, Overview dials + day pager, wiring); full test run and device install 2026-10-30.
+   Not yet exercised in a simulator or on screen by anyone but the user.
 4. Later: smart alarm, widgets / Live Activity, server sync for the new tables, web parity.

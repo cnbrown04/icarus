@@ -158,7 +158,7 @@ APNs `.p8` key + signing capability), TestFlight (no ASC secrets), Apple Watch, 
 
 ## Current status (as of 2026-10-30)
 
-- All packages green (2026-10-30): BandProtocol 111, BandKit 161, Metrics 336, Store 197, SyncKit 59,
+- All packages green (2026-10-30): BandProtocol 117, BandKit 172, Metrics 336, Store 197, SyncKit 59,
   AlarmKitBridge 27. App + test targets build for device (no iPhone simulator installed on this Mac).
 - **Navigation (2026-10-30, WHOOP-style; replaces Home + Today)**: tabs **Overview · Sleep · Strain ·
   Health**; toolbar on every tab: Journal, Alarms, Settings (sheets). Plan and per-feature status:
