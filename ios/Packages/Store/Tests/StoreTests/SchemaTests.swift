@@ -8,13 +8,13 @@ struct SchemaTests {
         "profile", "band", "hr_sample", "rr_interval", "minute_metric", "band_event",
         "alarm", "alarm_delivery", "sync_cursor", "sync_batch_log", "raw_frame",
         "historical_record", "sleep_session", "sleep_stage_segment", "sleep_edit",
-        "medication", "medication_dose_override", "activity", "journal_question", "journal_entry",
+        "medication", "medication_dose_override", "activity", "journal_question", "journal_entry", "daily_score",
     ]
     /// v2 added the sleep tables, v3 the nine nullable `historical_record` sensor columns, v4 the
     /// persisted sleep-stage segments, v5 the nap flag on `sleep_session`, v6 the user sleep
     /// corrections (`sleep_edit`), v7 the nightly respiratory rate on `sleep_session`, v8 the
-    /// medication profiles and dose overrides, v9 the `activity` table, v10 the journal questions and answers.
-    private static let migrations = ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "v10"]
+    /// medication profiles and dose overrides, v9 the `activity` table, v10 the journal questions and answers, v11 the daily score cache.
+    private static let migrations = ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "v10", "v11"]
 
     @Test func migratesEmptyDatabaseToAllTables() throws {
         let database = try AppDatabase.inMemory()
@@ -88,6 +88,22 @@ struct SchemaTests {
             try String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('sleep_session')")
         }
         #expect(columns.contains("resp_rate_brpm"))
+    }
+
+    @Test func v11AddsTheDailyScoreCacheKeyedByLocalDay() throws {
+        let database = try AppDatabase.inMemory()
+        let columns = try database.writer.read { db in
+            try String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('daily_score')")
+        }
+        for column in ["local_day", "recovery", "recovery_calibrating", "strain", "sleep_performance", "asleep_sec",
+                       "sleep_need_sec", "sleep_debt_sec", "resting_hr", "rmssd_ms", "resp_rate", "stress_avg",
+                       "kcal", "computed_at"] {
+            #expect(columns.contains(column), "missing column \(column)")
+        }
+        let primaryKey = try database.writer.read { db in
+            try String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('daily_score') WHERE pk = 1")
+        }
+        #expect(primaryKey == ["local_day"])
     }
 
     @Test func profileIsSingleRowWithCheckConstraint() throws {

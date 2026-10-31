@@ -53,15 +53,7 @@ extension Database {
         let scores = try dailyScores(day: today, in: timeZone)
         let todayStrain = scores.strain?.whoopScale
         let baseline = SleepNeed.defaultBaselineSec
-
-        // Sleep that ended on or before today's wake day, which is last night. Tonight ends tomorrow.
-        let fourteenStart = LocalTime.localTime(LocalTime.adding(days: -13, to: today), hour: 0, in: timeZone)
-        let throughToday = LocalTime.localTime(LocalTime.adding(days: 1, to: today), hour: 0, in: timeZone)
-        let rows = try SleepSessionRow.fetchAll(self, sql: """
-        SELECT * FROM sleep_session WHERE end_ms >= ? AND end_ms < ? ORDER BY start_ms, rowid
-        """, arguments: [fourteenStart, throughToday])
-        let nights = try rows.map { try Self.sleepNight($0, in: self) }
-        let debt = SleepDebt.ledger(nights: nights, needSec: baseline, timeZone: timeZone)
+        let (rows, debt) = try sleepDebtLedger(endingOn: today, in: timeZone)
         let carried = max(-debt.balanceSec, 0)
         let tonightNeed = SleepNeed.adjustedNeedSec(
             baselineNeedSec: baseline,
@@ -148,6 +140,21 @@ extension Database {
     }
 
     // MARK: - Internals
+
+    /// The sleep sessions of the 14 local days ending on `day` (oldest first, naps included) and the SleepDebt
+    /// ledger over them. This is the one source for tonight's need and carried debt: `coachingInputs` and the
+    /// `daily_score` cache both read it, so the Sleep tab and the metric screens show the same numbers.
+    func sleepDebtLedger(endingOn day: LocalDay, in timeZone: TimeZone) throws -> (rows: [SleepSessionRow], debt: SleepDebtLedger) {
+        // Sleep that ended on or before `day`'s wake day, which is last night. Tonight ends tomorrow.
+        let fourteenStart = LocalTime.localTime(LocalTime.adding(days: -13, to: day), hour: 0, in: timeZone)
+        let throughDay = LocalTime.localTime(LocalTime.adding(days: 1, to: day), hour: 0, in: timeZone)
+        let rows = try SleepSessionRow.fetchAll(self, sql: """
+        SELECT * FROM sleep_session WHERE end_ms >= ? AND end_ms < ? ORDER BY start_ms, rowid
+        """, arguments: [fourteenStart, throughDay])
+        let nights = try rows.map { try Self.sleepNight($0, in: self) }
+        let debt = SleepDebt.ledger(nights: nights, needSec: SleepNeed.defaultBaselineSec, timeZone: timeZone)
+        return (rows, debt)
+    }
 
     /// The 0 to 100 recovery, nil when the outcome is calibrating or absent.
     static func recoveryPercent(_ outcome: Recovery.Outcome?) -> Double? {

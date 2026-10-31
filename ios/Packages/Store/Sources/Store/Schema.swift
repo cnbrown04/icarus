@@ -33,6 +33,9 @@ enum Schema {
         migrator.registerMigration("v10") { db in
             try db.execute(sql: v10)
         }
+        migrator.registerMigration("v11") { db in
+            try db.execute(sql: v11)
+        }
     }
 
     /// Migration v1, copied from PLAN.md 10.2. Times are epoch ms UTC.
@@ -217,5 +220,16 @@ enum Schema {
     CREATE TABLE journal_entry (local_day TEXT NOT NULL, question_id TEXT NOT NULL REFERENCES journal_question(id),
       value INTEGER NOT NULL CHECK (value >= 0), updated_at INTEGER NOT NULL,
       PRIMARY KEY (local_day, question_id));
+    """
+    /// Migration v11, the per-day score cache behind every metric screen (`MetricSeries`). Local-only and derived:
+    /// `Database.refreshDailyScores` rewrites a row from `dailyScores` and the single sources, after each history
+    /// derivation and at launch. Nothing reads it except `metricDays` and `metricLatest`, so a row can always be
+    /// rebuilt. `local_day` is 'YYYY-MM-DD'. Columns are nullable where the value can be missing for a day.
+    /// `recovery_calibrating` is 1 while the baseline is too thin to score. `asleep_sec`, `sleep_need_sec` and
+    /// `sleep_debt_sec` are whole seconds. `strain` is WHOOP's 0 to 21 scale.
+    static let v11 = """
+    CREATE TABLE daily_score (local_day TEXT PRIMARY KEY, recovery REAL, recovery_calibrating INTEGER,
+      strain REAL, sleep_performance REAL, asleep_sec INTEGER, sleep_need_sec INTEGER, sleep_debt_sec INTEGER,
+      resting_hr REAL, rmssd_ms REAL, resp_rate REAL, stress_avg REAL, kcal REAL, computed_at INTEGER NOT NULL);
     """
 }
