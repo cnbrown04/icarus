@@ -52,17 +52,22 @@ final class VerifyScreensTests: XCTestCase {
         app.buttons["root.profile"].tap()
         XCTAssertTrue(app.navigationBars["Profile"].waitForExistence(timeout: 10))
         shot("10-profile")
-        scrollShot("10b-profile-scrolled")
+        // Rows first, the scrolled shot last: a List unloads rows scrolled out of view, so they stop existing.
         for (row, name) in [("Medications", "11-medications"), ("Alarms", "12-alarms")] {
-            let button = app.buttons[row].firstMatch
-            if button.waitForExistence(timeout: 5) {
-                button.tap()
-                settle()
-                shot(name)
-                back()
+            let button = app.collectionViews.buttons[row].firstMatch
+            scrollTo(button)
+            guard button.waitForExistence(timeout: 5) else {
+                XCTFail("no Profile row \(row)")
+                continue
             }
+            button.tap()
+            settle()
+            shot(name)
+            back()
         }
-        let band = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Band")).firstMatch
+        scrollShot("10b-profile-scrolled")
+        let band = app.collectionViews.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Band")).firstMatch
+        scrollTo(band)
         if band.waitForExistence(timeout: 5) {
             band.tap()
             settle()
@@ -151,10 +156,17 @@ final class VerifyScreensTests: XCTestCase {
         return true
     }
 
+    /// Scrolls down, then back up, until `element` is on screen: a row above the current scroll position (Workouts
+    /// after the metric rows) is only reachable going up.
     private func scrollTo(_ element: XCUIElement) {
         var swipes = 0
         while !(element.exists && element.isHittable), swipes < 6 {
             app.swipeUp()
+            swipes += 1
+        }
+        swipes = 0
+        while !(element.exists && element.isHittable), swipes < 8 {
+            app.swipeDown()
             swipes += 1
         }
     }
