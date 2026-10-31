@@ -301,13 +301,7 @@ extension Database {
         // The session `mainSleepByDay` keeps for its day, which is the one `daily_score` was built from.
         let day = LocalTime.localDay(containing: latest.endMs, in: timeZone)
         let session = try mainSleepByDay(from: day, through: day, in: timeZone)[day] ?? latest
-        let value: Double?
-        switch kind {
-        case .restingHR: value = session.restingHr
-        case .hrv: value = session.rmssdMs
-        default: value = session.respRateBrpm
-        }
-        return MetricReading(value: value, atMs: session.endMs, state: nil)
+        return MetricReading(value: session.nightlyValue(kind), atMs: session.endMs, state: nil)
     }
 
     /// Both scored states carry a stress number: `value` (heart rate and HRV) and `hr_only` (heart rate alone, when the
