@@ -11,6 +11,7 @@ struct SummaryView: View {
 
     @Environment(\.openTab) private var openTab
     @State private var snapshot: SummarySnapshot?
+    @State private var showsRecovery = false
 
     var body: some View {
         List {
@@ -25,6 +26,9 @@ struct SummaryView: View {
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Summary")
+        .navigationDestination(isPresented: $showsRecovery) {
+            AppRouteDestination(route: .metric(.recovery), environment: environment, liveState: liveState)
+        }
         .refreshable {
             await environment.sync.runNow()
             await reload()
@@ -144,7 +148,10 @@ struct SummaryView: View {
     /// thin to score (under 4 nights) leaves the ring empty.
     private var recoveryRing: some View {
         let readout = RecoveryReadout(outcome: snapshot?.scores.recovery)
-        return NavigationLink(value: AppRoute.metric(.recovery)) {
+        // A Button, not a NavigationLink: inside a list row a link adds a disclosure chevron beside the ring.
+        return Button {
+            showsRecovery = true
+        } label: {
             ScoreDial(
                 title: "Recovery",
                 fraction: readout.fraction,
@@ -162,9 +169,10 @@ struct SummaryView: View {
         switch snapshot?.scores.recovery {
         case let .scored(score)?:
             let nights = score.hrvBaseline.nValid
-            return nights < Recovery.minNightsTrust ? "Calibrating · \(nights) of \(Recovery.minNightsTrust)" : "Last night"
-        case let .insufficientBaseline(_, validNights)?:
-            return "Calibrating · \(validNights) of \(Recovery.minNightsTrust)"
+            // The nights count lives on the Recovery page; a ring caption has one short word's room.
+            return nights < Recovery.minNightsTrust ? "Calibrating" : "Last night"
+        case .insufficientBaseline?:
+            return "Calibrating"
         case nil:
             return "No night yet"
         }
@@ -200,11 +208,10 @@ struct SummaryView: View {
         .accessibilityHint("Opens strain")
     }
 
-    /// Recovery as 0 to 100 when it is scored and not calibrating, else nil (the neutral Strain target).
+    /// Recovery as 0 to 100 whenever it is scored, provisional or not, else nil (the neutral Strain target). The
+    /// Strain tab's coach reads the same score (`CoachingQueries.recoveryPercent`), so both show one target.
     private var scoredRecovery: Double? {
-        guard case let .scored(score)? = snapshot?.scores.recovery, score.hrvBaseline.nValid >= Recovery.minNightsTrust else {
-            return nil
-        }
+        guard case let .scored(score)? = snapshot?.scores.recovery else { return nil }
         return score.score
     }
 
@@ -248,7 +255,7 @@ struct SummaryView: View {
         switch state {
         case "calibrating": "Calibrating"
         case "exertion": "During exertion"
-        case "stale": "Stale"
+        case "stale": "No recent reading"
         default: "Not enough data"
         }
     }
