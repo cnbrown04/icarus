@@ -77,20 +77,26 @@ APNs `.p8` key + signing capability), TestFlight (no ASC secrets), Apple Watch, 
   2026-10-22 10:49 EDT. The 2026-10-21 19:35 → 10-22 10:49 span, which the old build had
   drained and ACKED but mostly never stored, did not come back. Treat acked data as gone:
   persist-then-ack is the only protection.
-- **Hardware finding 2026-10-30 — the ring is PAGES of ~9 records, and the bare-u32
-  SET_READ_POINTER is IGNORED.** Each HISTORICAL_DATA_RESULT trim token is `[page u32][epoch u32]`
-  (`34 E8 01 00 01 00 00 00` = page 124980, epoch 1); over one drain the page advanced 381 while
-  3,487 records arrived (≈ 9.1 records/page), and the backlog grew ~1 page per 9 s. So T = 131072
-  pages ≈ 1.2 M records ≈ **13.6 days** (matches WHOOP's "14 days"), NOT "131k records ≈ 36 h".
-  Every restore so far drained exactly GET_DATA_RANGE's U→W backlog (10-28: 10,967 pages ≈ 107k
-  records; 10-30: 383 pages ≈ 3,497 records): the rewind never took effect. GET_DATA_RANGE carries
-  the same epoch word at raw offset 26 (`DataRange.ringEpoch`). The 10-23 "acked data is gone"
-  finding is therefore unproven — that data is probably still on the strap.
-- Full-history restore: `drainFullHistory()` (two passes, W+120 then 0) is built on the ignored
-  bare-u32 form and does nothing useful until the encoding is known. Debug → "Probe read-pointer
-  encoding" (`TierBController.probeReadPointerEncoding`) rewinds U by 64 pages with each candidate
-  (`BandCommand.ReadPointerEncoding`: u32, page+epoch, 0x01+page+epoch, absolute u64) and reads U
-  back; the winner is logged as `read-pointer probe WINNER`. ALWAYS verify a rewind by reading U back.
+- **Hardware findings 2026-10-30 (four on-band probes; logs in the session, fw 41.17.x).**
+  1. **The ring is PAGES of ~9 records.** HISTORICAL_DATA_RESULT tokens are `[page u32][next u32]`
+     (`34 E8 01 00 01 00 00 00`); one drain advanced 381 pages for 3,487 records, and the backlog grows
+     ~1 page per 9 s. T = 131072 pages ≈ 1.2 M records ≈ **13.6 days** (WHOOP says 14) — NOT "131k ≈ 36 h".
+  2. **Command frames must be padded to a 4-byte inner** (`[type][seq][cmd][payload]`, OpenStrap `pad4`).
+     The strap silently drops unaligned commands. `FrameCodec.encodeCommand` pads now. This is why the
+     bare-u32 SET_READ_POINTER (inner 7) never did anything, and why the 8-byte SET_CLOCK (inner 11) was
+     "ACKed but not latched" (hardware-findings Q5).
+  3. **GET_DATA_RANGE words** (raw offsets, u32 LE): 10 = ?, **14 = read cursor** (`DataRange.readCursor`;
+     equals the next ack token's first word; SET_READ_POINTER writes it; persists across connections),
+     18 = W (write), 22 = U (trails the cursor by a few pages), 26 = 1 (unknown), 30 = T.
+  4. **No rewind is possible with known commands.** Padded SET_READ_POINTER moves the read-cursor word
+     exactly as asked, but the next drain still streams from the strap's internal position (just after the
+     last acked page) — backwards (below U), forwards (skip to W − 1), and after ABORT_HISTORICAL_TRANSMITS
+     (cmd 20) alike. OpenStrap's client defines `cmd_set_read_pointer` but never calls it. So **acked data
+     cannot be re-downloaded**: persist-then-ack remains the only protection, and every earlier "restore"
+     just drained the unacked U→W backlog (10-28: 10,967 pages ≈ 107k records).
+- History button (Band screen) = "Sync all pending band data": back-to-back drains of the unacked
+  backlog until caught up (`drainFullHistory()` keeps its name; no rewind). Gaps: 10-21/22 were acked
+  unstored by old builds (gone); 10-24…26 the band was not worn.
 
 ## Hard-won lessons (do not regress)
 
@@ -101,9 +107,8 @@ APNs `.p8` key + signing capability), TestFlight (no ASC secrets), Apple Watch, 
    20:00–21:23). Earlier records appearing only during "linked" windows reflected the drain
    cadence, not recording. Consequence: a killed app never loses strap-side data — it just
    arrives later, and the UI must show the strap→app sync so that arrival is visible.
-   Flash is a ring of 131072 pages × ~9 records ≈ 13.6 days (see the 2026-10-30 finding; OpenStrap:
-   the ack cursor advances but the client never erases flash — re-draining is safe once a
-   SET_READ_POINTER encoding the strap honours is known).
+   Flash is a ring of 131072 pages × ~9 records ≈ 13.6 days, but only the UNACKED part can ever be
+   drained: no known command makes the strap re-send acked pages (2026-10-30 findings).
 2. Decoding timestamps off the full frame envelope latches garbage: header+CRC straddle
    words land inside the plausible-unix window (an EMPTY reply's straddle read as
    "1050 h ahead"; a real reply's as "26001 h ahead") and falsely pause all automatic

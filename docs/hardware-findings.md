@@ -59,6 +59,22 @@ For each item, write the result, the firmware it was measured on, and the fixtur
   isolated (both were sent, and isolating them would desync the RTC again).
 - Firmware: WHOOP 4.0, GET_HELLO firmware string `8e27cafe` (see ios band log capture)
 - Fixture: live capture, `ios/Packages/BandKit` log capture (`BandLog.startCapture`), 2026-10-18
+- **Explained 2026-10-30:** the strap silently drops any command whose inner content
+  (`[type][seq][cmd][payload]`) is not a multiple of 4 bytes. The 8-byte form's inner is 11 bytes, the
+  9-byte form's is 12. `FrameCodec.encodeCommand` now zero-pads every command (OpenStrap `pad4`), so both
+  forms carry the same aligned body.
+
+### 5b. SET_READ_POINTER (cmd 33) and re-downloading history (2026-10-30)
+
+- Source: OpenStrap PROTOCOL.md §4.3 ("the cursor can be repositioned") — never exercised by their client.
+- Result: with padding the strap accepts cmd 33 and the GET_DATA_RANGE read-cursor word (raw offset 14)
+  reads back the requested page, but the next SEND_HISTORICAL_DATA streams from the strap's internal
+  position regardless. Tested: rewind 64 pages below U (twice, once after ABORT_HISTORICAL_TRANSMITS cmd 20),
+  and skip forward to W − 1 then back (both above U). Every drain began one page after the last-acked page.
+  Acked history cannot be re-downloaded with any known command.
+- Ring geometry: 131072 pages × ~9.1 records/page ≈ 13.6 days at 1 Hz (ack tokens `[page u32][next u32]`).
+- Firmware: WHOOP 4.0, fw 41.17.x
+- Fixture: Icarus band log, 2026-10-30 20:46–21:37 ("read-pointer probe" lines)
 
 ### 6. Does RUN_HAPTICS_PATTERN 79 with `[2, n, 0, 0, 0]` buzz a WHOOP 4.0, and what does GET_ALL_HAPTICS_PATTERN 80 return?
 
