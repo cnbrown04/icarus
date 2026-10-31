@@ -408,10 +408,6 @@ public actor TierBController {
         BandLog.tierB(.info, "read pointer set to \(offset) (cmd 33, no reply awaited)")
     }
 
-    /// Pages the read-pointer probe rewinds by: ~9 records a page, so about 10 minutes of history,
-    /// which the probe's drain re-reads and the store dedupes.
-    public static let probeRewindPages = 64
-
     /// The strap's cursor words from one GET_DATA_RANGE: the ring (W, U, T) and the read cursor.
     private func readCursorState() async throws -> (ring: RingState, cursor: Int)? {
         let raw = FrameCodec.reencode(try await send(BandCommand.getDataRange()))
@@ -421,37 +417,48 @@ public actor TierBController {
         return (ring, cursor)
     }
 
-    /// Hardware check of SET_READ_POINTER now that commands are padded (`FrameCodec.encodeCommand`): ends the
-    /// transmit session (ABORT_HISTORICAL_TRANSMITS), aims the read cursor `probeRewindPages` behind U, reads
-    /// the cursor words back, then runs ONE drain and
-    /// reports where it really started (its oldest record). Every step is logged as `read-pointer probe`.
-    /// The returned line is for the Debug screen. Never runs during a drain.
+    /// The page in the first HISTORICAL_DATA_RESULT token a drain acks (the token's first word): where that
+    /// drain really streamed from. Reset by the read-pointer probe before each of its drains.
+    private var firstAckedPage: Int?
+
+    /// Hardware test of whether SET_READ_POINTER steers where a drain streams from (2026-10-30).
+    ///
+    /// Two earlier probes moved the read-cursor word below U and the next drain still started just above the
+    /// old cursor: U looks like a floor. This one stays ABOVE U. Step 1 moves the cursor FORWARD to W − 1 and
+    /// drains; step 2 moves it BACK to the original cursor and drains. If step 1 starts at W − 1 the cursor
+    /// steers streaming; if step 2 re-reads the skipped pages, rewinding works anywhere at or above U. Risk,
+    /// accepted by the user: if step 1's acks lift U past the skipped pages, those ~(W − cursor) pages (about a
+    /// minute) cannot be re-read. Every step is logged as `read-pointer probe`.
     public func probeReadPointer() async -> String {
         guard enabled, state == .ready, linkOpen else { return "probe skipped: the channel is not ready" }
         if case .draining = offload.phase { return "probe skipped: a drain is running, try again in a minute" }
-        do {
-            guard let before = try await readCursorState() else { return "probe aborted: ring state unreadable" }
-            guard before.ring.read >= Self.probeRewindPages else { return "probe skipped: U too close to 0" }
-            let target = before.ring.read - Self.probeRewindPages
-            BandLog.tierB(.info, "read-pointer probe: before cursor=\(before.cursor) W=\(before.ring.write) U=\(before.ring.read), target \(target)")
-            // 2026-10-30, second probe: the padded rewind moved the cursor word, but the next drain still
-            // streamed from the old place. End the strap's transmit session first, so a cached session
-            // position cannot outlive the rewind (OpenStrap's client aborts whenever a sync goes idle).
-            try await writeConfirmedWithoutReply(.abortHistoricalTransmits())
-            if let aborted = try await readCursorState() {
-                BandLog.tierB(.info, "read-pointer probe: after abort cursor=\(aborted.cursor) W=\(aborted.ring.write) U=\(aborted.ring.read)")
-            }
-            // No settle delay: the strap handles commands in order, so the GET_DATA_RANGE below is answered
-            // after the cmd-33 write (2026-10-30 log: the cmd-33 response precedes the next range reply).
+        func log(_ label: String, _ state: (ring: RingState, cursor: Int)) {
+            BandLog.tierB(.info, "read-pointer probe: \(label) cursor=\(state.cursor) W=\(state.ring.write) U=\(state.ring.read)")
+        }
+        /// Moves the cursor, reads it back, runs one drain; returns (cursor after the write, first acked page, kept).
+        func step(_ label: String, to target: Int) async throws -> (cursor: Int, first: Int?, kept: Int)? {
             try await rewindReadPointer(to: UInt32(target))
-            guard let after = try await readCursorState() else { return "probe aborted: ring state unreadable after the write" }
-            BandLog.tierB(.info, "read-pointer probe: after cursor=\(after.cursor) W=\(after.ring.write) U=\(after.ring.read)")
-            restoreSpan = RecordSpan()
-            guard await runDrain(.manual) else { return "probe: cursor \(before.cursor)→\(after.cursor); the drain could not start" }
+            guard let moved = try await readCursorState() else { return nil }
+            log("\(label) after write (target \(target))", moved)
+            firstAckedPage = nil
+            guard await runDrain(.manual) else { return (moved.cursor, nil, 0) }
             await waitForDrainEnd()
-            let kept = drainKeptRecords
-            let span = restoreSpan.rangeText ?? "no records"
-            let line = "probe: cursor \(before.cursor)→\(after.cursor) (target \(target)), U \(before.ring.read)→\(after.ring.read); drain kept \(kept): \(span)"
+            let result = (moved.cursor, firstAckedPage, drainKeptRecords)
+            if let settled = try await readCursorState() { log("\(label) after drain", settled) }
+            BandLog.tierB(.info, "read-pointer probe: \(label) drain first acked page \(result.1.map(String.init) ?? "none"), kept \(result.2)")
+            return result
+        }
+        do {
+            guard let start = try await readCursorState() else { return "probe aborted: ring state unreadable" }
+            log("start", start)
+            guard start.ring.write - start.cursor >= 3 else {
+                return "probe skipped: only \(start.ring.write - start.cursor) page(s) of backlog; wait a minute and retry"
+            }
+            let ahead = start.ring.write - 1
+            guard let skip = try await step("skip", to: ahead) else { return "probe aborted: unreadable after the skip" }
+            guard let back = try await step("back", to: start.cursor) else { return "probe aborted: unreadable after going back" }
+            let line = "skip: wanted \(ahead), drain began at \(skip.first.map(String.init) ?? "–") (kept \(skip.kept)); "
+                + "back: wanted \(start.cursor), drain began at \(back.first.map(String.init) ?? "–") (kept \(back.kept)); U was \(start.ring.read)"
             BandLog.tierB(.info, "read-pointer probe result: \(line)")
             return line
         } catch {
@@ -934,6 +941,9 @@ public actor TierBController {
                 }
                 do {
                     try await writeConfirmedWithoutReply(.historicalDataResult(token: token))
+                    if firstAckedPage == nil {
+                        firstAckedPage = Int(Self.tokenValue(Array(token.prefix(4))))
+                    }
                     BandLog.tierB(.info, "acked batch, trim cursor \(Self.tokenValue(token)) (\(offload.recordCount) record(s) so far)")
                     // Without a sink the decoded records are handed to the app now: holding the whole
                     // drain in memory until it stops would lose every acked record if the app died

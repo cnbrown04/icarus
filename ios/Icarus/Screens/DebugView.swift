@@ -53,7 +53,7 @@ struct DebugView: View {
             } header: {
                 Text("Band history")
             } footer: {
-                Text("Rewinds the band's read cursor about 10 minutes, reads it back, and runs one drain to show where it really starts. Re-read records are deduplicated.")
+                Text("Moves the band's read cursor ahead about a minute and syncs, then moves it back and syncs again, to show whether the cursor steers where syncing starts. May lose up to a minute of data.")
             }
 
             Section {
