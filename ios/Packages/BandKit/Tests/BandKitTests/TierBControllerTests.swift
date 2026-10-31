@@ -674,6 +674,8 @@ struct TierBControllerTests {
         let kicks = AtomicCounter()
         h.band.setMultiResponder { request, _ in
             switch request.cmd {
+            // The sync reads the backlog first: 60 pages pending.
+            case 34: return [reply(to: request, payload: ringPayload(write: 100, read: 40))]
             case 22: return respondToKick(kicks.increment())
             case 3: return [reply(to: request, payload: [])]
             default: return []
@@ -708,6 +710,7 @@ struct TierBControllerTests {
         let complete = Frame(type: PacketType.metadata.rawValue, seq: 24, cmd: 3, payload: [])
         h.band.setMultiResponder { request, _ in
             switch request.cmd {
+            case 34: return [reply(to: request, payload: ringPayload(write: 100, read: 40))]
             case 22: return [complete]
             case 3: return [reply(to: request, payload: [])]
             default: return []
@@ -774,6 +777,40 @@ struct TierBControllerTests {
         #expect(h.band.opcodes.filter { $0 == 22 }.count == cmd22Baseline + 1, "one empty drain, then stop")
         #expect(!h.band.opcodes.contains(33), "no SET_READ_POINTER was written")
         #expect(await h.controller.fullHistorySummary == "synced: 1 drain(s), 0 record(s)")
+    }
+
+    /// Nothing pending (W == U) ends the sync at once with an "up to date" summary and no drain at all,
+    /// instead of a silent drain that waits out its run cap.
+    @Test func drainFullHistoryWithNothingPendingIsUpToDateWithoutADrain() async throws {
+        let h = Harness()
+        await h.controller.connectionOpened()
+        await endRunningDrain(h)
+        let kicksBefore = h.band.opcodes.filter { $0 == 22 }.count
+        h.band.setMultiResponder { request, _ in
+            request.cmd == 34 ? [reply(to: request, payload: ringPayload(write: 40, read: 40))] : []
+        }
+        await h.controller.drainFullHistory()
+        #expect(h.band.opcodes.filter { $0 == 22 }.count == kicksBefore, "no drain was kicked")
+        #expect(await h.controller.fullHistorySummary == "up to date: nothing pending on the band")
+    }
+
+    /// A full sync reports how far through its backlog it is: 60 pages pending from page 40, and a batch acked
+    /// at page 70 is half way.
+    @Test func drainFullHistoryReportsItsProgressFraction() async throws {
+        let h = Harness()
+        let origin = UInt32(ManualClock.origin.timeIntervalSince1970)
+        let complete = Frame(type: PacketType.metadata.rawValue, seq: 24, cmd: 3, payload: [])
+        let record = historicalRecordFrame(unix: origin - 3600)
+        let halfway = metadataFrame(token: [70, 0, 0, 0, 1, 0, 0, 0])
+        let (task, _) = await startScriptedSync(h) { kick in kick == 1 ? [record, halfway] : [complete] }
+        // Mid-drain emissions are throttled on the (frozen) test clock; the drain-end emission is forced.
+        await endDrainUntilNextKick(h)
+        await task.value
+        let fractions = h.events.all.compactMap { event -> Double? in
+            if case let .drainProgress(progress) = event { return progress.fraction }
+            return nil
+        }
+        #expect(fractions.contains(0.5), "\(fractions)")
     }
 
     /// Runs a sync against a scripted ring strap to its end. The connect drain is ended first, and the

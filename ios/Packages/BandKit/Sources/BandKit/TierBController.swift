@@ -175,6 +175,8 @@ public actor TierBController {
     /// Oldest and newest record times kept by the running sync. Fed by `handleOffloadFrame`; reset at
     /// the sync's start.
     private var restoreSpan = RecordSpan()
+    /// The running full sync's backlog, for its progress fraction. Nil outside `drainFullHistory`.
+    private var syncBacklog: SyncBacklog?
     /// Waiters resumed when the running drain ends (`drainFullHistory` parks here between the
     /// back-to-back kicks).
     private var drainEndWaiters: [CheckedContinuation<Void, Never>] = []
@@ -416,6 +418,20 @@ public actor TierBController {
             return
         }
         restoreSpan = RecordSpan()
+        // How much is pending, read fresh: an empty backlog ends the sync at once instead of a silent drain,
+        // and a non-empty one becomes the denominator of the progress fraction.
+        if let raw = try? FrameCodec.reencode(await send(BandCommand.getDataRange())),
+           let ring = DataRange.ringState(from: raw, cmdOff: 6) {
+            ringState = ring
+            if ring.pagesBehind == 0 {
+                fullHistorySummary = "up to date: nothing pending on the band"
+                BandLog.tierB(.info, "full-history sync: nothing pending (W=\(ring.write) U=\(ring.read))")
+                return
+            }
+            syncBacklog = SyncBacklog(startPage: ring.read, pages: ring.pagesBehind, capacity: ring.capacity)
+            BandLog.tierB(.info, "full-history sync: \(ring.pagesBehind) page(s) pending")
+        }
+        defer { syncBacklog = nil }
         let pass = await runFullHistoryPass(budget: Self.maxFullHistoryDrains)
         if pass.stop == .denied {
             fullHistorySummary = "sync stopped: the next drain could not start"
@@ -659,6 +675,10 @@ public actor TierBController {
         loggedFutureEndRTC = false
         historicalRecords.removeAll()
         let effects = offload.start()
+        if trigger == .autoContinue {
+            // A full sync's drains end within `quietTimeout` when the band has nothing to send.
+            offload.armQuietDeadline()
+        }
         // Drain start is a UI milestone, so it bypasses the ack throttle.
         emitDrainProgress(force: true)
         await runOffloadEffects(effects)
@@ -781,6 +801,10 @@ public actor TierBController {
                 }
                 do {
                     try await writeConfirmedWithoutReply(.historicalDataResult(token: token))
+                    if var backlog = syncBacklog {
+                        backlog.ackedPage = Int(Self.tokenValue(Array(token.prefix(4))))
+                        syncBacklog = backlog
+                    }
                     BandLog.tierB(.info, "acked batch, trim cursor \(Self.tokenValue(token)) (\(offload.recordCount) record(s) so far)")
                     // Without a sink the decoded records are handed to the app now: holding the whole
                     // drain in memory until it stops would lose every acked record if the app died
@@ -908,6 +932,7 @@ public actor TierBController {
             recordsThisDrain: drainKeptRecords,
             totalThisSession: total,
             pagesBehind: ringState?.pagesBehind,
+            fraction: syncBacklog?.fraction,
             stopReason: stopReason,
             at: now
         )))
@@ -1383,5 +1408,20 @@ private struct RecordSpan {
 
     private static func hours(_ seconds: Int) -> String {
         String(format: "%.1f", Double(seconds) / 3600)
+    }
+}
+
+/// A full sync's starting point and size in ring pages, and the latest page an ack reported.
+private struct SyncBacklog {
+    let startPage: Int
+    let pages: Int
+    let capacity: Int
+    var ackedPage: Int?
+
+    /// Pages acked since the sync began over the pages that were pending, wrapping around the ring.
+    var fraction: Double {
+        guard let ackedPage, pages > 0, capacity > 0 else { return 0 }
+        let done = ((ackedPage - startPage) % capacity + capacity) % capacity
+        return min(1, Double(done) / Double(pages))
     }
 }

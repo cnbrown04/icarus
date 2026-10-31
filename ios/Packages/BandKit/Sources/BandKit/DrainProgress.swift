@@ -20,6 +20,9 @@ public struct DrainProgress: Sendable, Equatable {
     public let totalThisSession: Int
     /// The strap's reported ring backlog, when a GET_DATA_RANGE reply has been decoded.
     public let pagesBehind: Int?
+    /// Share of a full sync's backlog drained so far (0...1): pages acked since the sync began over the
+    /// pages GET_DATA_RANGE reported pending when it began. Nil outside a full sync (routine drains are short).
+    public let fraction: Double?
     /// Why the last drain stopped. Nil while draining (and before the first drain).
     public let stopReason: OffloadStateMachine.StopReason?
     /// The controller clock's time this progress was sampled.
@@ -30,9 +33,11 @@ public struct DrainProgress: Sendable, Equatable {
         recordsThisDrain: Int,
         totalThisSession: Int,
         pagesBehind: Int?,
+        fraction: Double? = nil,
         stopReason: OffloadStateMachine.StopReason?,
         at: Date
     ) {
+        self.fraction = fraction
         self.phase = phase
         self.recordsThisDrain = recordsThisDrain
         self.totalThisSession = totalThisSession
