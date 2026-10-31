@@ -421,8 +421,9 @@ public actor TierBController {
         return (ring, cursor)
     }
 
-    /// Hardware check of SET_READ_POINTER now that commands are padded (`FrameCodec.encodeCommand`): aims
-    /// the read cursor `probeRewindPages` behind U, reads the cursor words back, then runs ONE drain and
+    /// Hardware check of SET_READ_POINTER now that commands are padded (`FrameCodec.encodeCommand`): ends the
+    /// transmit session (ABORT_HISTORICAL_TRANSMITS), aims the read cursor `probeRewindPages` behind U, reads
+    /// the cursor words back, then runs ONE drain and
     /// reports where it really started (its oldest record). Every step is logged as `read-pointer probe`.
     /// The returned line is for the Debug screen. Never runs during a drain.
     public func probeReadPointer() async -> String {
@@ -433,6 +434,13 @@ public actor TierBController {
             guard before.ring.read >= Self.probeRewindPages else { return "probe skipped: U too close to 0" }
             let target = before.ring.read - Self.probeRewindPages
             BandLog.tierB(.info, "read-pointer probe: before cursor=\(before.cursor) W=\(before.ring.write) U=\(before.ring.read), target \(target)")
+            // 2026-10-30, second probe: the padded rewind moved the cursor word, but the next drain still
+            // streamed from the old place. End the strap's transmit session first, so a cached session
+            // position cannot outlive the rewind (OpenStrap's client aborts whenever a sync goes idle).
+            try await writeConfirmedWithoutReply(.abortHistoricalTransmits())
+            if let aborted = try await readCursorState() {
+                BandLog.tierB(.info, "read-pointer probe: after abort cursor=\(aborted.cursor) W=\(aborted.ring.write) U=\(aborted.ring.read)")
+            }
             // No settle delay: the strap handles commands in order, so the GET_DATA_RANGE below is answered
             // after the cmd-33 write (2026-10-30 log: the cmd-33 response precedes the next range reply).
             try await rewindReadPointer(to: UInt32(target))
