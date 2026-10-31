@@ -23,18 +23,18 @@ final class VerifyScreensTests: XCTestCase {
         shot("01-summary")
         scrollShot("01b-summary-scrolled")
 
+        tab("Strain")
+        shot("02-strain")
+        scrollShot("02b-strain-scrolled")
+
         tab("Sleep")
-        shot("02-sleep")
-        scrollShot("02b-sleep-scrolled")
-        scrollShot("02c-sleep-scrolled-more")
+        shot("03-sleep")
+        scrollShot("03b-sleep-scrolled")
+        scrollShot("03c-sleep-scrolled-more")
         for range in ["W", "M", "6M"] {
             tapIfExists(app.buttons[range].firstMatch)
-            shot("02-sleep-\(range)")
+            shot("03-sleep-\(range)")
         }
-
-        tab("Strain")
-        shot("03-strain")
-        scrollShot("03b-strain-scrolled")
 
         tab("Browse")
         shot("04-browse")
@@ -93,8 +93,23 @@ final class VerifyScreensTests: XCTestCase {
         let slug = metric.lowercased().replacingOccurrences(of: " ", with: "-")
         shot(String(format: "04-%02d-%@", index + 1, slug))
         scrollShot(String(format: "04-%02d-%@-scrolled", index + 1, slug))
-        if tapIfExists(app.buttons["6M"].firstMatch) {
+        if pickRange("6M") {
             shot(String(format: "04-%02d-%@-6m", index + 1, slug))
+        }
+        // Nightly vitals: last night's readings (D) and every night's readings (Show All Data).
+        if ["Resting Heart Rate", "Heart Rate Variability", "Respiratory Rate"].contains(metric) {
+            if pickRange("D") {
+                shot(String(format: "04-%02d-%@-d", index + 1, slug))
+                scrollShot(String(format: "04-%02d-%@-d-scrolled", index + 1, slug))
+            }
+            let all = app.buttons["metric.showAllData"].firstMatch
+            scrollTo(all)
+            if all.waitForExistence(timeout: 5) {
+                all.tap()
+                settle()
+                shot(String(format: "04-%02d-%@-all", index + 1, slug))
+                back()
+            }
         }
         back()
     }
@@ -146,6 +161,14 @@ final class VerifyScreensTests: XCTestCase {
             edge.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
         }
         settle()
+    }
+
+    /// Scrolls back to the top, where the range control sits, then picks `label` (D, W, M, 6M).
+    @discardableResult
+    private func pickRange(_ label: String) -> Bool {
+        app.swipeDown()
+        app.swipeDown()
+        return tapIfExists(app.buttons[label].firstMatch)
     }
 
     @discardableResult

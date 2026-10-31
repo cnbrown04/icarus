@@ -4,7 +4,7 @@ import Metrics
 import Store
 
 /// The ranges a metric page offers. Intraday metrics add the day view (D), so they default to it; daily metrics
-/// start at the week (W).
+/// start at the week (W). Nightly vitals (resting HR, HRV, respiratory rate) also have D: last night's readings.
 enum MetricRange: String, CaseIterable, Identifiable, Sendable {
     case day
     case week
@@ -33,7 +33,7 @@ enum MetricRange: String, CaseIterable, Identifiable, Sendable {
     }
 
     static func options(for kind: MetricKind) -> [MetricRange] {
-        kind.hasIntraday ? allCases : [.week, .month, .sixMonths]
+        kind.hasIntraday || kind.isNightly ? allCases : [.week, .month, .sixMonths]
     }
 
     static func defaultRange(for kind: MetricKind) -> MetricRange {
@@ -88,6 +88,9 @@ struct MetricDetailData: Sendable {
     let calories: CaloriesSplit?
     /// Today's recovery contributors and the 30-night reference. Recovery only.
     let snapshot: HealthSnapshot?
+    /// The night the day view shows, for nightly vitals: `points` are its readings and `dayStartMs`–`dayEndMs` its
+    /// span. Nil for other metrics and ranges, or before any main sleep.
+    var night: VitalNight? = nil
 
     var isEmpty: Bool {
         value == nil && points.isEmpty && rows.allSatisfy { $0.value == nil }
@@ -113,8 +116,8 @@ enum MetricDetailModel {
         let context = try Dashboard.Context.load(db, nowMs: nowMs)
         let zone = context.timeZone
         let today = context.today
-        let dayStartMs = LocalTime.localTime(today, hour: 0, in: zone)
-        let dayEndMs = LocalTime.localTime(LocalTime.adding(days: 1, to: today), hour: 0, in: zone)
+        var dayStartMs = LocalTime.localTime(today, hour: 0, in: zone)
+        var dayEndMs = LocalTime.localTime(LocalTime.adding(days: 1, to: today), hour: 0, in: zone)
 
         var points: [MetricPoint] = []
         var rows: [MetricDayRow] = []
@@ -124,7 +127,24 @@ enum MetricDetailModel {
         var previousValue: Double?
         var caption: String
 
-        if range == .day {
+        var night: VitalNight?
+
+        if range == .day, kind.isNightly {
+            // Last night's window readings; the value is the night's own (their floor, mean or median), which is
+            // the number every other screen shows for that night.
+            let nights = try db.vitalNights(kind, nowMs: nowMs, limit: 2, in: zone)
+            night = nights.first
+            if let night {
+                points = try db.nightReadings(kind, night: night)
+                dayStartMs = night.startMs
+                dayEndMs = night.endMs
+            }
+            value = night?.value
+            minimum = points.map(\.value).min()
+            maximum = points.map(\.value).max()
+            previousValue = nights.count > 1 ? nights[1].value : nil
+            caption = night.map { nightCaption($0, today: today, in: zone) } ?? "No night yet"
+        } else if range == .day {
             points = try db.metricIntraday(kind, day: today, in: zone)
             let values = points.map(\.value)
             value = aggregate(values, kind)
@@ -223,8 +243,16 @@ enum MetricDetailModel {
             medication: medication,
             calibration: calibration,
             calories: calories,
-            snapshot: snapshot
+            snapshot: snapshot,
+            night: night
         )
+    }
+
+    /// "Last night · 01:33–07:10", or the wake date when the newest night is older than last night.
+    static func nightCaption(_ night: VitalNight, today: LocalDay, in zone: TimeZone) -> String {
+        let span = "\(Format.clock(night.startMs, in: zone))–\(Format.clock(night.endMs, in: zone))"
+        let when = night.day == today ? "Last night" : MetricFormat.shortDate(night.day, in: zone)
+        return "\(when) · \(span)"
     }
 
     /// The period value: a mean for averaged metrics, a total for sums. Nil when there are no values.

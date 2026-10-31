@@ -39,6 +39,24 @@ struct MetricDetailChart: View {
             .metricChartStyle()
             .chartXSelection(value: $selection)
             .accessibilityLabel("Calories, Today")
+        } else if data.kind.isNightly {
+            // One dot per window reading across the night, as Apple Health draws individual samples.
+            Chart {
+                ForEach(data.points, id: \.tsMs) { point in
+                    PointMark(x: .value("Time", Date(epochMs: point.tsMs)), y: .value(data.kind.title, point.value))
+                        .foregroundStyle(color)
+                        .symbolSize(Spacing.s16)
+                }
+                if let selected = selectedPoint {
+                    RuleMark(x: .value("Selected", Date(epochMs: selected.tsMs)))
+                        .foregroundStyle(Color.secondary)
+                }
+            }
+            .chartXScale(domain: domain)
+            .chartYScale(domain: ChartDomain.line(data.points.map(\.value)))
+            .metricChartStyle()
+            .chartXSelection(value: $selection)
+            .accessibilityLabel("\(data.kind.title), readings last night")
         } else {
             let range = dayDomain
             Chart {
@@ -46,7 +64,7 @@ struct MetricDetailChart: View {
                 ForEach(data.points, id: \.tsMs) { point in
                     LineMark(x: .value("Time", Date(epochMs: point.tsMs)), y: .value(data.kind.title, point.value))
                         .interpolationMethod(.linear)
-                        .foregroundStyle(color)
+                        .foregroundStyle(lineStyle(data.points.map(\.value)))
                 }
                 if let value = data.value {
                     averageRule(value)
@@ -55,7 +73,7 @@ struct MetricDetailChart: View {
                     RuleMark(x: .value("Selected", Date(epochMs: selected.tsMs)))
                         .foregroundStyle(Color.secondary)
                     PointMark(x: .value("Selected", Date(epochMs: selected.tsMs)), y: .value(data.kind.title, selected.value))
-                        .foregroundStyle(color)
+                        .foregroundStyle(pointColor(selected.value))
                 }
             }
             .chartXScale(domain: domain)
@@ -139,13 +157,13 @@ struct MetricDetailChart: View {
                         LineMark(x: .value("Day", row.date, unit: .day), y: .value(data.kind.title, row.value ?? 0),
                                  series: .value("Run", run.first ?? 0))
                             .interpolationMethod(.linear)
-                            .foregroundStyle(color)
+                            .foregroundStyle(lineStyle(run.compactMap { data.rows[$0].value }))
                     }
                 }
                 ForEach(data.rows) { row in
                     if let value = row.value {
                         PointMark(x: .value("Day", row.date, unit: .day), y: .value(data.kind.title, value))
-                            .foregroundStyle(color)
+                            .foregroundStyle(pointColor(value))
                             .symbolSize(Spacing.s16)
                     }
                 }
@@ -157,7 +175,7 @@ struct MetricDetailChart: View {
                         .foregroundStyle(Color.secondary)
                 }
             }
-            .chartYScale(domain: ChartDomain.line(data.rows.compactMap(\.value)))
+            .chartYScale(domain: data.kind == .stress ? 0...100 : ChartDomain.line(data.rows.compactMap(\.value)))
             .metricChartStyle()
             .chartXSelection(value: $selection)
             .accessibilityLabel("\(data.kind.title) by day")
@@ -186,6 +204,16 @@ struct MetricDetailChart: View {
     }
 
     // MARK: Shared
+
+    /// Stress lines take the green-to-red scale, placed so each height has its own stress value's colour; every other
+    /// line takes the category colour. `values` are the values of the one series the style is for.
+    private func lineStyle(_ values: [Double]) -> AnyShapeStyle {
+        data.kind == .stress ? AnyShapeStyle(Palette.stressGradient(values)) : AnyShapeStyle(color)
+    }
+
+    private func pointColor(_ value: Double) -> Color {
+        data.kind == .stress ? Palette.stress(value) : color
+    }
 
     /// The period average: the only dashed line, in neutral grey.
     private func averageRule(_ value: Double) -> some ChartContent {

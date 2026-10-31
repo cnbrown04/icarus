@@ -52,6 +52,16 @@ struct MetricDetailView: View {
 
             MetricSpecificSections(data: data ?? .placeholder(kind: kind, range: range))
 
+            if kind.isNightly {
+                // Apple Health's entry to every sample behind a metric: here, each night's window readings.
+                Section {
+                    NavigationLink("Show All Data") {
+                        VitalReadingsView(kind: kind, environment: environment)
+                    }
+                    .accessibilityIdentifier("metric.showAllData")
+                }
+            }
+
             Section {
                 DisclosureGroup("About", isExpanded: $aboutExpanded) {
                     ForEach(MetricAbout.sentences(kind), id: \.self) { sentence in
@@ -134,7 +144,9 @@ struct MetricDetailView: View {
     // MARK: Details
 
     @ViewBuilder private var detailsSection: some View {
-        if let data {
+        if let data, data.kind.isNightly, data.range == .day {
+            nightDetails(data)
+        } else if let data {
             Section {
                 if data.kind.aggregation == .sum {
                     LabeledRow(title: "Total", value: data.value.map { MetricFormat.withUnit($0, kind) } ?? "—")
@@ -149,6 +161,20 @@ struct MetricDetailView: View {
                     // The comparison is the title and only the change sits on the right, so the row never wraps.
                     LabeledRow(title: changeTitle(data.range), value: MetricFormat.change(value - previous, kind))
                 }
+            }
+        }
+    }
+
+    /// Last night's value, the spread of the readings behind it and how many there are, then the change from the
+    /// night before.
+    private func nightDetails(_ data: MetricDetailData) -> some View {
+        Section {
+            LabeledRow(title: "Last Night", value: data.value.map { MetricFormat.withUnit($0, kind) } ?? "—")
+            LabeledRow(title: "Lowest Reading", value: data.minimum.map { MetricFormat.withUnit($0, kind) } ?? "—")
+            LabeledRow(title: "Highest Reading", value: data.maximum.map { MetricFormat.withUnit($0, kind) } ?? "—")
+            LabeledRow(title: "Readings", value: data.points.count.formatted())
+            if let value = data.value, let previous = data.previousValue {
+                LabeledRow(title: "Change from Previous Night", value: MetricFormat.change(value - previous, kind))
             }
         }
     }
