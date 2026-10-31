@@ -27,10 +27,28 @@ enum Palette {
         case .green: .green
         }
     }
-    /// Stress bands are steps of the mind colour: the words carry the meaning, the colour only steps up.
-    static let stressLow = MetricCategory.mind.color.opacity(0.4)
-    static let stressModerate = MetricCategory.mind.color.opacity(0.7)
-    static let stressHigh = MetricCategory.mind.color
+    /// Stress on a chart runs green at 0 through yellow and orange to red at 100, so the height of the line and its
+    /// colour say the same thing. Only the stress chart uses it; the stress glyph keeps the mind colour like every
+    /// other category glyph.
+    static let stressStops: [Gradient.Stop] = [
+        .init(color: .green, location: 0),
+        .init(color: .yellow, location: 0.4),
+        .init(color: .orange, location: 0.7),
+        .init(color: .red, location: 1),
+    ]
+    /// The stress scale for one line whose values span `values`: Swift Charts stretches a line's gradient over the
+    /// line's own bounds, not the axis, so the stops are re-placed to put each stress value at its own colour.
+    static func stressGradient(_ values: [Double]) -> LinearGradient {
+        guard let low = values.min(), let high = values.max(), high > low else {
+            return LinearGradient(colors: [stress(values.first ?? 0)], startPoint: .bottom, endPoint: .top)
+        }
+        let steps = 12
+        let stops = (0...steps).map { index -> Gradient.Stop in
+            let location = Double(index) / Double(steps)
+            return Gradient.Stop(color: stress(low + (high - low) * location), location: location)
+        }
+        return LinearGradient(stops: stops, startPoint: .bottom, endPoint: .top)
+    }
     /// Calories are steps of the activity colour.
     static let caloriesResting = MetricCategory.activity.color.opacity(0.35)
     static let caloriesActive = MetricCategory.activity.color
@@ -42,12 +60,14 @@ enum Palette {
     /// Zones 1-5, lowest first: one orange ramp from light to dark, so the zones read as steps of intensity.
     static let zones: [Color] = [0.3, 0.45, 0.6, 0.8, 1.0].map { MetricCategory.activity.color.opacity($0) }
 
-    static func stress(_ band: StressBand) -> Color {
-        switch band {
-        case .low: Palette.stressLow
-        case .moderate: Palette.stressModerate
-        case .high: Palette.stressHigh
-        }
+    /// One stress value's colour on the green-to-red scale, blended between the two nearest stops.
+    static func stress(_ value: Double) -> Color {
+        let fraction = min(max(value / 100, 0), 1)
+        let stops = stressStops
+        guard let upper = stops.firstIndex(where: { $0.location >= fraction }), upper > 0 else { return stops[0].color }
+        let lower = stops[upper - 1]
+        let span = stops[upper].location - lower.location
+        return lower.color.mix(with: stops[upper].color, by: span > 0 ? (fraction - lower.location) / span : 0)
     }
 
     static func zone(_ zone: HeartRateZone) -> Color {
