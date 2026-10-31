@@ -159,6 +159,23 @@ public enum RespiratoryRate {
         windowSec: Double = nightWindowSec,
         minCoverage: Double = minNightCoverage
     ) -> NightEstimate? {
+        guard let windows = nightWindows(beats, windowSec: windowSec) else { return nil }
+        let estimates = windows.estimates.map(\.brpm)
+        let total = windows.total
+        guard !estimates.isEmpty,
+              Double(estimates.count) / Double(total) >= minCoverage,
+              let brpm = Statistics.median(estimates),
+              plausibleRangeBrpm.contains(brpm)
+        else { return nil }
+        return NightEstimate(brpm: brpm, windowsEstimated: estimates.count, windowsTotal: total)
+    }
+
+    /// The per-window estimates `nightEstimate` takes the median of, in time order, each stamped with its
+    /// window's start (ms), and the number of windows the beats span. Nil without beats.
+    public static func nightWindows(
+        _ beats: [RRSample],
+        windowSec: Double = nightWindowSec
+    ) -> (estimates: [(startMs: Int64, brpm: Double)], total: Int)? {
         let ordered = timeOrdered(beats)
         guard let origin = ordered.first?.tsMs, windowSec > 0 else { return nil }
 
@@ -168,20 +185,14 @@ public enum RespiratoryRate {
             windows[index, default: []].append(beat)
         }
         guard let lastIndex = windows.keys.max() else { return nil }
-        let total = lastIndex + 1
 
-        var estimates: [Double] = []
+        var estimates: [(startMs: Int64, brpm: Double)] = []
         for index in windows.keys.sorted() {
             if let window = windowEstimate(windows[index] ?? []) {
-                estimates.append(window.brpm)
+                estimates.append((origin + Int64(Double(index) * windowSec * 1000), window.brpm))
             }
         }
-        guard !estimates.isEmpty,
-              Double(estimates.count) / Double(total) >= minCoverage,
-              let brpm = Statistics.median(estimates),
-              plausibleRangeBrpm.contains(brpm)
-        else { return nil }
-        return NightEstimate(brpm: brpm, windowsEstimated: estimates.count, windowsTotal: total)
+        return (estimates, lastIndex + 1)
     }
 
     // MARK: - Beat timing

@@ -155,22 +155,10 @@ public enum SleepDeriver {
         let onWrist = sorted.filter(\.isOnWrist)
         let contactFraction = Double(onWrist.count) / Double(sorted.count)
 
-        // Off-wrist and invalid readings pollute every aggregate, so only on-wrist records
-        // contribute.
-        let heartRate = onWrist.compactMap { record -> SleepDetector.HRPoint? in
-            guard let bpm = record.bpm, bpmRange.contains(bpm) else { return nil }
-            return SleepDetector.HRPoint(ts: record.unixSeconds, bpm: bpm)
-        }
-        let restingHeartRate = SleepDetector.sessionRestingHR(heartRate, startUnix: startUnix, endUnix: endUnix)
-
-        let beats = onWrist.map { (unixSeconds: $0.unixSeconds, rrMs: $0.rrMs) }
-        let rmssd = HRV.windowedRMSSD(beats, startUnix: startUnix)
-
-        // Each R-R value carries its record's timestamp. The estimator clocks beats within a run, so the
-        // record time is the only wall-clock anchor it gets, and it must not be re-stamped.
-        let rrSamples = onWrist.flatMap { record in
-            record.rrMs.map { RRSample(tsMs: record.unixSeconds * 1000, rrMs: $0) }
-        }
+        let inputs = vitalInputs(onWrist)
+        let restingHeartRate = SleepDetector.sessionRestingHR(inputs.heartRate, startUnix: startUnix, endUnix: endUnix)
+        let rmssd = HRV.windowedRMSSD(inputs.beats, startUnix: startUnix)
+        let rrSamples = inputs.rrSamples
 
         return SleepSession(
             startUnix: startUnix,
@@ -186,6 +174,69 @@ public enum SleepDeriver {
             recordCount: sorted.count,
             isNap: isNap
         )
+    }
+
+    /// One reading behind a nightly vital: a window's start and its value.
+    public struct Reading: Sendable, Equatable {
+        public let unixSeconds: Int64
+        public let value: Double
+
+        public init(unixSeconds: Int64, value: Double) {
+            self.unixSeconds = unixSeconds
+            self.value = value
+        }
+    }
+
+    /// A nightly vital and the readings it summarises: resting HR is the lowest 5-minute heart rate, RMSSD the mean
+    /// of 5-minute RMSSD, respiratory rate the median of 30-minute estimates (when enough windows have one).
+    public enum NightVital: Sendable {
+        case restingHR
+        case hrv
+        case respiratoryRate
+    }
+
+    /// The window readings behind `summarize`'s value for `vital`, in time order, for the same records and window
+    /// and computed by the same functions, so the readings and the nightly value always agree. Only `vital` is
+    /// computed: respiratory rate's spectra cost far more than the other two.
+    public static func readings(
+        _ vital: NightVital,
+        _ records: [SleepRecord],
+        startUnix: Int64,
+        endUnix: Int64
+    ) -> [Reading] {
+        let sorted = records.sorted { $0.unixSeconds < $1.unixSeconds }
+        let inputs = vitalInputs(sorted.filter(\.isOnWrist))
+        switch vital {
+        case .restingHR:
+            return SleepDetector.sessionRestingBins(inputs.heartRate, startUnix: startUnix, endUnix: endUnix)
+                .map { Reading(unixSeconds: $0.start, value: $0.bpm) }
+        case .hrv:
+            return HRV.rmssdWindows(inputs.beats, startUnix: startUnix)
+                .map { Reading(unixSeconds: $0.startUnix, value: $0.ms) }
+        case .respiratoryRate:
+            return (RespiratoryRate.nightWindows(inputs.rrSamples)?.estimates ?? [])
+                .map { Reading(unixSeconds: $0.startMs / 1000, value: $0.brpm) }
+        }
+    }
+
+    /// The on-wrist inputs every nightly vital reads. Off-wrist and invalid readings pollute every aggregate,
+    /// so only on-wrist records contribute. `onWrist` must be sorted by time.
+    private static func vitalInputs(_ onWrist: [SleepRecord]) -> (
+        heartRate: [SleepDetector.HRPoint],
+        beats: [(unixSeconds: Int64, rrMs: [Double])],
+        rrSamples: [RRSample]
+    ) {
+        let heartRate = onWrist.compactMap { record -> SleepDetector.HRPoint? in
+            guard let bpm = record.bpm, bpmRange.contains(bpm) else { return nil }
+            return SleepDetector.HRPoint(ts: record.unixSeconds, bpm: bpm)
+        }
+        let beats = onWrist.map { (unixSeconds: $0.unixSeconds, rrMs: $0.rrMs) }
+        // Each R-R value carries its record's timestamp. The estimator clocks beats within a run, so the
+        // record time is the only wall-clock anchor it gets, and it must not be re-stamped.
+        let rrSamples = onWrist.flatMap { record in
+            record.rrMs.map { RRSample(tsMs: record.unixSeconds * 1000, rrMs: $0) }
+        }
+        return (heartRate, beats, rrSamples)
     }
 
     private static func quality(contactFraction: Double) -> SleepQuality {

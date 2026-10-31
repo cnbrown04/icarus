@@ -489,20 +489,36 @@ public enum SleepDetector {
     /// Session resting HR (NOOP sessionRestingHR). Gated first; if no bin qualifies, the lowest bin of
     /// any size; if there are no bins at all, nil. `points` must be sorted by time.
     static func sessionRestingHR(_ points: [HRPoint], startUnix: Int64, endUnix: Int64) -> Double? {
+        sessionRestingBins(points, startUnix: startUnix, endUnix: endUnix).map(\.bpm).min()
+    }
+
+    /// The 5-minute bins the session resting HR is the floor of, in time order: the gated bins, or every bin
+    /// when none passes the gate. `points` must be sorted by time.
+    static func sessionRestingBins(_ points: [HRPoint], startUnix: Int64, endUnix: Int64) -> [(start: Int64, bpm: Double)] {
         let inside = slice(points, from: startUnix, to: endUnix)
-        return lowestBinMean(inside, from: startUnix, minSamples: restingBinMinSamples)
-            ?? lowestBinMean(inside, from: startUnix, minSamples: 1)
+        let gated = binMeans(inside, from: startUnix, minSamples: restingBinMinSamples)
+        return gated.isEmpty ? binMeans(inside, from: startUnix, minSamples: 1) : gated
     }
 
     /// Lowest mean over 5-minute bins anchored at `start` that hold at least `minSamples` points.
     static func lowestBinMean(_ values: ArraySlice<HRPoint>, from start: Int64, minSamples: Int) -> Double? {
+        binMeans(values, from: start, minSamples: minSamples).map(\.bpm).min()
+    }
+
+    /// Mean HR of each 5-minute bin anchored at `start` that holds at least `minSamples` points, in time order.
+    /// Each bin is stamped with its start.
+    static func binMeans(_ values: ArraySlice<HRPoint>, from start: Int64, minSamples: Int) -> [(start: Int64, bpm: Double)] {
         var bins: [Int64: (sum: Double, count: Int)] = [:]
         for point in values {
             let bin = (point.ts - start) / restingBinSeconds
             bins[bin, default: (0, 0)].sum += point.bpm
             bins[bin, default: (0, 0)].count += 1
         }
-        return bins.values.filter { $0.count >= minSamples }.map { $0.sum / Double($0.count) }.min()
+        return bins.keys.sorted().compactMap { bin in
+            let value = bins[bin]!
+            guard value.count >= minSamples else { return nil }
+            return (start + bin * restingBinSeconds, value.sum / Double(value.count))
+        }
     }
 
     // MARK: Off-wrist

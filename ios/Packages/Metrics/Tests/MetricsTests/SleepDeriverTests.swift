@@ -74,6 +74,28 @@ struct SleepDeriverTests {
         #expect(session.rmssdMs == nil)
     }
 
+    /// The readings are what the nightly values summarise: resting HR is their floor, RMSSD their mean.
+    @Test func readingsAgreeWithTheNightlyValues() throws {
+        let start = unix(2026, 10, 15, 23, 0)
+        let end = unix(2026, 10, 16, 1, 0)
+        let records = run(from: start, until: end, cadence: 1) { offset in
+            let second = Int(offset - start)
+            return record(offset, bpm: 50 + Double((second / 600) % 4), rr: [second.isMultiple(of: 2) ? 1_000 : 1_040 + Double((second / 900) % 3) * 10])
+        }
+        let session = try #require(SleepDeriver.summarize(records, startUnix: start, endUnix: end))
+        let resting = SleepDeriver.readings(.restingHR, records, startUnix: start, endUnix: end)
+        let hrv = SleepDeriver.readings(.hrv, records, startUnix: start, endUnix: end)
+
+        #expect(resting.count == 24)
+        #expect(resting.first?.unixSeconds == start)
+        #expect(resting.map(\.value).min() == session.restingHeartRate)
+        let rmssd = hrv.map(\.value)
+        #expect(!rmssd.isEmpty)
+        let mean = rmssd.reduce(0, +) / Double(rmssd.count)
+        #expect(abs(mean - (session.rmssdMs ?? -1)) < 1e-9)
+        #expect(hrv.map(\.unixSeconds) == hrv.map(\.unixSeconds).sorted())
+    }
+
     @Test func rmssdIsTheMeanOfPerWindowRMSSD() throws {
         // 1 Hz beats alternating 1000 / 1040 ms: every successive difference is 40 ms, so every full
         // 5-minute window has RMSSD 40 and the session mean is 40.

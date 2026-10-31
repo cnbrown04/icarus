@@ -47,6 +47,26 @@ public enum HRV {
         minDifferences: Int = 20,
         maxRecordGapSeconds: Int64 = 2
     ) -> Double? {
+        let values = rmssdWindows(
+            beats,
+            startUnix: startUnix,
+            windowSeconds: windowSeconds,
+            minDifferences: minDifferences,
+            maxRecordGapSeconds: maxRecordGapSeconds
+        ).map(\.ms)
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
+    }
+
+    /// The per-window RMSSD values `windowedRMSSD` averages, in time order, each stamped with its window's
+    /// start. Same windows, cleaning and gates; a window that does not qualify is absent.
+    public static func rmssdWindows(
+        _ beats: [(unixSeconds: Int64, rrMs: [Double])],
+        startUnix: Int64,
+        windowSeconds: Int64 = 300,
+        minDifferences: Int = 20,
+        maxRecordGapSeconds: Int64 = 2
+    ) -> [(startUnix: Int64, ms: Double)] {
         var buckets: [Int64: [(unixSeconds: Int64, rrMs: Double)]] = [:]
         for beat in beats where beat.unixSeconds >= startUnix {
             let index = (beat.unixSeconds - startUnix) / windowSeconds
@@ -55,7 +75,7 @@ public enum HRV {
             }
         }
 
-        var windowValues: [Double] = []
+        var windowValues: [(startUnix: Int64, ms: Double)] = []
         for index in buckets.keys.sorted() {
             let bucket = buckets[index]!
             let flags = RRCleaner.acceptedFlags(bucket.map(\.rrMs))
@@ -68,9 +88,8 @@ public enum HRV {
                 differences += 1
             }
             guard differences >= minDifferences else { continue }
-            windowValues.append((sumSquares / Double(differences)).squareRoot())
+            windowValues.append((startUnix + index * windowSeconds, (sumSquares / Double(differences)).squareRoot()))
         }
-        guard !windowValues.isEmpty else { return nil }
-        return windowValues.reduce(0, +) / Double(windowValues.count)
+        return windowValues
     }
 }
