@@ -557,20 +557,20 @@ struct TodayView: View {
     private var stressTileCaption: String? {
         guard data != nil else { return nil }
         if let latest = latestStress { return Format.stressBand(latest) }
-        if !calibration.isCalibrated, stressState != .exertion, stressState != .hrOnly, !calibration.nights.isEmpty {
+        if !calibration.isCalibrated, stressState != .exertion, stressState != .hrOnly, !calibration.days.isEmpty {
             return "Calibrating \(calibration.qualifyingDays)/\(calibration.requiredDays)"
         }
         if stressState == .exertion { return "Exertion" }
         if stressState == .hrOnly { return "HR only" }
-        if calibration.nights.isEmpty { return "No baseline" }
+        if calibration.days.isEmpty { return "No baseline" }
         return "No values"
     }
 
     private var stressCalibrationLine: String? {
         guard snapshot != nil, latestStress == nil else { return nil }
         if stressState == .exertion || stressState == .hrOnly { return nil }
-        guard !calibration.isCalibrated, !calibration.nights.isEmpty else { return nil }
-        return "Calibrating \(calibration.qualifyingDays) of \(calibration.requiredDays) nights"
+        guard !calibration.isCalibrated, !calibration.days.isEmpty else { return nil }
+        return "Calibrating \(calibration.qualifyingDays) of \(calibration.requiredDays) days"
     }
 
     private var stressEmptyLine: String {

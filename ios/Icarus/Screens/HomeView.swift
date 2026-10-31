@@ -409,7 +409,7 @@ struct HomeView: View {
         if stressState == .hrOnly {
             return "HR only"
         }
-        if calibration.nights.isEmpty {
+        if calibration.days.isEmpty {
             return "No baseline"
         }
         if !calibration.isCalibrated {
@@ -429,7 +429,7 @@ struct HomeView: View {
         if stressState == .exertion || stressState == .hrOnly {
             return Palette.warn
         }
-        if !calibration.nights.isEmpty, !calibration.isCalibrated {
+        if !calibration.days.isEmpty, !calibration.isCalibrated {
             return Palette.warn
         }
         return nil
@@ -445,11 +445,11 @@ struct HomeView: View {
         if stressState == .hrOnly {
             return "Heart rate only, no R-R baseline"
         }
-        if calibration.nights.isEmpty {
+        if calibration.days.isEmpty {
             return "No baseline"
         }
         if !calibration.isCalibrated {
-            return "Calibrating, \(calibration.qualifyingDays) of \(calibration.requiredDays) nights"
+            return "Calibrating, \(calibration.qualifyingDays) of \(calibration.requiredDays) days"
         }
         return "No value yet"
     }

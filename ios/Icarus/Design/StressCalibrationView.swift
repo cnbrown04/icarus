@@ -46,14 +46,14 @@ struct StressCalibrationNote: View {
 }
 
 /// The full calibration section on the stress detail screen: progress, the qualifying rule, the
-/// recent nights and the HR-only fallback with its caveat.
+/// recent days and the HR-only fallback with its caveat.
 struct StressCalibrationDetail: View {
     let progress: StressCalibrationProgress
     let state: StressState?
     let timeZone: TimeZone
 
     private var requiredWindows: Int {
-        progress.latestNight?.requiredWindows ?? Stress.minNightWindowsPerDay
+        progress.latestDay?.requiredWindows ?? Stress.minAwakeWindowsPerDay
     }
 
     private var qualifyingMinutes: Int {
@@ -62,24 +62,24 @@ struct StressCalibrationDetail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.s12) {
-            if progress.nights.isEmpty {
+            if progress.days.isEmpty {
                 Text("Stress needs a max heart rate or birth year before a baseline can be built. Add one in Settings.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
                 status
-                Text("Stress compares each window with your own recent nights, so it needs a baseline before values appear.")
+                Text("Stress compares each window with your own recent days, so it needs a baseline before values appear.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 Text(StressCalibrationCopy.make(progress: progress, state: state).detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("A night qualifies with \(requiredWindows) five-minute windows "
-                    + "(\(Format.duration(minutes: qualifyingMinutes))) of valid R-R between 00:00 and 06:00, "
-                    + "outside exertion.")
+                Text("A day qualifies with \(requiredWindows) awake five-minute windows "
+                    + "(\(Format.duration(minutes: qualifyingMinutes))) of valid R-R, "
+                    + "outside sleep and exertion.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                nights
+                lookbackDays
                 Divider()
                 hrOnly
             }
@@ -89,7 +89,7 @@ struct StressCalibrationDetail: View {
     private var status: some View {
         VStack(alignment: .leading, spacing: Spacing.s8) {
             HStack(alignment: .firstTextBaseline) {
-                Text("\(progress.qualifyingDays) of \(progress.requiredDays) nights")
+                Text("\(progress.qualifyingDays) of \(progress.requiredDays) days")
                     .font(.subheadline.weight(.semibold))
                     .monospacedDigit()
                 Spacer(minLength: Spacing.s8)
@@ -102,41 +102,41 @@ struct StressCalibrationDetail: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Stress calibration")
-        .accessibilityValue("\(progress.qualifyingDays) of \(progress.requiredDays) nights qualify")
+        .accessibilityValue("\(progress.qualifyingDays) of \(progress.requiredDays) days qualify")
     }
 
-    private var nights: some View {
+    private var lookbackDays: some View {
         VStack(alignment: .leading, spacing: Spacing.s8) {
-            Text("Recent nights")
+            Text("Recent days")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
-            ForEach(progress.nights.prefix(7)) { night in
+            ForEach(progress.days.prefix(7)) { lookbackDay in
                 HStack(alignment: .firstTextBaseline, spacing: Spacing.s8) {
-                    Text(dayLabel(night.day))
+                    Text(dayLabel(lookbackDay.day))
                         .font(.caption)
                     Spacer(minLength: Spacing.s8)
-                    Text("\(night.validWindowCount)/\(night.requiredWindows) windows")
+                    Text("\(lookbackDay.validWindowCount)/\(lookbackDay.requiredWindows) windows")
                         .font(.caption)
                         .monospacedDigit()
-                    if night.qualifiesForRR {
+                    if lookbackDay.qualifiesForRR {
                         Text("Qualified")
                             .font(.caption2)
                             .foregroundStyle(Palette.syncOK)
                     } else {
-                        Text("\(night.validMinutesNeeded) min needed")
+                        Text("\(lookbackDay.validMinutesNeeded) min needed")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                     }
                 }
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel(Text("\(dayLabel(night.day)), \(night.validWindowCount) of \(night.requiredWindows) valid windows"))
-                .accessibilityValue(Text(night.qualifiesForRR
+                .accessibilityLabel(Text("\(dayLabel(lookbackDay.day)), \(lookbackDay.validWindowCount) of \(lookbackDay.requiredWindows) valid windows"))
+                .accessibilityValue(Text(lookbackDay.qualifiesForRR
                     ? "Qualified"
-                    : "\(night.validMinutesNeeded) minutes still needed"))
+                    : "\(lookbackDay.validMinutesNeeded) minutes still needed"))
             }
-            if progress.nights.count > 7 {
-                Text("Showing the 7 most recent of \(progress.nights.count) nights in the \(progress.lookbackDays)-day lookback.")
+            if progress.days.count > 7 {
+                Text("Showing the 7 most recent of \(progress.days.count) days in the \(progress.lookbackDays)-day lookback.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -148,14 +148,14 @@ struct StressCalibrationDetail: View {
             Text("HR-only fallback")
                 .font(.caption.weight(.semibold))
             if progress.isHROnlyCalibrated {
-                Text("Ready from \(progress.hrOnlyDays) nights. It uses heart rate without HRV, so it is less "
+                Text("Ready from \(progress.hrOnlyDays) days. It uses heart rate without HRV, so it is less "
                     + "specific and is labelled HR only.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                Text("Without R-R, \(progress.requiredDays) nights of heart-rate windows can still score a fallback. "
+                Text("Without R-R, \(progress.requiredDays) days of heart-rate windows can still score a fallback. "
                     + "\(progress.hrOnlyDays) of \(progress.requiredDays) are ready; "
-                    + "\(StressCalibrationCopy.nightsNeeded(progress.hrOnlyDaysNeeded)) to go. "
+                    + "\(StressCalibrationCopy.daysNeeded(progress.hrOnlyDaysNeeded)) to go. "
                     + "It uses heart rate without HRV, so it is less specific and is labelled HR only.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -181,16 +181,16 @@ private enum StressCalibrationCopy {
         (title: title(progress: progress, state: state), detail: detail(progress: progress, state: state))
     }
 
-    static func nightsNeeded(_ count: Int) -> String {
-        guard count > 0 else { return "no more nights" }
-        return count == 1 ? "1 more night" : "\(count) more nights"
+    static func daysNeeded(_ count: Int) -> String {
+        guard count > 0 else { return "no more days" }
+        return count == 1 ? "1 more day" : "\(count) more days"
     }
 
     private static func title(progress: StressCalibrationProgress, state: StressState?) -> String {
-        guard !progress.nights.isEmpty else { return "Calibration unavailable" }
+        guard !progress.days.isEmpty else { return "Calibration unavailable" }
         switch state {
         case .some(.hrOnly):
-            return "HR only — \(progress.qualifyingDays) of \(progress.requiredDays) R-R nights"
+            return "HR only — \(progress.qualifyingDays) of \(progress.requiredDays) R-R days"
         case .some(.insufficient) where progress.isCalibrated:
             return "Baseline ready"
         case .some(.exertion):
@@ -199,21 +199,21 @@ private enum StressCalibrationCopy {
             break
         }
         if progress.isCalibrated {
-            return "Calibrated — \(progress.qualifyingDays) of \(progress.requiredDays) nights"
+            return "Calibrated — \(progress.qualifyingDays) of \(progress.requiredDays) days"
         }
-        return "Calibrating — \(progress.qualifyingDays) of \(progress.requiredDays) nights"
+        return "Calibrating — \(progress.qualifyingDays) of \(progress.requiredDays) days"
     }
 
     private static func detail(progress: StressCalibrationProgress, state: StressState?) -> String {
-        guard !progress.nights.isEmpty else {
+        guard !progress.days.isEmpty else {
             return "Add max heart rate or birth year in Settings so a baseline can be built."
         }
-        let required = progress.latestNight?.requiredWindows ?? Stress.minNightWindowsPerDay
+        let required = progress.latestDay?.requiredWindows ?? Stress.minAwakeWindowsPerDay
         let minutes = required * Int(LocalTime.msPerWindow / LocalTime.msPerMinute)
 
         switch state {
         case .some(.hrOnly):
-            return "R-R needs \(nightsNeeded(progress.daysNeeded)). HR-only values use heart rate without HRV, "
+            return "R-R needs \(daysNeeded(progress.daysNeeded)). HR-only values use heart rate without HRV, "
                 + "so they are less precise."
         case .some(.insufficient):
             if progress.isCalibrated {
@@ -230,10 +230,10 @@ private enum StressCalibrationCopy {
 
     private static func calibratingDetail(progress: StressCalibrationProgress, minutes: Int) -> String {
         if progress.isCalibrated {
-            return "\(progress.qualifyingDays) of \(progress.requiredDays) nights in the last "
+            return "\(progress.qualifyingDays) of \(progress.requiredDays) days in the last "
                 + "\(progress.lookbackDays) days qualified."
         }
-        return "Needs \(nightsNeeded(progress.daysNeeded)); each needs at least "
-            + "\(Format.duration(minutes: minutes)) of valid R-R between 00:00 and 06:00."
+        return "Needs \(daysNeeded(progress.daysNeeded)); each needs at least "
+            + "\(Format.duration(minutes: minutes)) of valid R-R outside sleep and exertion."
     }
 }

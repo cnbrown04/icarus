@@ -232,8 +232,8 @@ enum Dashboard {
         StressTimeline.points(try db.minuteMetricRows(from: min(fromMs, nowMs), to: nowMs))
     }
 
-    /// How close the stress baseline is to ready: qualifying nights, the 7-night requirement, and the
-    /// per-night shortfall. Uses the same rules as scoring, so its counts match `StressBaseline.build`.
+    /// How close the stress baseline is to ready: qualifying days, the 7-day requirement, and the
+    /// per-day shortfall. Uses the same rules as scoring, so its counts match `StressBaseline.build`.
     static func stressCalibration(
         _ db: Database,
         nowMs: Int64,

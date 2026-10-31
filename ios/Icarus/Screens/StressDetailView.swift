@@ -44,8 +44,8 @@ struct StressDetailView: View {
                             Text("Estimated")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            if let data, !data.calibration.nights.isEmpty, !data.calibration.isCalibrated {
-                                Text("\(data.calibration.qualifyingDays) of \(data.calibration.requiredDays) nights")
+                            if let data, !data.calibration.days.isEmpty, !data.calibration.isCalibrated {
+                                Text("\(data.calibration.qualifyingDays) of \(data.calibration.requiredDays) days")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
@@ -208,10 +208,10 @@ private struct StressMethodSheet: View {
         NavigationStack {
             List {
                 Section("Method") {
-                    Text("Stress compares your heart rate and RMSSD in 5-minute windows with your own nights from the last 14 days.")
-                    Text("A night qualifies with 12 five-minute windows (1 h) of valid R-R between 00:00 and 06:00, outside exertion.")
-                    Text("Values need 7 qualifying nights before they appear. Until then the state reads Calibrating.")
-                    Text("Without R-R, 7 nights of heart-rate windows can score an HR-only fallback. It omits HRV, so it is less specific.")
+                    Text("Stress compares your heart rate and RMSSD in 5-minute windows with your own awake windows from the last 14 days.")
+                    Text("A day qualifies with 24 awake five-minute windows (2 h) of valid R-R, outside sleep and exertion.")
+                    Text("Values need 7 qualifying days before they appear. Until then the state reads Calibrating.")
+                    Text("Without R-R, 7 days of heart-rate windows can score an HR-only fallback. It omits HRV, so it is less specific.")
                 }
                 Section("Limits") {
                     Text("Band readings are less precise than an ECG. Motion adds noise. Windows above 40 % heart-rate reserve are excluded as exertion.")
