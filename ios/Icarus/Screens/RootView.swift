@@ -89,15 +89,25 @@ struct RootView: View {
     }
 }
 
+/// The four tabs, in bar order. Overview is the launch tab.
+enum AppTab: Hashable {
+    case overview
+    case sleep
+    case strain
+    case health
+}
+
 struct MainTabView: View {
     let environment: AppEnvironment
     let liveState: LiveState
     @Binding var pairingLink: PairingLink?
 
     @State private var chromeSheet: ChromeSheet?
+    @State private var tab: AppTab = .overview
 
-    /// Settings and alarms sit behind the nav bar's trailing buttons, not in the tab bar.
+    /// Journal, alarms and settings sit behind the nav bar's trailing buttons, not in the tab bar.
     private enum ChromeSheet: String, Identifiable {
+        case journal
         case alarms
         case settings
 
@@ -105,23 +115,41 @@ struct MainTabView: View {
     }
 
     var body: some View {
-        TabView {
+        TabView(selection: $tab) {
             NavigationStack {
-                HomeView(
+                OverviewView(
                     environment: environment,
                     liveState: liveState,
+                    selectTab: { tab = $0 },
+                    openJournal: { chromeSheet = .journal },
                     openAlarms: { chromeSheet = .alarms },
                     openSettings: { chromeSheet = .settings }
                 )
                 .toolbar { chromeToolbar() }
             }
-            .tabItem { Label("Home", systemImage: "house.fill") }
+            .tabItem { Label("Overview", systemImage: "circle.circle").accessibilityIdentifier("tab.overview") }
+            .tag(AppTab.overview)
 
             NavigationStack {
-                TodayView(environment: environment, liveState: liveState)
+                SleepView(environment: environment)
                     .toolbar { chromeToolbar() }
             }
-            .tabItem { Label("Today", systemImage: "heart.fill") }
+            .tabItem { Label("Sleep", systemImage: "bed.double.fill").accessibilityIdentifier("tab.sleep") }
+            .tag(AppTab.sleep)
+
+            NavigationStack {
+                StrainScreen(environment: environment, liveState: liveState)
+                    .toolbar { chromeToolbar() }
+            }
+            .tabItem { Label("Strain", systemImage: "flame.fill").accessibilityIdentifier("tab.strain") }
+            .tag(AppTab.strain)
+
+            NavigationStack {
+                HealthTabView(environment: environment, liveState: liveState)
+                    .toolbar { chromeToolbar() }
+            }
+            .tabItem { Label("Health", systemImage: "heart.text.square.fill").accessibilityIdentifier("tab.health") }
+            .tag(AppTab.health)
         }
         .sheet(item: $chromeSheet) { sheet in
             NavigationStack {
@@ -155,6 +183,8 @@ struct MainTabView: View {
     @ViewBuilder
     private func chromeSheetContent(_ sheet: ChromeSheet) -> some View {
         switch sheet {
+        case .journal:
+            JournalView(environment: environment)
         case .alarms:
             AlarmsView(environment: environment, liveState: liveState)
         case .settings:
@@ -165,6 +195,14 @@ struct MainTabView: View {
     @ToolbarContentBuilder
     private func chromeToolbar() -> some ToolbarContent {
         ToolbarItemGroup(placement: .topBarTrailing) {
+            Button {
+                chromeSheet = .journal
+            } label: {
+                Image(systemName: "book.closed")
+            }
+            .accessibilityLabel("Journal")
+            .accessibilityIdentifier("root.journal")
+
             Button {
                 chromeSheet = .alarms
             } label: {

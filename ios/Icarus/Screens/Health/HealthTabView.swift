@@ -2,13 +2,14 @@ import Metrics
 import Store
 import SwiftUI
 
-/// The Health tab root: the Health Monitor summary, today's recovery, the trends entry, and links to the
-/// heart-rate, stress and calorie detail screens. Not wired into `RootView` yet (the Shell stream does that).
+/// The Health tab root: today's resting HR, HRV and stress, the stress timeline, the Health Monitor summary, today's
+/// recovery, the trends and journal insights entries, and links to the heart-rate, stress and calorie detail screens.
 struct HealthTabView: View {
     let environment: AppEnvironment
     let liveState: LiveState
 
     @State private var snapshot: HealthSnapshot?
+    @State private var todayVitals: HealthTodaySnapshot?
 
     /// Today on the device clock until the first snapshot names the profile's day.
     private var today: LocalDay {
@@ -27,9 +28,12 @@ struct HealthTabView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.s24) {
+                todayVitalsRow
+                stressTodayCard
                 monitorLink
                 recoveryLink
                 trendsLink
+                journalInsightsLink
                 detailLinks
             }
             .pagePadding()
@@ -49,6 +53,188 @@ struct HealthTabView: View {
                 snapshot = value
             }
         }
+        .task {
+            let clock = environment.clock
+            do {
+                for try await value in environment.database.observe({ try HealthTodaySnapshot.load($0, nowMs: clock.nowMs) }) {
+                    todayVitals = value
+                }
+            } catch {
+                todayVitals = nil
+            }
+        }
+    }
+
+    // MARK: Today
+
+    /// Resting HR, HRV and stress: the calibrating vitals row that used to sit on Home. Each tile opens its detail.
+    private var todayVitalsRow: some View {
+        HStack(alignment: .top, spacing: Spacing.s8) {
+            NavigationLink {
+                HeartRateDetailView(environment: environment)
+            } label: {
+                HomeVitalTile(
+                    title: "Resting HR",
+                    symbol: "heart.fill",
+                    tint: Palette.sleep,
+                    value: todayVitals?.restingHR.map { "\(Int($0.rounded()))" } ?? "—",
+                    unit: todayVitals?.restingHR == nil ? nil : "bpm",
+                    caption: todayVitals?.restingHR == nil ? "No data yet" : "Overnight low",
+                    accessibilityLabel: "Resting heart rate",
+                    accessibilityValue: todayVitals?.restingHR.map { Format.bpm($0) + ", overnight low" } ?? "No data yet"
+                )
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink {
+                StressDetailView(environment: environment)
+            } label: {
+                HomeVitalTile(
+                    title: "HRV",
+                    symbol: "waveform.path.ecg",
+                    tint: Palette.hrv,
+                    value: todayVitals?.rmssd.map { "\(Int($0.rounded()))" } ?? "—",
+                    unit: todayVitals?.rmssd == nil ? nil : "ms",
+                    caption: todayVitals?.rmssd == nil ? "No data yet" : "RMSSD",
+                    accessibilityLabel: "Heart rate variability",
+                    accessibilityValue: todayVitals?.rmssd.map { Format.ms($0) + ", last night" } ?? "No data yet"
+                )
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink {
+                StressDetailView(environment: environment)
+            } label: {
+                HomeVitalTile(
+                    title: "Stress",
+                    symbol: "gauge.with.dots.needle.67percent",
+                    tint: stressTint,
+                    value: todayVitals?.latestStress.map { "\($0)" } ?? "—",
+                    caption: stressCaption,
+                    captionTint: stressCaptionTint,
+                    accessibilityLabel: "Stress",
+                    accessibilityValue: todayVitals?.latestStress.map { "\($0), \(Format.stressBand($0))" } ?? stressCaption,
+                    identifier: "health.stressValue"
+                )
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// Today's stress timeline with the stimulant windows shaded, and the minutes in each band.
+    private var stressTodayCard: some View {
+        NavigationLink {
+            StressDetailView(environment: environment)
+        } label: {
+            DashboardCard(title: "Stress today", symbol: "gauge.with.dots.needle.67percent", tint: .orange, showsChevron: true) {
+                if let today = todayVitals {
+                    if today.stressDay.sampleMinutes > 0 {
+                        StressTimelineChart(
+                            points: today.stressTimeline,
+                            fromMs: today.dayStartMs,
+                            toMs: today.nowMs,
+                            medicationWindows: today.medication
+                        )
+                        .frame(height: Spacing.s48 * 2)
+                        .allowsHitTesting(false)
+                        if !stressBandSegments(today).isEmpty {
+                            MinuteStrip(
+                                segments: stressBandSegments(today),
+                                accessibilityLabel: "Minutes in each stress band",
+                                accessibilityValue: stressBandAccessibility(today)
+                            )
+                        }
+                        Text(stressSummary(today.stressDay))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                        if !today.medication.isEmpty {
+                            Text("Shaded: stimulant active (estimated)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text("No stress values yet")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("No stress values yet")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var journalInsightsLink: some View {
+        NavigationLink {
+            JournalInsightsView(environment: environment)
+        } label: {
+            DashboardCard(title: "Journal insights", symbol: "book.closed.fill", tint: Palette.sleep, showsChevron: true) {
+                Text("Next-morning recovery and sleep on days with and without each habit")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens journal insights")
+    }
+
+    private var stressTint: Color {
+        todayVitals?.latestStress.map { Palette.stress(StressBand.of(stress: $0)) } ?? Palette.stressModerate
+    }
+
+    /// The band when there is a value, else the shortest honest state (Today's rules).
+    private var stressCaption: String {
+        guard let today = todayVitals else { return "No values" }
+        if let latest = today.latestStress { return Format.stressBand(latest) }
+        if today.stressState == .exertion { return "Exertion" }
+        if today.stressState == .hrOnly { return "HR only" }
+        if today.calibration.days.isEmpty { return "No baseline" }
+        if !today.calibration.isCalibrated {
+            return "Calibrating \(today.calibration.qualifyingDays)/\(today.calibration.requiredDays)"
+        }
+        return "No values"
+    }
+
+    private var stressCaptionTint: Color? {
+        guard let today = todayVitals else { return nil }
+        if today.latestStress == nil, today.stressState == .exertion || today.stressState == .hrOnly {
+            return Palette.warn
+        }
+        if today.latestStress == nil, !today.calibration.days.isEmpty, !today.calibration.isCalibrated {
+            return Palette.warn
+        }
+        return nil
+    }
+
+    private func stressBandSegments(_ today: HealthTodaySnapshot) -> [MinuteStrip.Segment] {
+        today.stressDay.bandMinutes
+            .filter { $0.minutes > 0 }
+            .enumerated()
+            .map { index, entry in
+                MinuteStrip.Segment(id: index, minutes: entry.minutes, color: Palette.stress(entry.band))
+            }
+    }
+
+    private func stressBandAccessibility(_ today: HealthTodaySnapshot) -> String {
+        today.stressDay.bandMinutes
+            .filter { $0.minutes > 0 }
+            .map { "\(Format.bandName($0.band)): \(Format.minutes($0.minutes))" }
+            .joined(separator: ", ")
+    }
+
+    private func stressSummary(_ day: StressDaySummary) -> String {
+        var parts: [String] = []
+        if let average = day.average {
+            parts.append("Avg \(Int(average.rounded()))")
+        }
+        if let peak = day.peak {
+            parts.append("Peak \(peak)")
+        }
+        return parts.joined(separator: " · ")
     }
 
     // MARK: Cards

@@ -12,6 +12,8 @@ struct HomeVitalTile: View {
     var captionTint: Color?
     let accessibilityLabel: String
     let accessibilityValue: String
+    /// For UI tests only. Set on the tile's element.
+    var identifier: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.s8) {
@@ -53,6 +55,7 @@ struct HomeVitalTile: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(accessibilityValue)
+        .optionalIdentifier(identifier)
     }
 }
 

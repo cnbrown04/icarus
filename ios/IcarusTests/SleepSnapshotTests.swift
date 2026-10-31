@@ -9,6 +9,8 @@ struct SleepSnapshotTests {
         Dashboard.SleepSnapshot.Night(
             id: startMs,
             startMs: startMs,
+            bandID: "band",
+            isEdited: false,
             durationS: 3_600,
             isNap: isNap,
             restingHR: nil,
@@ -23,7 +25,8 @@ struct SleepSnapshotTests {
     private func snapshot(_ nights: [Dashboard.SleepSnapshot.Night]) -> Dashboard.SleepSnapshot {
         Dashboard.SleepSnapshot(
             context: Dashboard.Context(profile: nil, timeZone: .current, nowMs: 0, restingHR: nil, maxHR: nil),
-            nights: nights
+            nights: nights,
+            latestScores: nil
         )
     }
 

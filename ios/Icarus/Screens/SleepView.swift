@@ -21,6 +21,14 @@ struct SleepView: View {
 
     var body: some View {
         List {
+            // The Sleep tab opens with tonight's planner (Shell wiring). Its card draws its own background.
+            Section {
+                SleepPlannerCard(environment: environment)
+                    .listRowInsets(EdgeInsets(top: Spacing.s8, leading: Spacing.s16, bottom: Spacing.s8, trailing: Spacing.s16))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
+
             if let nights = snapshot?.nights, !nights.isEmpty {
                 ForEach(nights) { night in
                     if night.id == snapshot?.latest?.id {

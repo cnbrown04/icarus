@@ -76,7 +76,7 @@ struct StrainTabView: View {
                 pulses: liveState.isStreaming
             ) {
                 HStack(alignment: .firstTextBaseline) {
-                    bpmText
+                    LiveBPMText(liveState: liveState, identifier: "strain.hrValue")
                     Spacer(minLength: Spacing.s8)
                     StatusPill.link(liveState)
                 }
@@ -149,6 +149,7 @@ struct StrainTabView: View {
                 Text(caloriesTotal)
                     .font(.metricValue)
                     .monospacedDigit()
+                    .accessibilityIdentifier("strain.caloriesValue")
                 Text("kcal")
                     .font(.metricUnit)
                     .foregroundStyle(.secondary)
@@ -215,26 +216,4 @@ struct StrainTabView: View {
         return "Avg \(average) · Max \(maximum) bpm · \(Format.percent(snapshot.coverage)) coverage"
     }
 
-    // TODO(shell): the live bpm number duplicates TodayView.bpmText. Move it into a shared component when the
-    // Shell stream extracts Today's hero, so the two cannot drift.
-    @ViewBuilder
-    private var bpmText: some View {
-        if let bpm = liveState.latestBPM {
-            HStack(alignment: .firstTextBaseline, spacing: Spacing.s4) {
-                Text("\(bpm)")
-                    .font(.heroValue)
-                    .monospacedDigit()
-                    .liveNumberTransition()
-                    .stateAnimation(bpm)
-                    .accessibilityIdentifier("strain.hrValue")
-                Text("bpm")
-                    .font(.metricUnit)
-                    .foregroundStyle(.secondary)
-            }
-        } else {
-            Text("--")
-                .font(.heroValue)
-                .foregroundStyle(.secondary)
-        }
-    }
 }

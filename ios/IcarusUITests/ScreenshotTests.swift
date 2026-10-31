@@ -20,24 +20,28 @@ final class ScreenshotTests: XCTestCase {
         ]
         app.launch()
 
-        // Home is the launch tab now; screenshots target Today's data screens.
-        XCTAssertTrue(app.navigationBars["Home"].waitForExistence(timeout: 30))
-        app.tabBars.buttons["Today"].tap()
-        XCTAssertTrue(app.staticTexts["today.hrValue"].waitForExistence(timeout: 30))
+        // Overview is the launch tab (titled with the selected day, here Today).
+        XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 30))
+        XCTAssertTrue(element(app, "overview.nextDay").waitForExistence(timeout: 30))
         attachScreenshot(named: "07-today")
 
-        openFromToday(app, tap: app.staticTexts["today.hrValue"], title: "Heart Rate")
+        // Heart rate and calories live on Strain; stress lives on Health.
+        app.tabBars.buttons["Strain"].tap()
+        XCTAssertTrue(element(app, "strain.hrValue").waitForExistence(timeout: 30))
+        openFromTab(app, tap: element(app, "strain.hrValue"), title: "Heart Rate")
         attachScreenshot(named: "08-heart-rate")
         attachTrendScreenshot(app)
-        goBack(app)
+        goBack(app, to: "Strain")
 
-        openFromToday(app, tap: app.staticTexts["today.stressValue"], title: "Stress")
-        attachScreenshot(named: "09-stress")
-        goBack(app)
-
-        openFromToday(app, tap: app.staticTexts["today.caloriesValue"], title: "Calories")
+        openFromTab(app, tap: element(app, "strain.caloriesValue"), title: "Calories")
         attachScreenshot(named: "10-calories")
-        goBack(app)
+        goBack(app, to: "Strain")
+
+        app.tabBars.buttons["Health"].tap()
+        XCTAssertTrue(element(app, "health.stressValue").waitForExistence(timeout: 30))
+        openFromTab(app, tap: element(app, "health.stressValue"), title: "Stress")
+        attachScreenshot(named: "09-stress")
+        goBack(app, to: "Health")
 
         // Alarms and Settings are top-right toolbar sheets now.
         for title in ["Alarms", "Settings"] {
@@ -214,16 +218,16 @@ final class ScreenshotTests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
-    /// Taps a leaf element on Today and waits for the detail screen's title.
-    private func openFromToday(_ app: XCUIApplication, tap element: XCUIElement, title: String) {
+    /// Taps a leaf element on a tab's screen and waits for the detail screen's title.
+    private func openFromTab(_ app: XCUIApplication, tap element: XCUIElement, title: String) {
         XCTAssertTrue(element.waitForExistence(timeout: 30))
         element.tap()
         XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 10))
     }
 
-    private func goBack(_ app: XCUIApplication) {
+    private func goBack(_ app: XCUIApplication, to title: String) {
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 10))
     }
 
     private func attachScreenshot(named name: String) {
