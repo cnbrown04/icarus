@@ -76,16 +76,21 @@ APNs `.p8` key + signing capability), TestFlight (no ASC secrets), Apple Watch, 
   full-history restore at 00:28 (cursor 74268→0) replayed only ~50k records, starting
   2026-10-22 10:49 EDT. The 2026-10-21 19:35 → 10-22 10:49 span, which the old build had
   drained and ACKED but mostly never stored, did not come back. Treat acked data as gone:
-  persist-then-ack is the only protection. **Likely explanation (pending hardware
-  verification, not verified):** the rewind went to slot 0, which skipped slots W…T−1, where
-  the oldest data of a wrapped ring sits. The 2026-10-28 restore showed the same shape (cursor
-  95927→0, ~107k records re-drained, W ≈ 106898).
-- Full-history restore: `drainFullHistory()` runs two passes via SET_READ_POINTER. Pass 1
-  rewinds to `(W + 120) mod T` and drains back-to-back to the live edge, reading the wrapped
-  ring oldest-first. Pass 2 rewinds to 0 and runs only when pass 1 stopped on an empty drain
-  or HISTORY_COMPLETE short of the live edge. Each pass logs its start slot, kept count and
-  oldest…newest span. Re-draining is safe per OpenStrap §4.3, but the wrapped-ring reading
-  is [Unverified] on hardware.
+  persist-then-ack is the only protection.
+- **Hardware finding 2026-10-30 — the ring is PAGES of ~9 records, and the bare-u32
+  SET_READ_POINTER is IGNORED.** Each HISTORICAL_DATA_RESULT trim token is `[page u32][epoch u32]`
+  (`34 E8 01 00 01 00 00 00` = page 124980, epoch 1); over one drain the page advanced 381 while
+  3,487 records arrived (≈ 9.1 records/page), and the backlog grew ~1 page per 9 s. So T = 131072
+  pages ≈ 1.2 M records ≈ **13.6 days** (matches WHOOP's "14 days"), NOT "131k records ≈ 36 h".
+  Every restore so far drained exactly GET_DATA_RANGE's U→W backlog (10-28: 10,967 pages ≈ 107k
+  records; 10-30: 383 pages ≈ 3,497 records): the rewind never took effect. GET_DATA_RANGE carries
+  the same epoch word at raw offset 26 (`DataRange.ringEpoch`). The 10-23 "acked data is gone"
+  finding is therefore unproven — that data is probably still on the strap.
+- Full-history restore: `drainFullHistory()` (two passes, W+120 then 0) is built on the ignored
+  bare-u32 form and does nothing useful until the encoding is known. Debug → "Probe read-pointer
+  encoding" (`TierBController.probeReadPointerEncoding`) rewinds U by 64 pages with each candidate
+  (`BandCommand.ReadPointerEncoding`: u32, page+epoch, 0x01+page+epoch, absolute u64) and reads U
+  back; the winner is logged as `read-pointer probe WINNER`. ALWAYS verify a rewind by reading U back.
 
 ## Hard-won lessons (do not regress)
 
@@ -96,8 +101,9 @@ APNs `.p8` key + signing capability), TestFlight (no ASC secrets), Apple Watch, 
    20:00–21:23). Earlier records appearing only during "linked" windows reflected the drain
    cadence, not recording. Consequence: a killed app never loses strap-side data — it just
    arrives later, and the UI must show the strap→app sync so that arrival is visible.
-   Flash is a ring (~131k records ≈ 36 h; OpenStrap: the ack cursor advances but the client
-   never erases flash — re-draining with SET_READ_POINTER is safe).
+   Flash is a ring of 131072 pages × ~9 records ≈ 13.6 days (see the 2026-10-30 finding; OpenStrap:
+   the ack cursor advances but the client never erases flash — re-draining is safe once a
+   SET_READ_POINTER encoding the strap honours is known).
 2. Decoding timestamps off the full frame envelope latches garbage: header+CRC straddle
    words land inside the plausible-unix window (an EMPTY reply's straddle read as
    "1050 h ahead"; a real reply's as "26001 h ahead") and falsely pause all automatic
