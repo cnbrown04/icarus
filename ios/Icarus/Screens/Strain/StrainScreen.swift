@@ -156,6 +156,3 @@ struct StrainView: View {
         data?.calories.map { Int($0.rounded()).formatted() }
     }
 }
-
-/// The Strain tab's view. Kept under its old name so the tab shell compiles until Wave C wires `StrainView`.
-typealias StrainScreen = StrainView
