@@ -92,6 +92,17 @@ enum HistoryPipeline {
             // the already-recomputed days.
             _ = try await MetricsWorker(database: database)
                 .recomputeBackfill(fromMs: fromMs, toMs: toMs, nowMs: nowMs)
+            // Activities read the minute rows that were just recomputed, so they run last. Same lookback as
+            // sleep: a bout that began before the drained range is re-detected whole.
+            try await database.writer.write { db in
+                let zone = try db.profile()?.timeZone ?? Dashboard.fallbackZone
+                try db.detectActivities(
+                    from: fromMs - rederiveLookbackMs,
+                    to: toMs + 1,
+                    in: zone,
+                    computedAtMs: nowMs
+                )
+            }
             #if DEBUG
             await AppEnvironment.writeDebugDump(from: fromMs, to: toMs, in: database)
             #endif
