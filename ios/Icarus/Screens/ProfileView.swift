@@ -3,7 +3,7 @@ import Store
 import SwiftUI
 
 /// Formula sex, birth year, height, weight and optional HRmax (PLAN.md §14 row 4). Used in onboarding and
-/// from Settings > Profile.
+/// from the profile sheet.
 struct ProfileView: View {
     enum Mode {
         /// Onboarding: a Continue action in the toolbar saves and calls `onContinue`.
@@ -36,7 +36,7 @@ struct ProfileView: View {
                         Text(sex.label).tag(ProfileDraft.Sex?.some(sex))
                     }
                 } label: {
-                    Label("Formula sex", systemImage: "person.fill")
+                    Text("Formula sex")
                 }
 
                 LabeledContent {
@@ -45,7 +45,7 @@ struct ProfileView: View {
                         .multilineTextAlignment(.trailing)
                         .accessibilityIdentifier("profile.birthYear")
                 } label: {
-                    Label("Birth year", systemImage: "calendar")
+                    Text("Birth year")
                 }
 
                 if units.isImperial {
@@ -67,7 +67,7 @@ struct ProfileView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } label: {
-                        Label("Height", systemImage: "ruler")
+                        Text("Height")
                     }
                 } else {
                     LabeledContent {
@@ -80,7 +80,7 @@ struct ProfileView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } label: {
-                        Label("Height", systemImage: "ruler")
+                        Text("Height")
                     }
                 }
 
@@ -96,7 +96,7 @@ struct ProfileView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } label: {
-                        Label("Weight", systemImage: "scalemass")
+                        Text("Weight")
                     }
                 } else {
                     LabeledContent {
@@ -109,7 +109,7 @@ struct ProfileView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } label: {
-                        Label("Weight", systemImage: "scalemass")
+                        Text("Weight")
                     }
                 }
             } footer: {
@@ -127,7 +127,7 @@ struct ProfileView: View {
                             .foregroundStyle(.secondary)
                     }
                 } label: {
-                    Label("Max heart rate", systemImage: "heart.fill")
+                    Text("Max heart rate")
                 }
             } footer: {
                 Text(hrMaxFooter)
@@ -160,10 +160,7 @@ struct ProfileView: View {
         if attempted, let issue = draft.firstIssue, issue == .hrMax {
             return issue.message(isImperial: units.isImperial)
         }
-        if let estimate = hrMaxEstimate {
-            return "Heart-rate zones and calorie burn use this. Blank applies the Tanaka estimate, 208 − 0.7 × age (≈\(estimate) bpm here); a lab- or field-tested value overrides it."
-        }
-        return "Heart-rate zones and calorie burn use this. Blank applies the Tanaka estimate, 208 − 0.7 × age; a lab- or field-tested value overrides it."
+        return "Leave blank to estimate from age"
     }
 
     /// Tanaka estimate from the entered birth year, shown as the HRmax placeholder.
