@@ -14,7 +14,7 @@ struct SchemaTests {
     /// persisted sleep-stage segments, v5 the nap flag on `sleep_session`, v6 the user sleep
     /// corrections (`sleep_edit`), v7 the nightly respiratory rate on `sleep_session`, v8 the
     /// medication profiles and dose overrides, v9 the `activity` table, v10 the journal questions and answers, v11 the daily score cache.
-    private static let migrations = ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "v10", "v11"]
+    private static let migrations = ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12"]
 
     @Test func migratesEmptyDatabaseToAllTables() throws {
         let database = try AppDatabase.inMemory()

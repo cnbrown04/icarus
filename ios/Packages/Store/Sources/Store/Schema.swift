@@ -36,6 +36,11 @@ enum Schema {
         migrator.registerMigration("v11") { db in
             try db.execute(sql: v11)
         }
+        // Data only: removes records a wrong strap clock dated before the band could have banked them
+        // (`BandHistoryReach`), with everything derived from them.
+        migrator.registerMigration("v12") { db in
+            try db.purgeRecordsBeforeBandHistory()
+        }
     }
 
     /// Migration v1, copied from PLAN.md 10.2. Times are epoch ms UTC.

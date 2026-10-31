@@ -393,9 +393,9 @@ final class AppEnvironment {
             .appendingPathComponent("debug_dump.json")
     }
 
-    /// Records older than this ts_ms (2026-01-01) predate anything the band can produce: the strap's
-    /// banked history starts in June 2026 (stale-RTC era) and its store reaches back only days. The
-    /// garbage rows were written in 2010–2014 by an old buggy parser.
+    /// Records older than this ts_ms (2026-01-01) predate anything the band can produce. The garbage
+    /// rows were written in 2010–2014 by an old buggy parser. Records a wrong strap clock dated before
+    /// the band could have banked them are handled by `BandHistoryReach` (schema v12 and ingest).
     private nonisolated static let junkRecordCutoffMs: Int64 = 1_767_225_600_000
 
     /// One-time cleanup of the 8 garbage `historical_record` rows from the old buggy parser, and

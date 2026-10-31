@@ -31,9 +31,18 @@ enum HistoryPipeline {
         in database: AppDatabase
     ) async -> Bool {
         guard !records.isEmpty else { return true }
-        let samples = records.map { sample($0, from: bandUUID) }
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         do {
             try await database.writer.write { db in
+                // A record dated before the band could have banked it carries a wrong strap clock
+                // (`BandHistoryReach`): its true time is unknown, so it is dropped here, before anything is
+                // stored or derived from it. It still counts as handled, so the strap's ack goes out.
+                let earliest = try db.earliestRecordMs(peripheralUUID: bandUUID, nowMs: nowMs)
+                let samples = records.map { sample($0, from: bandUUID) }.filter { $0.tsMs >= earliest }
+                if samples.count < records.count {
+                    BandLog.tierB(.info, "app: dropped \(records.count - samples.count) record(s) dated before the band's reach (wrong strap clock)")
+                }
+                guard !samples.isEmpty else { return }
                 try db.insertHistoricalSamples(samples)
                 // Backfill the realtime tables from the drained history: the HR graph reads
                 // hr_sample, which only the realtime ingest writes, so a drained gap (app closed,
