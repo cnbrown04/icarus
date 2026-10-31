@@ -2,12 +2,12 @@ import Charts
 import Metrics
 import SwiftUI
 
-/// Sleep-stage colours: deep indigo, medium blue for light sleep, teal for REM and orange for wake.
-/// Defined here beside the only screens that use them, alongside the chart they colour.
+/// Sleep-stage colours: deep indigo, medium blue for core (light) sleep, cyan for REM and orange for awake. They
+/// appear only inside the Sleep tab's charts and the Home compact bar, where they are the chart's series.
 extension Palette {
     static let sleepDeep = Color.indigo
     static let sleepLight = Color.blue
-    static let sleepREM = Color.teal
+    static let sleepREM = Color.cyan
     static let sleepWake = Color.orange
 
     static func sleepStage(_ stage: SleepStage) -> Color {
@@ -46,7 +46,7 @@ extension SleepStage {
     }
 }
 
-/// Totals math shared by the chart summary, the stage row and Home's compact bar.
+/// Totals math shared by the Sleep tab and Home's compact bar.
 enum SleepStageTotals {
     static func total(_ totals: [SleepStage: Int]) -> Int {
         totals.values.reduce(0, +)
@@ -63,13 +63,6 @@ enum SleepStageTotals {
         return Int((Double(totals[stage] ?? 0) / Double(total) * 100).rounded())
     }
 
-    /// One line of stage totals, deepest first, for a list row.
-    static func summary(_ totals: [SleepStage: Int]) -> String {
-        SleepStage.stackOrder
-            .map { "\($0.displayName) \(Format.duration(seconds: totals[$0] ?? 0))" }
-            .joined(separator: " · ")
-    }
-
     /// The chart's VoiceOver sentence: total sleep, deep, REM and awake.
     static func accessibleSummary(_ totals: [SleepStage: Int]) -> String {
         var parts = ["\(Format.duration(seconds: asleep(totals))) sleep"]
@@ -80,8 +73,8 @@ enum SleepStageTotals {
     }
 }
 
-/// An Apple-Health-style hypnogram: one lane per stage from Wake at the top to Deep at the bottom,
-/// with a coloured band for each contiguous `StageSegment` across the night.
+/// An Apple-Health-style hypnogram: one lane per stage from Wake at the top to Deep at the bottom, with a coloured
+/// band for each contiguous `StageSegment` across the night. At most four vertical gridlines.
 struct SleepStageChart: View {
     let segments: [StageSegment]
     let totals: [SleepStage: Int]
@@ -98,8 +91,15 @@ struct SleepStageChart: View {
         return Date(epochMs: start * 1000)...Date(epochMs: end * 1000)
     }
 
+    /// Whole hours between gridlines, so the night draws at most three or four.
+    private var hourStride: Int {
+        guard let first = segments.first, let last = segments.last else { return 1 }
+        let hours = Double(max(last.endUnix, first.startUnix + 60) - first.startUnix) / 3_600
+        return max(1, Int((hours / 3).rounded(.up)))
+    }
+
     private var accessibilityValueText: String {
-        segments.isEmpty ? "Stages not yet computed" : SleepStageTotals.accessibleSummary(totals)
+        segments.isEmpty ? "Stages pending" : SleepStageTotals.accessibleSummary(totals)
     }
 
     var body: some View {
@@ -122,14 +122,13 @@ struct SleepStageChart: View {
                     if let lane = value.as(Double.self), let stage = Self.stage(lane: Int(lane.rounded())) {
                         Text(stage.displayName)
                             .font(.caption2)
-                            .foregroundStyle(Palette.sleepStage(stage))
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
         }
         .chartXAxis {
-            // Hourly grid lines and wall-clock labels across bedtime to wake.
-            AxisMarks(values: .stride(by: .hour, count: 1)) {
+            AxisMarks(values: .stride(by: .hour, count: hourStride)) {
                 AxisGridLine()
                     .foregroundStyle(Color.secondary.opacity(0.18))
                 AxisValueLabel(format: .dateTime.hour())
@@ -150,78 +149,63 @@ struct SleepStageChart: View {
     }
 }
 
-/// The stage breakdown under the hypnogram: Deep / Light / REM / Wake durations and their share of
-/// time in bed. Columns become stacked rows at accessibility text sizes.
-struct SleepStageSummaryRow: View {
-    let totals: [SleepStage: Int]
-
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+/// One stacked bar per night for the W, M and 6M ranges: hours of each stage, deepest at the bottom. An unstaged
+/// night is one grey bar of its time asleep. Dragging across the chart selects the nearest night.
+struct SleepNightBars: View {
+    let days: [SleepModel.Day]
+    @Binding var selectedID: Int64?
 
     var body: some View {
-        Group {
-            if dynamicTypeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: Spacing.s8) {
+        Chart {
+            ForEach(days) { day in
+                if day.isStaged {
                     ForEach(SleepStage.stackOrder, id: \.self) { stage in
-                        HStack(spacing: Spacing.s8) {
-                            swatch(stage)
-                            Text(stage.displayName)
-                                .font(.subheadline)
-                            Spacer(minLength: Spacing.s8)
-                            values(stage, alignment: .trailing)
-                        }
+                        BarMark(
+                            x: .value("Night", Date(epochMs: day.startMs), unit: .day),
+                            y: .value("Hours", Self.hours(day.totals[stage] ?? 0))
+                        )
+                        .foregroundStyle(Palette.sleepStage(stage))
                     }
+                } else {
+                    BarMark(
+                        x: .value("Night", Date(epochMs: day.startMs), unit: .day),
+                        y: .value("Hours", Self.hours(Int(day.asleepS)))
+                    )
+                    .foregroundStyle(Color.secondary.opacity(0.35))
                 }
-            } else {
-                HStack(alignment: .top, spacing: Spacing.s8) {
-                    ForEach(SleepStage.stackOrder, id: \.self) { stage in
-                        VStack(alignment: .leading, spacing: Spacing.s4) {
-                            HStack(spacing: Spacing.s4) {
-                                swatch(stage)
-                                Text(stage.displayName)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+            }
+        }
+        .metricChartStyle()
+        .chartOverlay { proxy in
+            GeometryReader { geometry in
+                Rectangle()
+                    .fill(.clear)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                guard let plot = proxy.plotFrame else { return }
+                                let x = value.location.x - geometry[plot].origin.x
+                                guard let date: Date = proxy.value(atX: x) else { return }
+                                selectedID = nearest(to: date)?.id
                             }
-                            values(stage, alignment: .leading)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
+                    )
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Sleep stages")
-        .accessibilityValue(accessibilityValueText)
+        .accessibilityLabel("Sleep by night")
     }
 
-    private func swatch(_ stage: SleepStage) -> some View {
-        Circle()
-            .fill(Palette.sleepStage(stage))
-            .frame(width: Spacing.s8, height: Spacing.s8)
+    private func nearest(to date: Date) -> SleepModel.Day? {
+        let target = date.timeIntervalSince1970 * 1_000
+        return days.min { abs(Double($0.startMs) - target) < abs(Double($1.startMs) - target) }
     }
 
-    private func values(_ stage: SleepStage, alignment: HorizontalAlignment) -> some View {
-        VStack(alignment: alignment, spacing: Spacing.s4) {
-            Text(Format.duration(seconds: totals[stage] ?? 0))
-                .font(.footnote.weight(.semibold))
-                .monospacedDigit()
-            Text(Format.percent(SleepStageTotals.percent(stage, of: totals)))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-        }
-    }
-
-    private var accessibilityValueText: String {
-        SleepStage.stackOrder
-            .map { stage in
-                "\(stage.displayName): \(Format.duration(seconds: totals[stage] ?? 0)), "
-                    + Format.percent(SleepStageTotals.percent(stage, of: totals))
-            }
-            .joined(separator: ". ")
+    private static func hours(_ seconds: Int) -> Double {
+        Double(seconds) / 3_600
     }
 }
 
-/// A compact single-row stacked stage bar with a one-line legend, sized for Home's last-night card.
+/// A compact single-row stacked stage bar with an optional one-line legend, for a list row or Home's last-night card.
 struct SleepStageBar: View {
     let totals: [SleepStage: Int]
     var showsLegend = true

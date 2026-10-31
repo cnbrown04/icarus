@@ -2,53 +2,80 @@ import Metrics
 import Store
 import SwiftUI
 
-/// The last 7 days of derived sleep sessions (PLAN.md 8.1, 10.2 v2), main sleep and naps. Sessions come from
-/// the band's offloaded history (PLAN.md 5.3.4), so the list stays empty until a sync has drained it. The
-/// latest main sleep shows its stored hypnogram inline; other entries open a detail with the same chart and
-/// facts. Naps are labelled, and they never replace the latest main sleep.
+/// The Sleep tab, the one place sleep is shown. It opens on the chosen range: D shows the night's hypnogram, and W, M
+/// and 6M show one bar per night, where dragging selects a night. Below the chart come that night's stages, its scores,
+/// tonight's bedtimes and the previous nights. Each previous night opens the same sections.
 struct SleepView: View {
     let environment: AppEnvironment
 
-    @State private var snapshot: Dashboard.SleepSnapshot?
+    @State private var snapshot: SleepModel.Snapshot?
+    @State private var range: SleepModel.Range = .week
+    /// The night on show. Nil means the latest main sleep.
+    @State private var selectedID: Int64?
     /// The night whose bed and wake times are being corrected (`SleepEditView`).
     @State private var editing: Dashboard.SleepSnapshot.Night?
-    /// Bumped after a correction is stored, to reload the list at once.
+    /// Bumped after a correction is stored, to reload at once.
     @State private var refreshToken = 0
 
+    /// Reloads when the range or a correction changes.
+    private struct LoadKey: Hashable {
+        let range: SleepModel.Range
+        let token: Int
+    }
+
     private var timeZone: TimeZone {
-        snapshot?.context.timeZone ?? Dashboard.fallbackZone
+        snapshot?.timeZone ?? Dashboard.fallbackZone
+    }
+
+    /// The night on show: the selected one when the range holds it, else the latest main sleep.
+    private var shown: SleepModel.Day? {
+        guard let snapshot else { return nil }
+        if let selectedID, let day = snapshot.days.first(where: { $0.id == selectedID }) {
+            return day
+        }
+        return snapshot.latest
+    }
+
+    /// The Dashboard night behind the shown one, for its hypnogram and Edit. Nil outside the seven-night window.
+    private var shownNight: Dashboard.SleepSnapshot.Night? {
+        guard let id = shown?.id else { return nil }
+        return snapshot?.recent.nights.first { $0.id == id }
     }
 
     var body: some View {
         List {
-            // The Sleep tab opens with tonight's planner (Shell wiring). Its card draws its own background.
-            Section {
-                SleepPlannerCard(environment: environment)
-                    .listRowInsets(EdgeInsets(top: Spacing.s8, leading: Spacing.s16, bottom: Spacing.s8, trailing: Spacing.s16))
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-            }
-
-            if let nights = snapshot?.nights, !nights.isEmpty {
-                ForEach(nights) { night in
-                    if night.id == snapshot?.latest?.id {
-                        latestSection(night)
-                    } else {
-                        priorNightSection(night)
+            if let snapshot {
+                if snapshot.recent.nights.isEmpty {
+                    Section {
+                        EmptyStateRow(text: "Sleep appears once the band has synced its history.", actionTitle: nil, action: nil)
                     }
-                }
-            } else {
-                Section {
-                    Text("Sleep appears once the band has synced its history.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                } else {
+                    chartSection(snapshot)
+                    if let shown {
+                        stagesSection(shown)
+                        scoresSection(shown, snapshot: snapshot)
+                    }
+                    tonightSection(snapshot)
+                    previousSection(snapshot)
                 }
             }
+            aboutSection
         }
         .navigationTitle("Sleep")
-        .task(id: refreshToken) {
+        .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Edit") {
+                    editing = shownNight
+                }
+                .disabled(shownNight == nil)
+                .accessibilityIdentifier("sleep.editTimes")
+            }
+        }
+        .task(id: LoadKey(range: range, token: refreshToken)) {
+            let selectedRange = range
             for await value in environment.snapshots(every: .seconds(60), { db, nowMs in
-                try Dashboard.sleep(db, nowMs: nowMs)
+                try SleepModel.load(db, nowMs: nowMs, range: selectedRange)
             }) {
                 snapshot = value
             }
@@ -60,205 +87,255 @@ struct SleepView: View {
         }
     }
 
-    // MARK: Nights
+    // MARK: Chart
 
-    /// The latest main sleep carries the full hypnogram and stage breakdown.
-    private func latestSection(_ night: Dashboard.SleepSnapshot.Night) -> some View {
+    private func chartSection(_ snapshot: SleepModel.Snapshot) -> some View {
         Section {
-            nightStages(night)
-            nightFacts(night, timeZone: timeZone)
-            if let scores = snapshot?.latestScores {
-                nightScores(scores)
+            if let shown {
+                nightHeader(
+                    asleepS: shown.asleepS,
+                    startMs: shown.startMs,
+                    durationS: shown.durationS,
+                    timeZone: timeZone
+                )
             }
-            Button("Edit times") {
-                editing = night
-            }
-            .accessibilityIdentifier("sleep.editTimes")
-        } header: {
-            nightTitle(night)
-        }
-    }
-
-    /// Older nights keep a compact summary in the list and open the chart on tap.
-    private func priorNightSection(_ night: Dashboard.SleepSnapshot.Night) -> some View {
-        Section {
-            NavigationLink {
-                SleepNightDetailView(night: night, timeZone: timeZone)
-            } label: {
-                priorNightLabel(night)
-            }
-            .swipeActions(edge: .trailing) {
-                Button("Edit times") {
-                    editing = night
+            Picker("Range", selection: $range) {
+                ForEach(SleepModel.Range.allCases) { option in
+                    Text(option.title).tag(option)
                 }
-                .tint(.blue)
             }
-        } header: {
-            nightTitle(night)
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            chart(snapshot)
+                .frame(height: ChartHeight.detail)
         }
     }
 
-    private func priorNightLabel(_ night: Dashboard.SleepSnapshot.Night) -> some View {
-        VStack(alignment: .leading, spacing: Spacing.s8) {
-            HStack(alignment: .firstTextBaseline, spacing: Spacing.s8) {
-                Text(Format.duration(night.asleepS))
-                    .font(.headline)
+    @ViewBuilder
+    private func chart(_ snapshot: SleepModel.Snapshot) -> some View {
+        if range == .day {
+            if let night = shownNight, night.isStaged {
+                SleepStageChart(segments: night.stages, totals: night.stageTotals)
+            } else {
+                Text("Stages pending")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            SleepNightBars(days: snapshot.days.filter { !$0.isNap }, selectedID: $selectedID)
+        }
+    }
+
+    // MARK: Night sections
+
+    private func stagesSection(_ day: SleepModel.Day) -> some View {
+        Section("Stages") {
+            stageRows(totals: day.totals)
+        }
+    }
+
+    private func scoresSection(_ day: SleepModel.Day, snapshot: SleepModel.Snapshot) -> some View {
+        let row = snapshot.scores[day.wakeDayKey]
+        let latest = day.id == snapshot.latest?.id ? snapshot.recent.latestScores : nil
+        return Section("Scores") {
+            scoreRows(efficiency: day.efficiency, row: row, latest: latest)
+        }
+    }
+
+    // MARK: Tonight
+
+    private func tonightSection(_ snapshot: SleepModel.Snapshot) -> some View {
+        let inputs = snapshot.coaching.inputs
+        let zone = snapshot.timeZone
+        return Section("Tonight") {
+            if let wake = inputs.wake {
+                let plans = SleepPlanner.plans(wakeSec: wake.wakeSec, needSec: inputs.tonightNeedSec, timing: inputs.timing)
+                ForEach(plans, id: \.target) { plan in
+                    HStack {
+                        Text(plan.target.label)
+                        Spacer(minLength: Spacing.s8)
+                        Text(Format.clock(plan.bedtimeSec * 1000, in: zone))
+                            .monospacedDigit()
+                    }
+                }
+                Text("Wake \(Format.clock(wake.wakeSec * 1000, in: zone)) · \(sourceText(wake.source))")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
                     .monospacedDigit()
-                Spacer(minLength: Spacing.s8)
-                Text(Format.sleepQuality(night.quality))
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Palette.sleepQuality(night.quality))
+            } else {
+                EmptyStateRow(text: "No wake time. Set an alarm to plan bedtimes.", actionTitle: nil, action: nil)
             }
+        }
+    }
 
-            HStack(spacing: Spacing.s8) {
-                Text(sleepWindow(night, in: timeZone))
-                Spacer(minLength: Spacing.s8)
-                if let efficiency = night.efficiency {
-                    Text("Asleep \(Format.percent(efficiency))")
+    /// "alarm", or "median of 7 nights" when no alarm is within a day.
+    private func sourceText(_ source: WakePlan.Source) -> String {
+        switch source {
+        case .alarm:
+            "alarm"
+        case let .medianOfRecentWakes(nights):
+            "median of \(nights) nights"
+        }
+    }
+
+    // MARK: Previous nights
+
+    @ViewBuilder
+    private func previousSection(_ snapshot: SleepModel.Snapshot) -> some View {
+        let latestID = snapshot.latest?.id
+        let nights = snapshot.recent.nights.filter { $0.id != latestID }
+        if !nights.isEmpty {
+            Section("Previous nights") {
+                ForEach(nights) { night in
+                    NavigationLink {
+                        SleepNightDetailView(
+                            night: night,
+                            row: snapshot.scores[SleepModel.wakeDayKey(startMs: night.startMs, durationS: night.durationS, in: timeZone)],
+                            timeZone: timeZone
+                        )
+                    } label: {
+                        previousLabel(night)
+                    }
+                    .swipeActions(edge: .trailing) {
+                        Button("Edit") {
+                            editing = night
+                        }
+                    }
                 }
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .monospacedDigit()
+        }
+    }
 
+    private func previousLabel(_ night: Dashboard.SleepSnapshot.Night) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.s8) {
+            HStack(alignment: .firstTextBaseline) {
+                nightTitle(night)
+                Spacer(minLength: Spacing.s8)
+                Text(Format.duration(night.asleepS))
+                    .monospacedDigit()
+            }
             if night.isStaged {
                 SleepStageBar(totals: night.stageTotals, showsLegend: false)
-                Text(SleepStageTotals.summary(night.stageTotals))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    .lineLimit(2)
-            } else {
-                Text("Stages not yet computed — sync to update")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, Spacing.s4)
     }
+
+    // MARK: About
+
+    private var aboutSection: some View {
+        Section {
+            DisclosureGroup("About sleep") {
+                Text("Times, stages and scores are estimates from heart rate and motion, not WHOOP's measurements. Nights without stages count their whole time in bed as asleep. Naps are listed with the nights and never replace the main sleep.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
 }
 
-/// A prior night's hypnogram, stage breakdown and the facts the list used to show inline.
+/// A prior night, with the same header, stages and scores as the Sleep tab shows for the night on show.
 private struct SleepNightDetailView: View {
     let night: Dashboard.SleepSnapshot.Night
+    let row: DailyScoreRow?
     let timeZone: TimeZone
 
     var body: some View {
         List {
             Section {
-                nightStages(night)
-            } header: {
-                nightTitle(night)
+                nightHeader(asleepS: night.asleepS, startMs: night.startMs, durationS: night.durationS, timeZone: timeZone)
+                if night.isStaged {
+                    SleepStageChart(segments: night.stages, totals: night.stageTotals)
+                        .frame(height: ChartHeight.detail)
+                } else {
+                    Text("Stages pending")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
-
-            Section("Night") {
-                nightFacts(night, timeZone: timeZone)
+            Section("Stages") {
+                stageRows(totals: night.stageTotals)
+            }
+            Section("Scores") {
+                scoreRows(efficiency: night.efficiency, row: row, latest: nil)
             }
         }
-        .navigationTitle(Text(Date(epochMs: night.startMs), style: .date))
+        .navigationTitle(nightTitle(night))
         .navigationBarTitleDisplayMode(.inline)
     }
 }
 
 // MARK: Shared rows
 
-/// The chart, stage totals and efficiency, or the honest empty state for a night that predates staging.
+/// Time asleep, large, over the bed and wake window.
+private func nightHeader(asleepS: Int64, startMs: Int64, durationS: Int64, timeZone: TimeZone) -> some View {
+    VStack(alignment: .leading, spacing: Spacing.s4) {
+        Text(Format.duration(asleepS))
+            .font(.figureLarge)
+            .monospacedDigit()
+        Text(sleepWindow(startMs: startMs, durationS: durationS, timeZone: timeZone))
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .monospacedDigit()
+    }
+    .padding(.vertical, Spacing.s4)
+}
+
+/// Deep, Core, REM and Awake, each with its duration and share of the night. Unstaged nights say so.
 @ViewBuilder
-private func nightStages(_ night: Dashboard.SleepSnapshot.Night) -> some View {
-    if night.isStaged {
-        VStack(alignment: .leading, spacing: Spacing.s12) {
-            SleepStageChart(segments: night.stages, totals: night.stageTotals)
-                .frame(height: Spacing.s48 * 3)
-            SleepStageSummaryRow(totals: night.stageTotals)
-            HStack(spacing: Spacing.s8) {
-                Text("Time asleep")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: Spacing.s8)
-                Text(night.efficiency.map { Format.percent($0) } ?? "--")
-                    .font(.subheadline.weight(.semibold))
+private func stageRows(totals: [SleepStage: Int]) -> some View {
+    if totals.isEmpty {
+        Text("Stages pending")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+    } else {
+        ForEach(SleepStage.stackOrder, id: \.self) { stage in
+            LabeledContent(stageTitle(stage)) {
+                Text("\(Format.duration(seconds: totals[stage] ?? 0)) · \(Format.percent(SleepStageTotals.percent(stage, of: totals)))")
                     .monospacedDigit()
             }
         }
-        .padding(.vertical, Spacing.s4)
-    } else {
-        Text("Stages not yet computed — sync to update")
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
     }
 }
 
+/// Performance, need, debt and efficiency from the night's `daily_score` row, and regularity and consistency for the
+/// latest night only. Each value has one source. A stimulant near sleep onset is one row.
 @ViewBuilder
-private func nightFacts(_ night: Dashboard.SleepSnapshot.Night, timeZone: TimeZone) -> some View {
-    LabeledContent("Bed → wake") {
-        Text(sleepWindow(night, in: timeZone))
-            .monospacedDigit()
+private func scoreRows(efficiency: Double?, row: DailyScoreRow?, latest: DailyScores?) -> some View {
+    scoreRow("Performance", row?.sleepPerformance.map { Format.percent($0 / 100) })
+    scoreRow("Need", row?.sleepNeedSec.map { Format.duration($0) })
+    scoreRow("Debt", row?.sleepDebtSec.map { $0 > 0 ? Format.duration($0) : "None" })
+    scoreRow("Efficiency", efficiency.map { Format.percent($0) })
+    scoreRow("Regularity", latest?.sleepRegularityIndex.map { "\(Int($0.rounded()))" })
+    scoreRow("Consistency", latest?.sleepConsistency.map { Format.percent($0) })
+    if latest?.stimulantNearSleepOnset == true {
+        LabeledContent("Stimulant", value: "Within 1 h of sleep onset")
     }
-    LabeledContent("Asleep") {
-        Text(Format.duration(night.asleepS))
-            .monospacedDigit()
-    }
-    LabeledContent("In bed") {
-        Text(Format.duration(night.durationS))
-            .monospacedDigit()
-    }
-    LabeledContent("Quality") {
-        Text(Format.sleepQuality(night.quality))
-            .foregroundStyle(Palette.sleepQuality(night.quality))
-    }
-    LabeledContent("Resting HR") {
-        Text(night.restingHR.map { Format.number($0, unit: "bpm") } ?? "--")
-            .monospacedDigit()
-    }
-    LabeledContent("RMSSD") {
-        Text(night.rmssdMs.map { Format.number($0, unit: "ms") } ?? "--")
+}
+
+private func scoreRow(_ title: String, _ value: String?) -> some View {
+    LabeledContent(title) {
+        Text(value ?? "—")
             .monospacedDigit()
     }
 }
 
-/// Sleep coaching, breathing and regularity for the latest night. Estimates from published methods
-/// (OpenStrap / NOOP ports), not WHOOP's proprietary Sleep Performance.
-@ViewBuilder
-private func nightScores(_ scores: DailyScores) -> some View {
-    if let sleep = scores.sleep {
-        LabeledContent("Sleep performance") {
-            Text(Format.percent(sleep.performancePct / 100))
-                .monospacedDigit()
-        }
-        LabeledContent("Sleep need") {
-            Text(Format.duration(Int64(sleep.needSec)))
-                .monospacedDigit()
-        }
-        LabeledContent("Sleep debt") {
-            Text(sleep.debtBalanceSec < 0 ? Format.duration(Int64(-sleep.debtBalanceSec)) : "None")
-                .monospacedDigit()
-        }
-    }
-    LabeledContent("Respiratory rate") {
-        Text(scores.respiratoryRateBrpm.map { Format.number($0, unit: "br/min") } ?? "--")
-            .monospacedDigit()
-    }
-    LabeledContent("Regularity (7 days)") {
-        Text(scores.sleepRegularityIndex.map { "\(Int($0.rounded()))" } ?? "--")
-            .monospacedDigit()
-    }
-    if scores.stimulantNearSleepOnset {
-        Text("Stimulant active within 1 h of sleep onset")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-    }
-    Text("Performance, need, debt and breathing are estimates from heart rate and motion, not WHOOP's scores. Breathing is read from heart-rhythm variation and stays blank when the signal is too thin.")
-        .font(.footnote)
-        .foregroundStyle(.secondary)
-}
-
-/// The night is labelled by the day it started (PLAN.md 8.1's evening-to-morning window). A nap says so.
+/// The night is labelled by the day it started. A nap says so.
 private func nightTitle(_ night: Dashboard.SleepSnapshot.Night) -> Text {
     let date = Text(Date(epochMs: night.startMs), style: .date)
-    return night.isNap ? date + Text(" · Nap") : date
+    return night.isNap ? Text("\(date) · Nap") : date
 }
 
-private func sleepWindow(_ night: Dashboard.SleepSnapshot.Night, in timeZone: TimeZone) -> String {
-    let wakeMs = night.startMs + night.durationS * 1_000
-    return "\(Format.clock(night.startMs, in: timeZone)) – \(Format.clock(wakeMs, in: timeZone))"
+private func sleepWindow(startMs: Int64, durationS: Int64, timeZone: TimeZone) -> String {
+    let wakeMs = startMs + durationS * 1_000
+    return "\(Format.clock(startMs, in: timeZone))–\(Format.clock(wakeMs, in: timeZone))"
+}
+
+private func stageTitle(_ stage: SleepStage) -> String {
+    switch stage {
+    case .deep: "Deep"
+    case .light: "Core"
+    case .rem: "REM"
+    case .wake: "Awake"
+    }
 }
