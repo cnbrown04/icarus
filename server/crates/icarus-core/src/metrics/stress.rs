@@ -12,7 +12,9 @@ use super::statistics::{mad, median};
 pub const MAD_SCALE: f64 = 1.4826;
 /// Calibration: at least this many qualifying days (PLAN.md 8.3).
 pub const MIN_QUALIFYING_DAYS: usize = 7;
-/// A day qualifies with at least this many awake windows (2 h of 5-minute windows).
+/// A day qualifies for the R-R baseline with at least this many valid awake windows (1 h of 5-minute windows).
+pub const MIN_AWAKE_RR_WINDOWS_PER_DAY: usize = 12;
+/// A day qualifies for the HR-only baseline with at least this many awake windows that have HR (2 h).
 pub const MIN_AWAKE_WINDOWS_PER_DAY: usize = 24;
 pub const LOOKBACK_DAYS: i64 = 14;
 /// Floor on the HR sigma, in bpm. A steady baseline has MAD 0, which would make any deviation infinitely
@@ -77,7 +79,9 @@ pub struct StressResult {
 ///
 /// A lookback day's windows start inside that local day, outside its sleep and outside exertion.
 /// The Rust core has no sleep sessions, so the sleep that touches a day is its 00:00-06:00 fallback
-/// night, on that morning and the next. A day qualifies with `MIN_AWAKE_WINDOWS_PER_DAY` windows.
+/// night, on that morning and the next. A day qualifies for the R-R baseline with
+/// `MIN_AWAKE_RR_WINDOWS_PER_DAY` valid windows, and for the HR-only baseline with `MIN_AWAKE_WINDOWS_PER_DAY`.
+/// The Rust core has no medication data, so it never builds the Swift medicated or unmedicated baselines.
 /// Two baselines exist. The R-R baseline uses valid windows and drives the value state.
 /// The HR-only baseline uses every window with HR and drives the hr_only fallback.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -129,7 +133,7 @@ impl StressBaseline {
                 .collect();
             let valid_windows: Vec<&FiveMinuteWindow> =
                 eligible.iter().copied().filter(|w| w.valid).collect();
-            if valid_windows.len() >= MIN_AWAKE_WINDOWS_PER_DAY {
+            if valid_windows.len() >= MIN_AWAKE_RR_WINDOWS_PER_DAY {
                 valid_days += 1;
             }
             let hr_windows: Vec<f64> = eligible.iter().filter_map(|w| w.hr_mean).collect();
@@ -187,10 +191,14 @@ pub fn score(
         return result(None, StressState::Exertion);
     }
 
-    if window.valid {
-        if baseline.valid_days < MIN_QUALIFYING_DAYS {
-            return result(None, StressState::Calibrating);
-        }
+    // The R-R path needs a valid window and a ready R-R baseline (enough days and all four medians). A valid
+    // window whose R-R baseline is not ready is scored on the HR-only path instead, as the Swift core does.
+    let rr_ready = baseline.valid_days >= MIN_QUALIFYING_DAYS
+        && baseline.hr_median.is_some()
+        && baseline.hr_mad.is_some()
+        && baseline.ln_rmssd_median.is_some()
+        && baseline.ln_rmssd_mad.is_some();
+    if window.valid && rr_ready {
         let (
             Some(hr),
             Some(ln_rmssd),
@@ -214,6 +222,7 @@ pub fn score(
         return result(Some(scaled(0.5 * z_hr - 0.5 * z_hrv)), StressState::Value);
     }
 
+    // No valid R-R window, or the R-R baseline is not ready: the HR-only path.
     if baseline.hr_only_days < MIN_QUALIFYING_DAYS {
         return result(None, StressState::Calibrating);
     }
@@ -284,15 +293,48 @@ mod tests {
     }
 
     #[test]
-    fn missing_median_is_insufficient() {
+    fn missing_rr_median_falls_back_to_hr_only() {
+        // The R-R baseline lacks a median, so the valid window is scored on the HR-only path (Swift parity).
+        // z = (61 - 60) / 4 = 0.25, raw = 0.125, Stress = 38.
         let mut baseline = full_baseline(1.0, 0.06);
         baseline.hr_median = None;
         let result = score(&window(Some(61.0), true, Some(3.45)), Some(60.0), 180.0, &baseline);
         assert_eq!(
             result,
             StressResult {
+                stress: Some(38),
+                state: StressState::HrOnly
+            }
+        );
+    }
+
+    #[test]
+    fn short_rr_baseline_falls_back_to_hr_only_for_valid_windows() {
+        // Six R-R days is short of seven, but the HR-only baseline has eight: the valid window is hr_only.
+        let mut baseline = full_baseline(1.0, 0.06);
+        baseline.valid_days = 6;
+        baseline.hr_only_days = 8;
+        let result = score(&window(Some(61.0), true, Some(3.45)), Some(60.0), 180.0, &baseline);
+        assert_eq!(
+            result,
+            StressResult {
+                stress: Some(38),
+                state: StressState::HrOnly
+            }
+        );
+    }
+
+    #[test]
+    fn short_rr_and_hr_only_baselines_stay_calibrating() {
+        let mut baseline = full_baseline(1.0, 0.06);
+        baseline.valid_days = 6;
+        baseline.hr_only_days = 6;
+        let result = score(&window(Some(61.0), true, Some(3.45)), Some(60.0), 180.0, &baseline);
+        assert_eq!(
+            result,
+            StressResult {
                 stress: None,
-                state: StressState::Insufficient
+                state: StressState::Calibrating
             }
         );
     }

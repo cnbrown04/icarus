@@ -191,7 +191,8 @@ def windows(samples, rr, lo, hi):
 
 # ---- stress ---------------------------------------------------------------------------
 
-MIN_AWAKE_WINDOWS = 24
+MIN_AWAKE_RR_WINDOWS = 12  # valid windows a day needs for the R-R baseline (stress algo v3)
+MIN_AWAKE_WINDOWS = 24  # windows with HR a day needs for the HR-only baseline
 HR_SIGMA_FLOOR = 4.0
 LN_RMSSD_SIGMA_FLOOR = 0.15
 CENTER_OFFSET = -0.44
@@ -206,7 +207,7 @@ def sigma(mad, floor):
 
 
 def baseline(history, day, tz, rhr, mx):
-    """Awake windows of the 14 local days before `day` (PLAN.md 8.3, stress algo v2).
+    """Awake windows of the 14 local days before `day` (PLAN.md 8.3, stress algo v3).
 
     A window counts when it starts inside its local day, outside that day's sleep (the night that ends on
     it, else 00:00-06:00) and outside the sleep that began on its evening (the night that ends the next
@@ -224,7 +225,7 @@ def baseline(history, day, tz, rhr, mx):
                  and not any(is_night(w["start"], s_lo, s_hi) for s_lo, s_hi in sleep)
                  and not is_exertion(w["hr"], rhr, mx)]
         valids = [w for w in awake if w["valid"]]
-        if len(valids) >= MIN_AWAKE_WINDOWS:
+        if len(valids) >= MIN_AWAKE_RR_WINDOWS:
             valid_days += 1
         hrn = [w for w in awake if w["hr"] is not None]
         if len(hrn) >= MIN_AWAKE_WINDOWS:
@@ -241,16 +242,19 @@ def baseline(history, day, tz, rhr, mx):
     }
 
 
+def rr_ready(b):
+    """The R-R baseline has 7 qualifying days and all four medians (stress algo v3)."""
+    return (b["valid_days"] >= 7 and b["hr_median"] is not None and b["hr_mad"] is not None
+            and b["ln_rmssd_median"] is not None and b["ln_rmssd_mad"] is not None)
+
+
 def score(w, rhr, mx, b):
+    """A valid window with a ready R-R baseline takes the value path. Otherwise it takes the HR-only path,
+    so a valid window is never left calibrating while the HR-only baseline is ready (stress algo v3)."""
     if is_exertion(w["hr"], rhr, mx):
         return None, "exertion"
-    if w["valid"]:
-        if b["valid_days"] < 7:
-            return None, "calibrating"
-        ok = (w["hr"] is not None and w["ln"] is not None
-              and b["hr_median"] is not None and b["hr_mad"] is not None
-              and b["ln_rmssd_median"] is not None and b["ln_rmssd_mad"] is not None)
-        if not ok:
+    if w["valid"] and rr_ready(b):
+        if w["hr"] is None or w["ln"] is None:
             return None, "insufficient"
         zhr = (w["hr"] - b["hr_median"]) / sigma(b["hr_mad"], HR_SIGMA_FLOOR)
         zhrv = (w["ln"] - b["ln_rmssd_median"]) / sigma(b["ln_rmssd_mad"], LN_RMSSD_SIGMA_FLOOR)
@@ -369,6 +373,18 @@ def history_days(offsets, valid=True, constant=False):
             else:
                 hr, ln = hist_default(k, j)
             rows.append([base + j * WIN, hr, valid, ln])
+    return rows
+
+
+def history_split(spec):
+    """24 awake windows on each (offset, valid_count) day. The first valid_count windows pass the R-R rule and
+    the rest are invalid. Every window has HR, so the HR-only baseline sees all 24 on each day."""
+    rows = []
+    for k, n_valid in spec:
+        base = local_ms(D - timedelta(days=k), AWAKE_HOUR, CHI)
+        for j in range(24):
+            hr, ln = hist_default(k, j)
+            rows.append([base + j * WIN, hr, j < n_valid, ln if j < n_valid else None])
     return rows
 
 
@@ -567,6 +583,16 @@ def build():
                     [local_ms(D, AWAKE_HOUR, CHI), 62.0, True, 3.45], 60.0, 180.0),
         stress_case("value_near_awake_median", history_s1(),
                     [local_ms(D, AWAKE_HOUR, CHI), 60.0, True, 3.40], 60.0, 180.0),
+        # Stress algo v3: 12 valid windows qualify an R-R day, and a valid window falls back to hr_only.
+        stress_case("rr_twelve_windows_qualify_a_day",
+                    history_split([(k, 12) for k in range(1, 9)]),
+                    [local_ms(D, 3, CHI) + 2 * WIN, 62.0, True, 3.45], 60.0, 180.0),
+        stress_case("rr_short_valid_window_falls_back_to_hr_only",
+                    history_split([(k, 12) for k in range(1, 7)] + [(7, 0), (8, 0)]),
+                    [local_ms(D, 3, CHI) + 2 * WIN, 62.0, True, 3.45], 60.0, 180.0),
+        stress_case("rr_and_hr_only_both_short_stay_calibrating",
+                    history_split([(k, 12) for k in range(1, 7)]),
+                    [local_ms(D, 3, CHI) + 2 * WIN, 62.0, True, 3.45], 60.0, 180.0),
     ]
     cases["stress_cases"] = stress_cases
 

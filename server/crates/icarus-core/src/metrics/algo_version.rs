@@ -8,10 +8,12 @@ pub struct AlgoVersion {
 }
 
 impl AlgoVersion {
+    /// Stress 3 is the Swift "Part A rules": the R-R fallback to the HR-only path and 12-window R-R days. The Rust
+    /// core has no medication data, so the Swift medication-aware baselines (Part B) are not mirrored here.
     pub const CURRENT: AlgoVersion = AlgoVersion {
         hr: 1,
         hrv: 1,
-        stress: 2,
+        stress: 3,
         kcal: 1,
     };
 }

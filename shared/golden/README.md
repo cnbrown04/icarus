@@ -123,10 +123,14 @@ or `null` when `max_hr <= resting_hr`. `expected.zone` is `below` (under 50%), `
   The baseline is built from the 14 local days before `day` (stress algo v2, PLAN.md 8.3). Awake windows are those
   starting inside a local day, excluding that day's sleep (`[00:00, 06:00)` local here, since the fixtures carry no
   sleep sessions), the same window that begins the next morning, and exertion. A day counts toward `valid_days` with
-  at least 24 valid awake windows. It counts toward `hr_only_days` with at least 24 awake windows that have HR.
-  Sigma is `max(1.4826 * MAD, floor)` with floors 4.0 bpm (HR) and 0.15 (ln RMSSD). The value state scores
-  `round(100 * Phi(0.5 z_HR - 0.5 z_HRV - 0.44))`. The hr_only state scores `round(100 * Phi(0.5 z_HR - 0.44))`.
+  at least 12 valid awake windows (stress algo v3; v2 used 24). It counts toward `hr_only_days` with at least 24 awake
+  windows that have HR. Sigma is `max(1.4826 * MAD, floor)` with floors 4.0 bpm (HR) and 0.15 (ln RMSSD).
+  A valid window takes the value path when `valid_days >= 7` and all four R-R medians exist, and
+  `round(100 * Phi(0.5 z_HR - 0.5 z_HRV - 0.44))`. Otherwise it takes the hr_only path when `hr_only_days >= 7`,
+  with `round(100 * Phi(0.5 z_HR - 0.44))`. Only a window whose path is not ready is `calibrating`.
   `-0.44` is the centre offset, so a window at the baseline median scores about 33.
+  The Rust core mirrors these rules but has no medication data. The Swift medication-aware baselines (stress
+  algo v3, Part B) are not in these fixtures, because the fixtures carry no stimulant windows.
 
 `minute_metric_cases[]`: `tz`, `day`, `range_start_ms`, `range_end_ms` (minute-aligned), `profile`, `resting_hr`,
 `max_hr`, `history` (as in `stress_cases`), `samples` and `rr` (as above). Build the baseline from `history`, then compute one row per minute.
