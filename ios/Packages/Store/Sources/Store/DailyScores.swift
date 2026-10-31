@@ -22,6 +22,9 @@ public struct DailyScores: Sendable, Equatable {
     public let sleep: SleepCoachingSummary?
     /// Respiratory rate of the main sleep that ended on `day`, breaths/min. Nil when R-R could not support it.
     public let respiratoryRateBrpm: Double?
+    /// True when a stimulant window was active at the main sleep's start or in the hour before it. False when no
+    /// main sleep ended on `day`. A factual flag for the Sleep and Recovery notes, not a score input.
+    public let stimulantNearSleepOnset: Bool
     /// Phillips SRI over the 7 local days ending on `day`, in [-100, 100]. Nil with fewer than two days of data.
     public let sleepRegularityIndex: Double?
     /// Bed and wake consistency over the 7 local days ending on `day`, 0...1 where 1 is most regular. Nil with
@@ -86,12 +89,18 @@ extension Database {
             )
         }
 
+        var stimulantNearSleep = false
+        if let tonight {
+            stimulantNearSleep = try stimulantNearSleepOnset(sleepStartMs: tonight.startMs, in: timeZone)
+        }
+
         return DailyScores(
             day: day,
             strain: strain,
             recovery: recovery,
             sleep: tonight == nil ? nil : sleepSummary,
             respiratoryRateBrpm: tonight?.respRateBrpm,
+            stimulantNearSleepOnset: stimulantNearSleep,
             sleepRegularityIndex: SleepRegularity.phillipsSRI(nights: weekNights, timeZone: timeZone),
             sleepConsistency: SleepRegularity.consistencyScore(nights: weekNights, timeZone: timeZone)
         )

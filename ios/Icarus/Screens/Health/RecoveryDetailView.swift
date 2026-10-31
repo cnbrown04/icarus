@@ -90,6 +90,11 @@ struct RecoveryDetailView: View {
                 vitalRow(.restingHR)
                 vitalRow(.respiratoryRate)
                 sleepPerformanceRow
+                if snapshot?.scores.stimulantNearSleepOnset == true {
+                    Text("Stimulant active within 1 h of sleep onset")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }

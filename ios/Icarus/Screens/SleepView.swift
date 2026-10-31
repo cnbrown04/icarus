@@ -234,6 +234,11 @@ private func nightScores(_ scores: DailyScores) -> some View {
         Text(scores.sleepRegularityIndex.map { "\(Int($0.rounded()))" } ?? "--")
             .monospacedDigit()
     }
+    if scores.stimulantNearSleepOnset {
+        Text("Stimulant active within 1 h of sleep onset")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
     Text("Performance, need, debt and breathing are estimates from heart rate and motion, not WHOOP's scores. Breathing is read from heart-rhythm variation and stays blank when the signal is too thin.")
         .font(.footnote)
         .foregroundStyle(.secondary)
