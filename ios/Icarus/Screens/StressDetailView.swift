@@ -9,6 +9,8 @@ private struct StressScreenData: Sendable {
     let calibration: StressCalibrationProgress
     let fromMs: Int64
     let nowMs: Int64
+    /// Stimulant windows for yesterday and today; the chart clips them to the last 24 h.
+    let medication: [MedicationWindow]
 }
 
 /// Stress now, over 24 h and over 7, 30 or 90 days, with RMSSD and sqrt(Baevsky SI) (PLAN.md §14 row 9).
@@ -58,13 +60,22 @@ struct StressDetailView: View {
                     StressLegend()
                 } chart: {
                     if let data, data.timeline.contains(where: { $0.stress != nil }) {
-                        StressTimelineChart(points: data.timeline, fromMs: data.fromMs, toMs: data.nowMs)
-                            .frame(height: Spacing.s48 * 3)
+                        StressTimelineChart(
+                            points: data.timeline,
+                            fromMs: data.fromMs,
+                            toMs: data.nowMs,
+                            medicationWindows: data.medication
+                        )
+                        .frame(height: Spacing.s48 * 3)
                     } else {
                         Text("No stress values yet")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
+                }
+
+                if let data, !data.medication.isEmpty {
+                    MedicationLegend()
                 }
 
                 if let data {
@@ -139,7 +150,12 @@ struct StressDetailView: View {
                     timeline: try Dashboard.stressTimeline(db, nowMs: nowMs, fromMs: fromMs),
                     calibration: try Dashboard.stressCalibration(db, nowMs: nowMs, context: snapshot.context),
                     fromMs: fromMs,
-                    nowMs: nowMs
+                    nowMs: nowMs,
+                    medication: try db.medicationWindows(
+                        from: LocalTime.adding(days: -1, to: snapshot.context.today),
+                        to: snapshot.context.today,
+                        in: snapshot.context.timeZone
+                    )
                 )
             }) {
                 data = value

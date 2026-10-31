@@ -12,8 +12,14 @@ struct StressTimelineChart: View {
     let fromMs: Int64
     /// Window end, normally now.
     let toMs: Int64
+    /// Stimulant-active windows to shade behind the timeline. Clipped to `fromMs...toMs`.
+    var medicationWindows: [MedicationWindow] = []
 
     @State private var selection: Date?
+
+    private var shaded: [MedicationWindow] {
+        medicationWindows.clipped(toMs: min(fromMs, toMs), max(fromMs, toMs))
+    }
 
     /// A contiguous run of scored minutes. Gaps split segments so the line does not bridge them.
     private struct Segment: Identifiable {
@@ -88,6 +94,7 @@ struct StressTimelineChart: View {
 
     var body: some View {
         Chart {
+            MedicationWindowsOverlay.marks(shaded, yRange: 0...100)
             ForEach(segments) { segment in
                 ForEach(segment.points) { point in
                     AreaMark(

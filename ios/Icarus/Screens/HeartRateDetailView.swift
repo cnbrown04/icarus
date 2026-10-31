@@ -8,6 +8,20 @@ private struct HeartRateScreenData: Sendable {
     let snapshot: Dashboard.HeartRateSnapshot
     let dayStartMs: Int64
     let dayTimeline: HRZoneTimeline
+    /// Stimulant windows for the last 7 days; the chart clips them to the selected range.
+    let medication: [MedicationWindow]
+}
+
+private extension Dashboard.HeartRateRange {
+    /// How far back the selected range reaches, in ms.
+    var spanMs: Int64 {
+        switch self {
+        case .hour: 60 * LocalTime.msPerMinute
+        case .sixHours: 6 * 60 * LocalTime.msPerMinute
+        case .day: 24 * 60 * LocalTime.msPerMinute
+        case .week: 7 * 24 * 60 * LocalTime.msPerMinute
+        }
+    }
 }
 
 /// Heart rate over 1 h to 7 d, with zones and min, average and max, and resting HR over 7, 30 or 90 days
@@ -44,10 +58,19 @@ struct HeartRateDetailView: View {
                         .font(.metricValue)
                         .monospacedDigit()
                 } chart: {
-                    HRAreaChart(points: points, average: snapshot?.average, selection: $selection)
-                        .frame(height: Spacing.s48 * 3)
-                        .accessibilityLabel("Heart rate, \(range.label)")
-                        .accessibilityValue(summary)
+                    HRAreaChart(
+                        points: points,
+                        average: snapshot?.average,
+                        selection: $selection,
+                        medicationWindows: data?.medication ?? [],
+                        xDomain: visibleDomain
+                    )
+                    .frame(height: Spacing.s48 * 3)
+                    .accessibilityLabel("Heart rate, \(range.label)")
+                    .accessibilityValue(summary)
+                }
+                if let data, !data.medication.isEmpty {
+                    MedicationLegend()
                 }
 
                 HStack(spacing: Spacing.s12) {
@@ -117,6 +140,11 @@ struct HeartRateDetailView: View {
                     dayStartMs: dayStart,
                     dayTimeline: try Dashboard.hrZoneTimeline(
                         db, nowMs: nowMs, fromMs: dayStart, context: snapshot.context
+                    ),
+                    medication: try db.medicationWindows(
+                        from: LocalTime.adding(days: -7, to: snapshot.context.today),
+                        to: snapshot.context.today,
+                        in: snapshot.context.timeZone
                     )
                 )
             }) {
@@ -135,6 +163,12 @@ struct HeartRateDetailView: View {
 
     private var points: [HRPoint] {
         (snapshot?.buckets ?? []).map { HRPoint(date: Date(epochMs: $0.startMs), bpm: $0.avg) }
+    }
+
+    /// The selected range ending now, so shaded windows clip to it.
+    private var visibleDomain: ClosedRange<Date>? {
+        guard let nowMs = snapshot?.context.nowMs else { return nil }
+        return Date(epochMs: nowMs - range.spanMs)...Date(epochMs: nowMs)
     }
 
     private var summary: String {
