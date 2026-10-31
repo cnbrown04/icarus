@@ -25,6 +25,8 @@ struct DebugView: View {
     @State private var showsRecomputeConfirm = false
     @State private var isRecomputing = false
     @State private var recomputeResult: String?
+    @State private var isProbingReadPointer = false
+    @State private var readPointerProbeResult: String?
 
     var body: some View {
         let frames = liveState.frameLog.latest(Self.listLimit)
@@ -32,6 +34,27 @@ struct DebugView: View {
             dataServerSection
             metricsInspectorSection
             recomputeSection
+
+            Section {
+                Button(isProbingReadPointer ? "Probing…" : "Probe read-pointer encoding") {
+                    isProbingReadPointer = true
+                    Task {
+                        readPointerProbeResult = await liveState.probeReadPointerEncoding()
+                        isProbingReadPointer = false
+                    }
+                }
+                .disabled(isProbingReadPointer || liveState.tierBState != .ready || liveState.drainProgress.isDraining)
+                .accessibilityIdentifier("debug.probeReadPointer")
+                if let readPointerProbeResult {
+                    Text(readPointerProbeResult)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Band history")
+            } footer: {
+                Text("Tries each SET_READ_POINTER payload form, rewinding the band's cursor about 10 minutes, and reports which one the band honours. Re-read records are deduplicated.")
+            }
 
             Section {
                 NavigationLink {

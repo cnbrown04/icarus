@@ -177,6 +177,11 @@ public final class CoreBluetoothTransport: NSObject, BandTransport, CBCentralMan
         await tierB.fullHistorySummary
     }
 
+    /// Debug-only hardware probe for SET_READ_POINTER's payload (`TierBController.probeReadPointerEncoding`).
+    public func probeReadPointerEncoding() async -> String {
+        await tierB.probeReadPointerEncoding()
+    }
+
     /// Installs the store that drained batches are written to before each ack
     /// (`TierBController.setHistoricalSink`).
     public func setHistoricalSink(_ sink: HistoricalSink?) async {

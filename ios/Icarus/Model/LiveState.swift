@@ -298,6 +298,14 @@ final class LiveState {
         await drain.drainFullHistory()
     }
 
+    /// Tries each SET_READ_POINTER payload encoding and reports which one the strap honours (Debug screen).
+    func probeReadPointerEncoding() async -> String {
+        guard let drain = transport as? any FullHistoryDrainTransport else {
+            return "probe skipped: transport has no drain control"
+        }
+        return await drain.probeReadPointerEncoding()
+    }
+
     /// The one-line state of the last (or running) full-history restore, for the Band screen.
     func fullHistorySummary() async -> String? {
         guard let drain = transport as? any FullHistoryDrainTransport else { return nil }

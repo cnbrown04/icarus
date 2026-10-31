@@ -408,6 +408,52 @@ public actor TierBController {
         BandLog.tierB(.info, "read pointer set to \(offset) (cmd 33, no reply awaited)")
     }
 
+    /// Pages the read-pointer probe rewinds by: ~9 records a page, so about 10 minutes of history,
+    /// which the next drain re-reads and the store dedupes.
+    public static let probeRewindPages = 64
+
+    /// Hardware probe for SET_READ_POINTER's payload. Two restores on 2026-10-23 and 2026-10-28/30
+    /// drained exactly the U→W backlog GET_DATA_RANGE reported, never the rewound span, so the bare-u32
+    /// form was ignored. This tries each `BandCommand.ReadPointerEncoding` in turn, aiming the cursor
+    /// `probeRewindPages` behind its current read pointer U, and re-reads GET_DATA_RANGE after each
+    /// write. The first encoding whose read-back U equals the target wins. Every step is logged;
+    /// the returned line is for the Debug screen. Never runs during a drain.
+    public func probeReadPointerEncoding() async -> String {
+        guard enabled, state == .ready, linkOpen else { return "probe skipped: the channel is not ready" }
+        if case .draining = offload.phase { return "probe skipped: a drain is running, try again in a minute" }
+        func readRing() async throws -> (RingState, UInt32)? {
+            let raw = FrameCodec.reencode(try await send(BandCommand.getDataRange()))
+            guard let ring = DataRange.ringState(from: raw, cmdOff: 6),
+                  let epoch = DataRange.ringEpoch(from: raw, cmdOff: 6) else { return nil }
+            return (ring, epoch)
+        }
+        do {
+            guard let (start, epoch) = try await readRing() else { return "probe aborted: ring state unreadable" }
+            guard start.read >= Self.probeRewindPages else { return "probe skipped: read pointer too close to 0" }
+            let target = start.read - Self.probeRewindPages
+            BandLog.tierB(.info, "read-pointer probe: W=\(start.write) U=\(start.read) T=\(start.capacity) epoch=\(epoch), target U=\(target)")
+            for encoding in BandCommand.ReadPointerEncoding.allCases {
+                let command = BandCommand.setReadPointer(page: UInt32(target), epoch: epoch,
+                                                         capacity: UInt32(start.capacity), encoding: encoding)
+                try await writeConfirmedWithoutReply(command)
+                try? await clock.sleep(seconds: 0.5)
+                guard let (after, afterEpoch) = try await readRing() else {
+                    BandLog.tierB(.info, "read-pointer probe \(encoding.rawValue): ring unreadable after the write")
+                    continue
+                }
+                BandLog.tierB(.info, "read-pointer probe \(encoding.rawValue) payload=\(hex(command.payload)): U \(start.read)→\(after.read), epoch \(afterEpoch)")
+                if after.read == target {
+                    let line = "probe: \(encoding.rawValue) moved the read pointer \(start.read)→\(after.read)"
+                    BandLog.tierB(.info, "read-pointer probe WINNER: \(encoding.rawValue)")
+                    return line
+                }
+            }
+            return "probe: no encoding moved the read pointer (U stayed \(start.read)); see the band log"
+        } catch {
+            return "probe aborted: \(String(describing: error))"
+        }
+    }
+
     /// Re-reads the strap's ENTIRE stored history: the app-deleted restore. After the app's
     /// database is wiped, the strap's persistent read cursor still sits at the last-acked batch,
     /// so a plain connect would only re-read what came after it. The flash is a ring
