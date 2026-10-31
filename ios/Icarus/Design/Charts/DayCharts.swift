@@ -24,9 +24,7 @@ struct DayLineChart: View {
             }
         }
         .chartYScale(domain: ChartDomain.line(points.map(\.value)))
-        .chartYAxis {
-            AxisMarks(position: .leading, values: .automatic(desiredCount: 3))
-        }
+        .metricChartStyle()
     }
 }
 
@@ -48,8 +46,6 @@ struct DayBarChart: View {
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
             }
         }
-        .chartYAxis {
-            AxisMarks(position: .leading)
-        }
+        .metricChartStyle()
     }
 }

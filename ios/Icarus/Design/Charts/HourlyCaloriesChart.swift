@@ -16,10 +16,8 @@ struct HourlyCaloriesChart: View {
             "Resting": Palette.caloriesResting,
             "Active": Palette.caloriesActive,
         ])
+        .metricChartStyle()
         .chartLegend(position: .bottom, alignment: .leading)
-        .chartYAxis {
-            AxisMarks(position: .leading)
-        }
         .accessibilityLabel("Calories by hour, today")
     }
 }

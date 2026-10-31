@@ -2,8 +2,8 @@ import Charts
 import Metrics
 import SwiftUI
 
-/// Heart rate as a line over a gradient area, with an optional average rule and a selection that reads one point
-/// (IOS_UI_SPEC, Charts). Pass `.constant(nil)` where the chart is only a picture.
+/// Heart rate as a line in the heart category colour, with an optional average rule and a selection that reads one
+/// point. Pass `.constant(nil)` where the chart is only a picture.
 struct HRAreaChart: View {
     let points: [HRPoint]
     var average: Double?
@@ -28,14 +28,6 @@ struct HRAreaChart: View {
         }
     }
 
-    private var fill: LinearGradient {
-        LinearGradient(
-            colors: [Palette.heartRate.opacity(0.35), Palette.heartRate.opacity(0)],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
-
     private var yRange: ClosedRange<Double> {
         ChartDomain.line(points.map(\.bpm))
     }
@@ -45,13 +37,6 @@ struct HRAreaChart: View {
         Chart {
             MedicationWindowsOverlay.marks(shaded, yRange: range)
             ForEach(points) { point in
-                AreaMark(
-                    x: .value("Time", point.date),
-                    yStart: .value("Lower bound", range.lowerBound),
-                    yEnd: .value("Heart rate", point.bpm)
-                )
-                .interpolationMethod(.catmullRom)
-                .foregroundStyle(fill)
                 LineMark(x: .value("Time", point.date), y: .value("Heart rate", point.bpm))
                     .interpolationMethod(.catmullRom)
                     .foregroundStyle(Palette.heartRate)
@@ -86,9 +71,7 @@ struct HRAreaChart: View {
             }
         }
         .chartYScale(domain: range)
-        .chartYAxis {
-            AxisMarks(position: .leading, values: .automatic(desiredCount: 3))
-        }
+        .metricChartStyle()
         .chartXSelection(value: $selection)
         .modifier(OptionalXDomain(domain: xDomain))
     }

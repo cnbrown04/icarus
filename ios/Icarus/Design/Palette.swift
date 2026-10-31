@@ -8,7 +8,7 @@ import SyncKit
 /// Colour only carries meaning: state, thresholds and chart series.
 enum Palette {
     /// Deprecated: use `Palette.category(.heart)` (MetricCategory / MetricKind colors).
-    static let heartRate = Color.pink
+    static let heartRate = MetricCategory.heart.color
     /// Deprecated: use `Palette.category(.heart)` (MetricCategory / MetricKind colors).
     static let hrv = Color.indigo
     /// Deprecated: use `Palette.category(.sleep)` (MetricCategory / MetricKind colors).
@@ -27,23 +27,20 @@ enum Palette {
         case .green: .green
         }
     }
-    /// Deprecated: stress has one category colour, `Palette.category(.mind)`. Its bands are words, not colours.
-    static let stressLow = Color.green
-    /// Deprecated: stress has one category colour, `Palette.category(.mind)`. Its bands are words, not colours.
-    static let stressModerate = Color.yellow
-    /// Deprecated: stress has one category colour, `Palette.category(.mind)`. Its bands are words, not colours.
-    static let stressHigh = Color.red
-    /// Deprecated: use `Palette.category(.activity)` (MetricCategory / MetricKind colors).
-    static let caloriesResting = Color.orange.opacity(0.5)
-    /// Deprecated: use `Palette.category(.activity)` (MetricCategory / MetricKind colors).
-    static let caloriesActive = Color.orange
+    /// Stress bands are steps of the mind colour: the words carry the meaning, the colour only steps up.
+    static let stressLow = MetricCategory.mind.color.opacity(0.4)
+    static let stressModerate = MetricCategory.mind.color.opacity(0.7)
+    static let stressHigh = MetricCategory.mind.color
+    /// Calories are steps of the activity colour.
+    static let caloriesResting = MetricCategory.activity.color.opacity(0.35)
+    static let caloriesActive = MetricCategory.activity.color
     static let syncOK = Color.green
     static let warn = Color.orange
     static let error = Color.red
     static let neutral = Color.secondary
 
-    /// Zones 1-5, lowest first. Below 50 % is grey.
-    static let zones: [Color] = [.blue, .green, .yellow, .orange, .red]
+    /// Zones 1-5, lowest first: one orange ramp from light to dark, so the zones read as steps of intensity.
+    static let zones: [Color] = [0.3, 0.45, 0.6, 0.8, 1.0].map { MetricCategory.activity.color.opacity($0) }
 
     static func stress(_ band: StressBand) -> Color {
         switch band {
