@@ -108,11 +108,9 @@ public enum DataRange {
     /// No real capture has crossed the wrap yet, so the conservative NOOP semantics stand; revisit
     /// when a live capture shows `W ≥ T`.
     ///
-    /// [Unverified] wrapped-ring reading (the full-history restore relies on it): if W wraps back
-    /// to 0 at T, the OLDEST surviving slot is W itself and the newest is W − 1, so the ring reads
-    /// oldest-first from W around to W − 1. A restore that rewinds to 0 skips the oldest
-    /// `T − W` slots; `TierBController.drainFullHistory` starts past W for that reason. Not yet
-    /// confirmed on hardware: the 2026-10-23 "acked data is gone" finding fits this reading.
+    /// [Unverified] wrapped-ring reading: if W wraps back to 0 at T, the OLDEST surviving slot is W
+    /// itself and the newest is W − 1. No app code relies on this any more: the sync drains only the
+    /// strap's unacked backlog, which streams from the strap's internal position (2026-10-30).
     public static func ringState(from frame: [UInt8], cmdOff: Int) -> RingState? {
         guard cmdOff >= 0 else { return nil }
         let payloadOffset = cmdOff + 1
@@ -126,11 +124,10 @@ public enum DataRange {
         return RingState(write: w, read: u, capacity: t)
     }
 
-    /// The strap's history READ CURSOR: the u32 LE at `cmdOff + 8` (the second word of the inner payload,
-    /// before NOOP's W/U pair). Hardware finding 2026-10-30, fw 41.17.x: it equals the first word of the
-    /// HISTORICAL_DATA_RESULT token the next drain acks (OpenStrap §4.3: "ACK advances the read cursor"),
-    /// it is the word SET_READ_POINTER (cmd 33) writes, and it persists across connections. Nil for a
-    /// frame too short to hold it.
+    /// The strap's history READ CURSOR word: the u32 LE at `cmdOff + 8` (the second word of the inner
+    /// payload, before NOOP's W/U pair). Hardware finding 2026-10-30, fw 41.17.x: it moves when
+    /// SET_READ_POINTER (cmd 33) writes it, but a drain still streams from the strap's internal position,
+    /// so the app does not use this word and nothing in the app reads it. Nil for a frame too short to hold it.
     public static func readCursor(from frame: [UInt8], cmdOff: Int) -> Int? {
         let offset = cmdOff + 8
         guard cmdOff >= 0, offset + 4 <= frame.count else { return nil }
