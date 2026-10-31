@@ -248,6 +248,22 @@ struct MetricSeriesTests {
         #expect(points == [MetricPoint(tsMs: start, value: 40)])
     }
 
+    /// A day the band was not worn has minute rows carrying only the resting estimate. It must not chart ~1,600 kcal
+    /// for a day nobody measured: without heart rate the day has no calories. A measured day keeps its total.
+    @Test func aDayWithoutHeartRateHasNoCalories() throws {
+        let database = try seededDatabase()
+        let unworn = LocalTime.adding(days: -1, to: day)
+        try insertMinuteRows([
+            minuteRow(localMs(unworn, 9), hr: nil, kcal: 1.1),
+            minuteRow(localMs(day, 9), hr: 70, kcal: 2),
+        ], into: database)
+        try database.writer.write { db in
+            try db.refreshDailyScores(from: unworn, through: day, in: chicago, nowMs: testNowMs)
+        }
+        let kcal = try database.writer.read { try $0.metricDays(.calories, from: unworn, through: day, in: chicago) }
+        #expect(kcal.map(\.value) == [nil, 2])
+    }
+
     @Test func intradayCaloriesSumPerLocalHour() throws {
         let database = try seededDatabase()
         let nineAM = localMs(day, 9)

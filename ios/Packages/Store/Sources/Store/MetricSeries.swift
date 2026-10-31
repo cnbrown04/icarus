@@ -283,7 +283,9 @@ extension Database {
             rmssdMs: night?.rmssdMs,
             respRate: night?.respRateBrpm,
             stressAvg: summary?.stressAverage,
-            kcal: summary?.kcalTotal,
+            // A day without heart rate (band not worn) has no calories: its minute rows only carry the resting
+            // estimate, which would chart ~1,600 kcal for a day nobody measured.
+            kcal: (heartRate?["mean"] as Double?) == nil ? nil : summary?.kcalTotal,
             hrAvg: heartRate?["mean"],
             hrMin: heartRate?["lowest"],
             hrMax: heartRate?["highest"],
@@ -398,5 +400,5 @@ public enum DailyScoreCache {
     public static let backfillDays = 180
     /// Bump to the date of any change to the score math (`dailyScores`, the single sources). Rows computed before
     /// it are rebuilt by the next launch. Nothing else in the cache needs versioning.
-    public static let algoSinceMs: Int64 = 1_793_413_200_000
+    public static let algoSinceMs: Int64 = 1_793_475_180_000
 }
