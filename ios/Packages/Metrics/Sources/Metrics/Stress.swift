@@ -24,14 +24,26 @@ public enum StressBand: String, Sendable, Equatable, Hashable, CaseIterable {
     }
 }
 
+/// Which awake baseline scored a window (stress algo v3). `.combined` is every awake window of the lookback. The
+/// medicated and unmedicated baselines split those windows by stimulant state. They are used only when the caller
+/// supplies stimulant windows and the matching baseline is ready for the window.
+public enum StressBaselineContext: String, Sendable, Equatable, CaseIterable {
+    case combined
+    case medicated
+    case unmedicated
+}
+
 public struct StressResult: Sendable, Equatable {
     /// Nil unless `state` is `.value` or `.hrOnly`.
     public let stress: Int?
     public let state: StressState
+    /// The baseline that scored the window. `.combined` unless a stimulant split applied.
+    public let baselineContext: StressBaselineContext
 
-    public init(stress: Int?, state: StressState) {
+    public init(stress: Int?, state: StressState, baselineContext: StressBaselineContext = .combined) {
         self.stress = stress
         self.state = state
+        self.baselineContext = baselineContext
     }
 }
 
@@ -39,12 +51,14 @@ public struct StressResult: Sendable, Equatable {
 ///
 /// A lookback day's baseline windows start inside that local day, outside its sleep and outside exertion.
 /// Sleep is the main sleep that ended that morning and the one that began that evening (`SleepNights`).
-/// A day with no detected sleep falls back to 00:00-06:00 local. A day qualifies with
-/// `Stress.minAwakeWindowsPerDay` windows.
+/// A day with no detected sleep falls back to 00:00-06:00 local. A day qualifies for the R-R baseline with
+/// `Stress.minAwakeRRWindowsPerDay` valid windows, and for the HR-only baseline with `Stress.minAwakeWindowsPerDay`.
 /// Two baselines exist. The R-R baseline uses valid windows and drives the value state.
 /// The HR-only baseline uses every window with HR and drives the hr_only fallback.
+/// When stimulant windows are supplied, `contexts` holds a medicated and an unmedicated baseline built from the same
+/// lookback. Each has its own thresholds (`Stress.minContextQualifyingDays` and the context window counts).
 public struct StressBaseline: Sendable, Equatable {
-    /// Days in the lookback with at least `minAwakeWindowsPerDay` valid awake windows.
+    /// Days in the lookback with at least `minAwakeRRWindowsPerDay` valid awake windows.
     public let validDays: Int
     public let hrMedian: Double?
     public let hrMAD: Double?
@@ -54,6 +68,10 @@ public struct StressBaseline: Sendable, Equatable {
     public let hrOnlyDays: Int
     public let hrOnlyMedian: Double?
     public let hrOnlyMAD: Double?
+    /// Qualifying days a baseline needs before it is ready (`Stress.minQualifyingDays` for the combined baseline).
+    public let requiredDays: Int
+    /// The medicated and unmedicated baselines. Empty unless stimulant windows were supplied to `build`.
+    public let contexts: [StressBaselineContext: StressBaseline]
 
     public init(
         validDays: Int,
@@ -63,7 +81,9 @@ public struct StressBaseline: Sendable, Equatable {
         lnRmssdMAD: Double?,
         hrOnlyDays: Int,
         hrOnlyMedian: Double?,
-        hrOnlyMAD: Double?
+        hrOnlyMAD: Double?,
+        requiredDays: Int = Stress.minQualifyingDays,
+        contexts: [StressBaselineContext: StressBaseline] = [:]
     ) {
         self.validDays = validDays
         self.hrMedian = hrMedian
@@ -73,38 +93,123 @@ public struct StressBaseline: Sendable, Equatable {
         self.hrOnlyDays = hrOnlyDays
         self.hrOnlyMedian = hrOnlyMedian
         self.hrOnlyMAD = hrOnlyMAD
+        self.requiredDays = requiredDays
+        self.contexts = contexts
+    }
+
+    /// The baseline for `context`: this one for `.combined`, else the matching entry of `contexts`.
+    public func context(_ context: StressBaselineContext) -> StressBaseline? {
+        context == .combined ? self : contexts[context]
+    }
+
+    /// The R-R baseline has enough qualifying days and every median the value state needs.
+    var isRRReady: Bool {
+        validDays >= requiredDays && hrMedian != nil && hrMAD != nil && lnRmssdMedian != nil && lnRmssdMAD != nil
+    }
+
+    /// The HR-only baseline has enough qualifying days and its median and MAD.
+    var isHROnlyReady: Bool {
+        hrOnlyDays >= requiredDays && hrOnlyMedian != nil && hrOnlyMAD != nil
+    }
+
+    /// True when this baseline can score `window` on one of its paths. A context baseline that cannot is skipped
+    /// in favour of the combined baseline.
+    func canScore(_ window: FiveMinuteWindow) -> Bool {
+        guard window.hrMean != nil else { return false }
+        return (window.valid && isRRReady && window.lnRmssd != nil) || isHROnlyReady
     }
 
     /// Baseline for scoring windows on local `day`. The lookback is the 14 days before `day`.
     /// `day` itself is excluded, so a window is never scored against itself.
+    ///
+    /// With `stimulantWindows`, the same lookback also yields a medicated baseline (windows that start inside a
+    /// stimulant window) and an unmedicated one (the rest). Without them, `contexts` stays empty and the result is
+    /// the combined baseline alone.
     public static func build(
         windows: [FiveMinuteWindow],
         day: LocalDay,
         nights: SleepNights,
         restingHR: Double?,
-        maxHR: Double
+        maxHR: Double,
+        stimulantWindows: [MedicationWindow] = []
     ) -> StressBaseline {
-        var validDays = 0
-        var hrOnlyDays = 0
-        var rrHR: [Double] = []
-        var rrLnRmssd: [Double] = []
-        var hrOnlyHR: [Double] = []
+        var combined = BaselineAccumulator()
+        var medicated = BaselineAccumulator()
+        var unmedicated = BaselineAccumulator()
+        let split = !stimulantWindows.isEmpty
+        let isMedicated = { (window: FiveMinuteWindow) in
+            MedicationEffect.isStimulantActive(at: window.startMs, windows: stimulantWindows)
+        }
 
         for lookback in Stress.baselineDays(
             windows, day: day, nights: nights, restingHR: restingHR, maxHR: maxHR
         ) {
-            if lookback.valid.count >= Stress.minAwakeWindowsPerDay {
-                validDays += 1
-            }
-            if lookback.withHR.count >= Stress.minAwakeWindowsPerDay {
-                hrOnlyDays += 1
-            }
-            rrHR += lookback.valid.compactMap(\.hrMean)
-            rrLnRmssd += lookback.valid.compactMap(\.lnRmssd)
-            hrOnlyHR += lookback.withHR.compactMap(\.hrMean)
+            combined.add(valid: lookback.valid, withHR: lookback.withHR, thresholds: .combined)
+            guard split else { continue }
+            medicated.add(
+                valid: lookback.valid.filter(isMedicated),
+                withHR: lookback.withHR.filter(isMedicated),
+                thresholds: .context
+            )
+            unmedicated.add(
+                valid: lookback.valid.filter { !isMedicated($0) },
+                withHR: lookback.withHR.filter { !isMedicated($0) },
+                thresholds: .context
+            )
         }
 
-        return StressBaseline(
+        var contexts: [StressBaselineContext: StressBaseline] = [:]
+        if split {
+            contexts[.medicated] = medicated.baseline(thresholds: .context)
+            contexts[.unmedicated] = unmedicated.baseline(thresholds: .context)
+        }
+        return combined.baseline(thresholds: .combined, contexts: contexts)
+    }
+}
+
+/// Thresholds for one baseline: windows a day needs on each path, and the qualifying days the baseline needs.
+private struct BaselineThresholds {
+    let rrWindowsPerDay: Int
+    let hrWindowsPerDay: Int
+    let requiredDays: Int
+
+    static let combined = BaselineThresholds(
+        rrWindowsPerDay: Stress.minAwakeRRWindowsPerDay,
+        hrWindowsPerDay: Stress.minAwakeWindowsPerDay,
+        requiredDays: Stress.minQualifyingDays
+    )
+    static let context = BaselineThresholds(
+        rrWindowsPerDay: Stress.minContextRRWindowsPerDay,
+        hrWindowsPerDay: Stress.minContextAwakeWindowsPerDay,
+        requiredDays: Stress.minContextQualifyingDays
+    )
+}
+
+/// Collects the lookback days of one baseline, then produces its medians and MADs.
+private struct BaselineAccumulator {
+    var validDays = 0
+    var hrOnlyDays = 0
+    var rrHR: [Double] = []
+    var rrLnRmssd: [Double] = []
+    var hrOnlyHR: [Double] = []
+
+    mutating func add(valid: [FiveMinuteWindow], withHR: [FiveMinuteWindow], thresholds: BaselineThresholds) {
+        if valid.count >= thresholds.rrWindowsPerDay {
+            validDays += 1
+        }
+        if withHR.count >= thresholds.hrWindowsPerDay {
+            hrOnlyDays += 1
+        }
+        rrHR += valid.compactMap(\.hrMean)
+        rrLnRmssd += valid.compactMap(\.lnRmssd)
+        hrOnlyHR += withHR.compactMap(\.hrMean)
+    }
+
+    func baseline(
+        thresholds: BaselineThresholds,
+        contexts: [StressBaselineContext: StressBaseline] = [:]
+    ) -> StressBaseline {
+        StressBaseline(
             validDays: validDays,
             hrMedian: Statistics.median(rrHR),
             hrMAD: Statistics.mad(rrHR),
@@ -112,7 +217,9 @@ public struct StressBaseline: Sendable, Equatable {
             lnRmssdMAD: Statistics.mad(rrLnRmssd),
             hrOnlyDays: hrOnlyDays,
             hrOnlyMedian: Statistics.median(hrOnlyHR),
-            hrOnlyMAD: Statistics.mad(hrOnlyHR)
+            hrOnlyMAD: Statistics.mad(hrOnlyHR),
+            requiredDays: thresholds.requiredDays,
+            contexts: contexts
         )
     }
 }
@@ -127,20 +234,22 @@ public struct StressDayProgress: Sendable, Equatable, Identifiable {
     public let validWindowCount: Int
     /// Awake windows with a heart-rate mean, after exertion is excluded.
     public let hrWindowCount: Int
-    /// Windows a day needs to qualify (`Stress.minAwakeWindowsPerDay`).
+    /// Valid windows a day needs for the R-R baseline (`Stress.minAwakeRRWindowsPerDay`).
     public let requiredWindows: Int
+    /// Windows with HR a day needs for the HR-only baseline (`Stress.minAwakeWindowsPerDay`).
+    public let requiredHRWindows: Int
 
     public var id: LocalDay { day }
 
     /// True when this day counts toward the R-R baseline.
     public var qualifiesForRR: Bool { validWindowCount >= requiredWindows }
     /// True when this day counts toward the HR-only baseline.
-    public var qualifiesForHROnly: Bool { hrWindowCount >= requiredWindows }
+    public var qualifiesForHROnly: Bool { hrWindowCount >= requiredHRWindows }
 
     /// R-R windows still missing before this day would qualify.
     public var validWindowsNeeded: Int { max(0, requiredWindows - validWindowCount) }
     /// HR windows still missing before this day would qualify for the HR-only path.
-    public var hrWindowsNeeded: Int { max(0, requiredWindows - hrWindowCount) }
+    public var hrWindowsNeeded: Int { max(0, requiredHRWindows - hrWindowCount) }
 
     /// Minutes of additional valid 5-minute windows this day needs.
     public var validMinutesNeeded: Int { validWindowsNeeded * Int(LocalTime.msPerWindow / LocalTime.msPerMinute) }
@@ -148,7 +257,7 @@ public struct StressDayProgress: Sendable, Equatable, Identifiable {
     public var hrMinutesNeeded: Int { hrWindowsNeeded * Int(LocalTime.msPerWindow / LocalTime.msPerMinute) }
 }
 
-/// How close the stress baseline is to ready (PLAN.md 8.3).
+/// How close the stress baseline is to ready (PLAN.md 8.3). Always the combined baseline, never a stimulant context.
 public struct StressCalibrationProgress: Sendable, Equatable {
     /// Days that qualify for the R-R baseline, same count as `StressBaseline.validDays`.
     public let qualifyingDays: Int
@@ -189,8 +298,14 @@ public enum Stress {
     public static let madScale = 1.4826
     /// Calibration: at least this many qualifying days (PLAN.md 8.3).
     public static let minQualifyingDays = 7
-    /// A day qualifies with at least this many awake windows (2 h of 5-minute windows).
+    /// A day qualifies for the R-R baseline with at least this many valid awake windows (1 h of 5-minute windows).
+    public static let minAwakeRRWindowsPerDay = 12
+    /// A day qualifies for the HR-only baseline with at least this many awake windows that have HR (2 h).
     public static let minAwakeWindowsPerDay = 24
+    /// Medicated and unmedicated baselines (stimulant split): qualifying days needed, and windows per day on each path.
+    public static let minContextQualifyingDays = 5
+    public static let minContextRRWindowsPerDay = 6
+    public static let minContextAwakeWindowsPerDay = 12
     public static let lookbackDays = 14
     /// Floor on the HR sigma, in bpm. A steady baseline has MAD 0, which would make any deviation infinitely
     /// large. The floor keeps a few bpm of deviation from scoring as a full sigma.
@@ -264,7 +379,8 @@ public enum Stress {
                 offset: lookbackDay.offset,
                 validWindowCount: lookbackDay.valid.count,
                 hrWindowCount: lookbackDay.withHR.count,
-                requiredWindows: minAwakeWindowsPerDay
+                requiredWindows: minAwakeRRWindowsPerDay,
+                requiredHRWindows: minAwakeWindowsPerDay
             )
         }
         return StressCalibrationProgress(
@@ -293,43 +409,73 @@ public enum Stress {
 
     /// Scores one window (PLAN.md 8.3). Precedence: exertion, then calibrating, then insufficient.
     ///
-    /// - Valid R-R window: value = round(100 * Phi(0.5 z_HR - 0.5 z_HRV + centerOffset)). Needs the R-R baseline.
-    /// - No valid R-R: hr_only = round(100 * Phi(0.5 z_HR + centerOffset)). Needs the HR-only baseline.
+    /// - Valid R-R window with a ready R-R baseline: value = round(100 * Phi(0.5 z_HR - 0.5 z_HRV + centerOffset)).
+    /// - Otherwise, when the HR-only baseline is ready: hr_only = round(100 * Phi(0.5 z_HR + centerOffset)).
+    ///   A valid window whose R-R baseline is not ready is scored here, so it is not left calibrating.
+    /// - Calibrating only when the path the window needs has too few qualifying days.
     /// - Insufficient only when a needed input or baseline median is missing. Sigma floors cover a zero MAD.
+    ///
+    /// With `stimulantWindows`, a window that starts inside a stimulant window is scored against the medicated
+    /// baseline, and any other window against the unmedicated one. If that context baseline cannot score the
+    /// window, the combined `baseline` is used instead.
     public static func score(
         window: FiveMinuteWindow,
         restingHR: Double?,
         maxHR: Double,
-        baseline: StressBaseline
+        baseline: StressBaseline,
+        stimulantWindows: [MedicationWindow] = []
     ) -> StressResult {
         if HeartRateZones.isExertion(hr: window.hrMean, restingHR: restingHR, maxHR: maxHR) {
             return StressResult(stress: nil, state: .exertion)
         }
+        let (used, context) = baselineFor(window, baseline: baseline, stimulantWindows: stimulantWindows)
+        let scored = scoreAgainst(window, used)
+        return StressResult(stress: scored.stress, state: scored.state, baselineContext: context)
+    }
 
-        if window.valid {
-            guard baseline.validDays >= minQualifyingDays else {
-                return StressResult(stress: nil, state: .calibrating)
-            }
+    /// The baseline that scores `window`, and its context. The combined baseline unless a stimulant split applies.
+    private static func baselineFor(
+        _ window: FiveMinuteWindow,
+        baseline: StressBaseline,
+        stimulantWindows: [MedicationWindow]
+    ) -> (StressBaseline, StressBaselineContext) {
+        guard !stimulantWindows.isEmpty else { return (baseline, .combined) }
+        let context: StressBaselineContext = MedicationEffect.isStimulantActive(
+            at: window.startMs, windows: stimulantWindows
+        ) ? .medicated : .unmedicated
+        guard let candidate = baseline.context(context), candidate.canScore(window) else {
+            return (baseline, .combined)
+        }
+        return (candidate, context)
+    }
+
+    /// The value, hr_only, calibrating or insufficient result for `window` against one baseline.
+    private static func scoreAgainst(
+        _ window: FiveMinuteWindow,
+        _ baseline: StressBaseline
+    ) -> (stress: Int?, state: StressState) {
+        if window.valid, baseline.isRRReady {
             guard let hr = window.hrMean, let lnRmssd = window.lnRmssd,
                   let hrMedian = baseline.hrMedian, let hrMAD = baseline.hrMAD,
                   let lnMedian = baseline.lnRmssdMedian, let lnMAD = baseline.lnRmssdMAD
             else {
-                return StressResult(stress: nil, state: .insufficient)
+                return (nil, .insufficient)
             }
             let zHR = zScore(hr, median: hrMedian, sigma: sigma(mad: hrMAD, floor: hrSigmaFloor))
             let zHRV = zScore(lnRmssd, median: lnMedian, sigma: sigma(mad: lnMAD, floor: lnRmssdSigmaFloor))
-            return StressResult(stress: scaled(0.5 * zHR - 0.5 * zHRV), state: .value)
+            return (scaled(0.5 * zHR - 0.5 * zHRV), .value)
         }
 
-        guard baseline.hrOnlyDays >= minQualifyingDays else {
-            return StressResult(stress: nil, state: .calibrating)
+        // No valid R-R window, or the R-R baseline is not ready: the HR-only path.
+        guard baseline.hrOnlyDays >= baseline.requiredDays else {
+            return (nil, .calibrating)
         }
         guard let hr = window.hrMean, let median = baseline.hrOnlyMedian, let mad = baseline.hrOnlyMAD
         else {
-            return StressResult(stress: nil, state: .insufficient)
+            return (nil, .insufficient)
         }
         let z = zScore(hr, median: median, sigma: sigma(mad: mad, floor: hrSigmaFloor))
-        return StressResult(stress: scaled(0.5 * z), state: .hrOnly)
+        return (scaled(0.5 * z), .hrOnly)
     }
 
     /// Maps a raw score to 0-100 with the centre offset (PLAN.md 8.3).

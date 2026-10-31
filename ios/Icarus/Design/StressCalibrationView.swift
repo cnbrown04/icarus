@@ -53,7 +53,7 @@ struct StressCalibrationDetail: View {
     let timeZone: TimeZone
 
     private var requiredWindows: Int {
-        progress.latestDay?.requiredWindows ?? Stress.minAwakeWindowsPerDay
+        progress.latestDay?.requiredWindows ?? Stress.minAwakeRRWindowsPerDay
     }
 
     private var qualifyingMinutes: Int {
@@ -208,7 +208,7 @@ private enum StressCalibrationCopy {
         guard !progress.days.isEmpty else {
             return "Add max heart rate or birth year in Settings so a baseline can be built."
         }
-        let required = progress.latestDay?.requiredWindows ?? Stress.minAwakeWindowsPerDay
+        let required = progress.latestDay?.requiredWindows ?? Stress.minAwakeRRWindowsPerDay
         let minutes = required * Int(LocalTime.msPerWindow / LocalTime.msPerMinute)
 
         switch state {

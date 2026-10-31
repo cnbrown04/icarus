@@ -26,12 +26,21 @@ public struct MinuteMetricsContext: Sendable, Equatable {
     public let restingHR: Double?
     public let maxHR: Double
     public let baseline: StressBaseline
+    /// Stimulant windows for the scored day (stress algo v3). Empty leaves stress on the combined baseline.
+    public let stimulantWindows: [MedicationWindow]
 
-    public init(profile: UserProfile, restingHR: Double?, maxHR: Double, baseline: StressBaseline) {
+    public init(
+        profile: UserProfile,
+        restingHR: Double?,
+        maxHR: Double,
+        baseline: StressBaseline,
+        stimulantWindows: [MedicationWindow] = []
+    ) {
         self.profile = profile
         self.restingHR = restingHR
         self.maxHR = maxHR
         self.baseline = baseline
+        self.stimulantWindows = stimulantWindows
     }
 }
 
@@ -63,7 +72,8 @@ public enum MinuteMetricsCalculator {
                 window: window,
                 restingHR: context.restingHR,
                 maxHR: context.maxHR,
-                baseline: context.baseline
+                baseline: context.baseline,
+                stimulantWindows: context.stimulantWindows
             )
         }
 

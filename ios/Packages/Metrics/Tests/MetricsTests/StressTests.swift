@@ -47,9 +47,16 @@ struct StressTests {
         #expect(score(window(hr: 60, lnRmssd: 3.30), baseline()) == StressResult(stress: 46, state: .value))
     }
 
-    @Test func calibratingBelowSevenQualifyingDays() {
-        #expect(score(window(hr: 61), baseline(validDays: 6)) == StressResult(stress: nil, state: .calibrating))
+    @Test func shortRRBaselineFallsBackToHROnlyForValidWindows() {
+        // Stress algo v3: six R-R days is short of seven, so the valid window takes the hr_only path (38).
+        #expect(score(window(hr: 61), baseline(validDays: 6))
+            == StressResult(stress: 38, state: .hrOnly))
         #expect(score(window(hr: 61), baseline(validDays: 7)).state == .value)
+    }
+
+    @Test func shortRRAndHROnlyBaselinesStayCalibrating() {
+        #expect(score(window(hr: 61), baseline(validDays: 6, hrOnlyDays: 6))
+            == StressResult(stress: nil, state: .calibrating))
     }
 
     @Test func exertionTakesPrecedenceOverCalibration() {
@@ -81,10 +88,19 @@ struct StressTests {
         #expect(score(window(hr: 60, lnRmssd: 3.25), b) == StressResult(stress: 52, state: .value))
     }
 
-    @Test func missingMedianIsInsufficient() {
+    @Test func missingRRMedianFallsBackToHROnly() {
+        // Stress algo v3: without the R-R medians the valid window is scored on the hr_only path.
         let b = StressBaseline(
             validDays: 7, hrMedian: nil, hrMAD: nil, lnRmssdMedian: 3.4, lnRmssdMAD: 0.06,
             hrOnlyDays: 7, hrOnlyMedian: 60, hrOnlyMAD: 1
+        )
+        #expect(score(window(hr: 61), b) == StressResult(stress: 38, state: .hrOnly))
+    }
+
+    @Test func missingHROnlyMedianIsInsufficientWhenHROnlyIsReady() {
+        let b = StressBaseline(
+            validDays: 7, hrMedian: nil, hrMAD: nil, lnRmssdMedian: 3.4, lnRmssdMAD: 0.06,
+            hrOnlyDays: 7, hrOnlyMedian: nil, hrOnlyMAD: nil
         )
         #expect(score(window(hr: 61), b) == StressResult(stress: nil, state: .insufficient))
     }
@@ -111,9 +127,9 @@ struct StressTests {
 
     @Test func baselineLookbackCountsOnlyTheFourteenPriorDays() throws {
         // Scored day is 2026-10-08. Lookback days are offsets 1 to 14 days before it.
-        // Offsets 1 to 7 have 24 valid awake windows each, so they qualify for R-R (validDays = 7).
-        // Offsets 8 to 13 have 23 valid windows and one invalid window. They do not qualify for R-R,
-        // but all 24 have HR, so they qualify for the HR-only baseline (hrOnlyDays = 7 + 6 = 13).
+        // Offsets 1 to 7 have 24 valid awake windows each, so they qualify for R-R.
+        // Offsets 8 to 13 have 23 valid windows and one invalid window. Stress algo v3 needs 12 valid windows for R-R,
+        // so they qualify too (validDays = 7 + 6 = 13). All 24 have HR, so they qualify for the HR-only baseline.
         // Offset 15 has 24 valid windows at 150 bpm, and the scored day itself has 24 at 200 bpm. Both must be ignored.
         var windows: [FiveMinuteWindow] = []
         func awakeDay(offset: Int, valid: Int, hr: Double) {
@@ -132,7 +148,7 @@ struct StressTests {
         awakeDay(offset: 0, valid: 24, hr: 200)
 
         let b = StressBaseline.build(windows: windows, day: oct8, nights: SleepNights(sleep: [], in: chicago), restingHR: 60, maxHR: 180)
-        #expect(b.validDays == 7)
+        #expect(b.validDays == 13)
         #expect(b.hrOnlyDays == 13)
         // Offsets 15 and 0 are excluded, so the 60 bpm windows are the only values and the median is 60.
         let hrMedian = try #require(b.hrMedian)
@@ -141,16 +157,16 @@ struct StressTests {
 
     @Test func baselineExcludesExertionWindows() {
         // One awake window at 130 bpm is in exertion (HRR 0.583). It must not count toward the baseline.
-        // Without that exclusion, the day would have 24 valid windows and count as qualifying.
+        // Without that exclusion, the day would have 12 valid windows and count as qualifying (stress algo v3 needs 12).
         let start = LocalTime.localTime(LocalTime.adding(days: -1, to: oct8), hour: 8, in: chicago)
-        var windows = (0..<23).map { j in
+        var windows = (0..<11).map { j in
             FiveMinuteWindow(
                 startMs: start + Int64(j) * 300_000, hrMean: 60, rrCount: 0, rrSumMs: 0, valid: true,
                 rmssd: nil, sdnn: nil, lnRmssd: 3.4, baevskySqrt: nil
             )
         }
         windows.append(FiveMinuteWindow(
-            startMs: start + 23 * 300_000, hrMean: 130, rrCount: 0, rrSumMs: 0, valid: true,
+            startMs: start + 11 * 300_000, hrMean: 130, rrCount: 0, rrSumMs: 0, valid: true,
             rmssd: nil, sdnn: nil, lnRmssd: 3.4, baevskySqrt: nil
         ))
         let b = StressBaseline.build(windows: windows, day: oct8, nights: SleepNights(sleep: [], in: chicago), restingHR: 60, maxHR: 180)

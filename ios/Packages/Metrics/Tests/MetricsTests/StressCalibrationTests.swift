@@ -112,16 +112,17 @@ struct StressCalibrationTests {
         #expect(latest.hrWindowCount == 24)
         #expect(latest.qualifiesForHROnly)
         #expect(!latest.qualifiesForRR)
-        #expect(latest.validWindowsNeeded == 24)
-        #expect(latest.validMinutesNeeded == 120)
+        // The R-R rule is 12 valid windows a day (stress algo v3); the HR-only rule stays at 24.
+        #expect(latest.validWindowsNeeded == 12)
+        #expect(latest.validMinutesNeeded == 60)
     }
 
     @Test func shortfallReportsWindowsAndMinutesNeeded() throws {
         let progress = progress(awakeDay(offset: 1, count: 5, valid: 5))
         let latest = try #require(progress.latestDay)
         #expect(latest.validWindowCount == 5)
-        #expect(latest.validWindowsNeeded == 19)
-        #expect(latest.validMinutesNeeded == 95)
+        #expect(latest.validWindowsNeeded == 7)
+        #expect(latest.validMinutesNeeded == 35)
         #expect(latest.hrWindowCount == 5)
         #expect(latest.hrWindowsNeeded == 19)
         #expect(latest.hrMinutesNeeded == 95)
