@@ -354,7 +354,7 @@ struct GoldenPipelineTests {
 
     @Test func stressMatches() throws {
         let golden = try load()
-        #expect(golden.stressCases.count == 6)
+        #expect(golden.stressCases.count == 8)
         for c in golden.stressCases {
             let tz = try timeZone(c.tz)
             let baseline = StressBaseline.build(

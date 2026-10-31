@@ -71,8 +71,10 @@ struct MinuteMetricsCalculatorTests {
         #expect(rows[4].rmssdMs == 20)
         #expect(rows[5].rmssdMs == nil)
         // Window 0 mean HR is 70, HRR = 10 / 130 = 0.077, so it is not exertion.
-        // z_HR = 10 / 1.4826 = 6.745 and z_HRV = (ln 20 - 3.4) / 0.088956 = -4.545. S = 5.645, so Stress = 100.
+        // sigma_HR = max(1.4826, 4) = 4 and sigma_HRV = max(0.089, 0.15) = 0.15.
+        // z_HR = 10 / 4 = 2.5 and z_HRV = (ln 20 - 3.4) / 0.15 = -2.695. raw = 0.5 * 2.5 + 0.5 * 2.695 = 2.598.
+        // raw + (-0.44) = 2.158, so Stress = round(100 * Phi(2.158)) = 98.
         #expect(rows[0].stressState == .value)
-        #expect(rows[0].stress == 100)
+        #expect(rows[0].stress == 98)
     }
 }

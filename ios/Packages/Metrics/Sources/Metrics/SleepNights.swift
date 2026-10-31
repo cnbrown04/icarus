@@ -20,7 +20,8 @@ public struct SleepSpan: Sendable, Equatable {
 /// window, so the night-scoped numbers do not go blank before sleep is detected. Metrics takes the
 /// windows as plain values; Store reads them from `sleep_session` and passes them in.
 public struct SleepNights: Sendable, Equatable {
-    private let timeZone: TimeZone
+    /// The zone the nights are keyed in. Stress places its windows on local days with it.
+    public let timeZone: TimeZone
     private let windows: [LocalDay: Range<Int64>]
 
     /// Keys each main sleep by the local day it ends on. Naps are ignored. When two main sleeps end on

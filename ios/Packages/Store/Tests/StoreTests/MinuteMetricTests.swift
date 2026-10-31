@@ -63,6 +63,6 @@ struct MinuteMetricTests {
         _ = try database.writer.write { try $0.upsertMinuteMetrics(calculatedMinutes(from: start, count: 1, bpm: 60), computedAtMs: 1) }
         let version = try database.writer.read { try Int.fetchOne($0, sql: "SELECT algo_version FROM minute_metric") }
         #expect(version == AlgoVersion.current.storedValue)
-        #expect(version == 1)
+        #expect(version == 2)
     }
 }

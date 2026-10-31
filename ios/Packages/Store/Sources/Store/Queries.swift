@@ -51,13 +51,14 @@ extension Database {
         return SleepNights(sleep: rows.map(\.span), in: timeZone)
     }
 
-    /// The stress baseline's inputs for local `day`: the 5-minute windows of the lookback days before it,
-    /// and the night that anchors each of them. One extra day of minutes is read, because a night that ends
-    /// on the first lookback day can begin the evening before it. Windows outside a night are never scored.
+    /// The stress baseline's inputs for local `day`: every 5-minute window of the lookback days before it
+    /// (whole days, 00:00 to 00:00), and the sleep that bounds each of them. Sleep is read through `day`
+    /// itself, because the night that ends on `day` began on the evening of the last lookback day and
+    /// must be excluded from that day's awake windows.
     public func stressLookback(for day: LocalDay, in timeZone: TimeZone) throws -> (windows: [FiveMinuteWindow], nights: SleepNights) {
         let first = LocalTime.adding(days: -Stress.lookbackDays, to: day)
-        let nights = try sleepNights(days: first, through: LocalTime.adding(days: -1, to: day), in: timeZone)
-        let from = LocalTime.localTime(LocalTime.adding(days: -1, to: first), hour: 0, in: timeZone)
+        let nights = try sleepNights(days: first, through: day, in: timeZone)
+        let from = LocalTime.localTime(first, hour: 0, in: timeZone)
         let to = LocalTime.localTime(day, hour: 0, in: timeZone)
         return (FiveMinuteWindow.rebuilt(from: try minuteMetricRows(from: from, to: to)), nights)
     }

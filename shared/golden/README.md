@@ -120,9 +120,13 @@ or `null` when `max_hr <= resting_hr`. `expected.zone` is `below` (under 50%), `
 - `expected`: `valid_days`, `hr_only_days`, the R-R baseline (`hr_median`, `hr_mad`, `ln_rmssd_median`, `ln_rmssd_mad`),
   the HR-only baseline (`hr_only_median`, `hr_only_mad`), `stress` (int or `null`), and `state`.
   `state` is one of `value`, `calibrating`, `exertion`, `insufficient`, `hr_only`.
-  The baseline is built from the 14 local days before `day`. Night windows are those starting in `[00:00, 06:00)` local,
-  excluding exertion. A day counts toward `valid_days` with at least 12 valid night windows.
-  It counts toward `hr_only_days` with at least 12 night windows that have HR.
+  The baseline is built from the 14 local days before `day` (stress algo v2, PLAN.md 8.3). Awake windows are those
+  starting inside a local day, excluding that day's sleep (`[00:00, 06:00)` local here, since the fixtures carry no
+  sleep sessions), the same window that begins the next morning, and exertion. A day counts toward `valid_days` with
+  at least 24 valid awake windows. It counts toward `hr_only_days` with at least 24 awake windows that have HR.
+  Sigma is `max(1.4826 * MAD, floor)` with floors 4.0 bpm (HR) and 0.15 (ln RMSSD). The value state scores
+  `round(100 * Phi(0.5 z_HR - 0.5 z_HRV - 0.44))`. The hr_only state scores `round(100 * Phi(0.5 z_HR - 0.44))`.
+  `-0.44` is the centre offset, so a window at the baseline median scores about 33.
 
 `minute_metric_cases[]`: `tz`, `day`, `range_start_ms`, `range_end_ms` (minute-aligned), `profile`, `resting_hr`,
 `max_hr`, `history` (as in `stress_cases`), `samples` and `rr` (as above). Build the baseline from `history`, then compute one row per minute.

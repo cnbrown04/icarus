@@ -12,9 +12,17 @@ use super::statistics::{mad, median};
 pub const MAD_SCALE: f64 = 1.4826;
 /// Calibration: at least this many qualifying days (PLAN.md 8.3).
 pub const MIN_QUALIFYING_DAYS: usize = 7;
-/// A day qualifies with at least this many night windows.
-pub const MIN_NIGHT_WINDOWS_PER_DAY: usize = 12;
+/// A day qualifies with at least this many awake windows (2 h of 5-minute windows).
+pub const MIN_AWAKE_WINDOWS_PER_DAY: usize = 24;
 pub const LOOKBACK_DAYS: i64 = 14;
+/// Floor on the HR sigma, in bpm. A steady baseline has MAD 0, which would make any deviation infinitely
+/// large.
+pub const HR_SIGMA_FLOOR: f64 = 4.0;
+/// Floor on the ln(RMSSD) sigma (about 16 % of RMSSD), for the same reason as `HR_SIGMA_FLOOR`.
+pub const LN_RMSSD_SIGMA_FLOOR: f64 = 0.15;
+/// Shifts the scale so the median awake window scores about 33, the top of Low (PLAN.md 8.3).
+/// Raw scores are z-based, so a raw score of 0 is the baseline median. Phi(-0.44) is about 0.33.
+pub const CENTER_OFFSET: f64 = -0.44;
 
 /// Stress state (PLAN.md 8.3). `as_str` gives the `stress_state` strings in PLAN.md 10.2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,20 +73,22 @@ pub struct StressResult {
     pub state: StressState,
 }
 
-/// Personal baselines from the 14 local days before the scored day (PLAN.md 8.3).
+/// Personal baselines from the awake windows of the 14 local days before the scored day (PLAN.md 8.3).
 ///
-/// Night windows are those starting in [00:00, 06:00) local. Windows in exertion are excluded.
+/// A lookback day's windows start inside that local day, outside its sleep and outside exertion.
+/// The Rust core has no sleep sessions, so the sleep that touches a day is its 00:00-06:00 fallback
+/// night, on that morning and the next. A day qualifies with `MIN_AWAKE_WINDOWS_PER_DAY` windows.
 /// Two baselines exist. The R-R baseline uses valid windows and drives the value state.
 /// The HR-only baseline uses every window with HR and drives the hr_only fallback.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StressBaseline {
-    /// Days in the lookback with at least 12 valid night windows.
+    /// Days in the lookback with at least `MIN_AWAKE_WINDOWS_PER_DAY` valid awake windows.
     pub valid_days: usize,
     pub hr_median: Option<f64>,
     pub hr_mad: Option<f64>,
     pub ln_rmssd_median: Option<f64>,
     pub ln_rmssd_mad: Option<f64>,
-    /// Days in the lookback with at least 12 night windows that have HR.
+    /// Days in the lookback with at least `MIN_AWAKE_WINDOWS_PER_DAY` awake windows that have HR.
     pub hr_only_days: usize,
     pub hr_only_median: Option<f64>,
     pub hr_only_mad: Option<f64>,
@@ -86,7 +96,7 @@ pub struct StressBaseline {
 
 impl StressBaseline {
     /// Baseline for scoring windows on local `day`. The lookback is the 14 days before `day`.
-    /// `day`'s own night is excluded, so a window is never scored against itself.
+    /// `day` itself is excluded, so a window is never scored against itself.
     pub fn build(
         windows: &[FiveMinuteWindow],
         day: LocalDay,
@@ -101,26 +111,34 @@ impl StressBaseline {
         let mut hr_only_hr: Vec<f64> = Vec::new();
 
         for offset in 1..=LOOKBACK_DAYS {
-            let night = local_time::night_window(local_time::adding_days(-offset, day), tz);
-            let night_windows: Vec<&FiveMinuteWindow> = windows
+            let lookback_day = local_time::adding_days(-offset, day);
+            let day_start = local_time::local_time(lookback_day, 0, tz);
+            let day_end = local_time::local_time(local_time::adding_days(1, lookback_day), 0, tz);
+            let morning_sleep = local_time::night_window(lookback_day, tz);
+            let next_day = local_time::adding_days(1, lookback_day);
+            let evening_sleep = local_time::night_window(next_day, tz);
+            let eligible: Vec<&FiveMinuteWindow> = windows
                 .iter()
                 .filter(|w| {
-                    night.contains(&w.start_ms)
+                    w.start_ms >= day_start
+                        && w.start_ms < day_end
+                        && !morning_sleep.contains(&w.start_ms)
+                        && !evening_sleep.contains(&w.start_ms)
                         && !heart_rate_zones::is_exertion(w.hr_mean, resting_hr, max_hr)
                 })
                 .collect();
-            let valid_nights: Vec<&FiveMinuteWindow> =
-                night_windows.iter().copied().filter(|w| w.valid).collect();
-            if valid_nights.len() >= MIN_NIGHT_WINDOWS_PER_DAY {
+            let valid_windows: Vec<&FiveMinuteWindow> =
+                eligible.iter().copied().filter(|w| w.valid).collect();
+            if valid_windows.len() >= MIN_AWAKE_WINDOWS_PER_DAY {
                 valid_days += 1;
             }
-            let hr_nights: Vec<f64> = night_windows.iter().filter_map(|w| w.hr_mean).collect();
-            if hr_nights.len() >= MIN_NIGHT_WINDOWS_PER_DAY {
+            let hr_windows: Vec<f64> = eligible.iter().filter_map(|w| w.hr_mean).collect();
+            if hr_windows.len() >= MIN_AWAKE_WINDOWS_PER_DAY {
                 hr_only_days += 1;
             }
-            rr_hr.extend(valid_nights.iter().filter_map(|w| w.hr_mean));
-            rr_ln_rmssd.extend(valid_nights.iter().filter_map(|w| w.ln_rmssd));
-            hr_only_hr.extend(hr_nights);
+            rr_hr.extend(valid_windows.iter().filter_map(|w| w.hr_mean));
+            rr_ln_rmssd.extend(valid_windows.iter().filter_map(|w| w.ln_rmssd));
+            hr_only_hr.extend(hr_windows);
         }
 
         Self {
@@ -141,16 +159,23 @@ pub fn normal_cdf(z: f64) -> f64 {
     0.5 * erfc(-z / 2.0_f64.sqrt())
 }
 
-/// Robust z-score. The caller must check that `mad` is positive.
-pub fn z_score(value: f64, median: f64, mad: f64) -> f64 {
-    (value - median) / (MAD_SCALE * mad)
+/// The sigma for a z-score: the scaled MAD, but never below `floor`.
+pub fn sigma(mad: f64, floor: f64) -> f64 {
+    (MAD_SCALE * mad).max(floor)
+}
+
+/// Robust z-score against a sigma from `sigma`.
+pub fn z_score(value: f64, median: f64, sigma: f64) -> f64 {
+    (value - median) / sigma
 }
 
 /// Scores one window (PLAN.md 8.3). Precedence: exertion, then calibrating, then insufficient.
 ///
-/// - Valid R-R window: value = round(100 * Phi(0.5 z_HR - 0.5 z_HRV)). Needs the R-R baseline.
-/// - No valid R-R: hr_only = round(100 * Phi(z_HR)). Needs the HR-only baseline.
-/// - A zero MAD in a needed component is insufficient. The components are not dropped silently.
+/// - Valid R-R window: value = round(100 * Phi(0.5 z_HR - 0.5 z_HRV + CENTER_OFFSET)). Needs the
+///   R-R baseline.
+/// - No valid R-R: hr_only = round(100 * Phi(0.5 z_HR + CENTER_OFFSET)). Needs the HR-only baseline.
+/// - Insufficient only when a needed input or baseline median is missing. Sigma floors cover a zero
+///   MAD.
 pub fn score(
     window: &FiveMinuteWindow,
     resting_hr: Option<f64>,
@@ -184,11 +209,8 @@ pub fn score(
         else {
             return result(None, StressState::Insufficient);
         };
-        if hr_mad <= 0.0 || ln_mad <= 0.0 {
-            return result(None, StressState::Insufficient);
-        }
-        let z_hr = z_score(hr, hr_median, hr_mad);
-        let z_hrv = z_score(ln_rmssd, ln_median, ln_mad);
+        let z_hr = z_score(hr, hr_median, sigma(hr_mad, HR_SIGMA_FLOOR));
+        let z_hrv = z_score(ln_rmssd, ln_median, sigma(ln_mad, LN_RMSSD_SIGMA_FLOOR));
         return result(Some(scaled(0.5 * z_hr - 0.5 * z_hrv)), StressState::Value);
     }
 
@@ -202,14 +224,13 @@ pub fn score(
     ) else {
         return result(None, StressState::Insufficient);
     };
-    if mad <= 0.0 {
-        return result(None, StressState::Insufficient);
-    }
-    result(Some(scaled(z_score(hr, median, mad))), StressState::HrOnly)
+    let z = z_score(hr, median, sigma(mad, HR_SIGMA_FLOOR));
+    result(Some(scaled(0.5 * z)), StressState::HrOnly)
 }
 
+/// Maps a raw score to 0-100 with the centre offset (PLAN.md 8.3).
 fn scaled(raw: f64) -> i64 {
-    (100.0 * normal_cdf(raw)).round() as i64
+    (100.0 * normal_cdf(raw + CENTER_OFFSET)).round() as i64
 }
 
 #[cfg(test)]
@@ -244,18 +265,64 @@ mod tests {
     }
 
     #[test]
-    fn zero_mad_is_insufficient_not_a_division_by_zero() {
+    fn zero_mad_uses_the_sigma_floor_instead_of_being_insufficient() {
+        // sigma_HR = 4 (floor), z_HR = (61 - 60) / 4 = 0.25, z_HRV = 0.
+        // raw = 0.125, Stress = round(100 * Phi(-0.315)) = 38.
         let result = score(
-            &window(Some(61.0), true, Some(3.45)),
+            &window(Some(61.0), true, Some(3.4)),
             Some(60.0),
             180.0,
-            &full_baseline(0.0, 0.06),
+            &full_baseline(0.0, 0.0),
         );
+        assert_eq!(
+            result,
+            StressResult {
+                stress: Some(38),
+                state: StressState::Value
+            }
+        );
+    }
+
+    #[test]
+    fn missing_median_is_insufficient() {
+        let mut baseline = full_baseline(1.0, 0.06);
+        baseline.hr_median = None;
+        let result = score(&window(Some(61.0), true, Some(3.45)), Some(60.0), 180.0, &baseline);
         assert_eq!(
             result,
             StressResult {
                 stress: None,
                 state: StressState::Insufficient
+            }
+        );
+    }
+
+    #[test]
+    fn median_window_scores_about_thirty_three() {
+        // raw = 0, Phi(-0.44) = 0.330, Stress = 33.
+        let result = score(
+            &window(Some(60.0), true, Some(3.4)),
+            Some(60.0),
+            180.0,
+            &full_baseline(1.0, 0.06),
+        );
+        assert_eq!(result.stress, Some(33));
+    }
+
+    #[test]
+    fn hr_only_uses_half_the_z_score() {
+        // z = (61 - 60) / 4 = 0.25, raw = 0.125, Stress = 38.
+        let result = score(
+            &window(Some(61.0), false, None),
+            Some(60.0),
+            180.0,
+            &full_baseline(1.0, 0.06),
+        );
+        assert_eq!(
+            result,
+            StressResult {
+                stress: Some(38),
+                state: StressState::HrOnly
             }
         );
     }

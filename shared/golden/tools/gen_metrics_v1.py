@@ -191,22 +191,43 @@ def windows(samples, rr, lo, hi):
 
 # ---- stress ---------------------------------------------------------------------------
 
+MIN_AWAKE_WINDOWS = 24
+HR_SIGMA_FLOOR = 4.0
+LN_RMSSD_SIGMA_FLOOR = 0.15
+CENTER_OFFSET = -0.44
+
+
 def is_night(start, lo, hi):
     return lo <= start < hi
 
 
+def sigma(mad, floor):
+    return max(1.4826 * mad, floor)
+
+
 def baseline(history, day, tz, rhr, mx):
+    """Awake windows of the 14 local days before `day` (PLAN.md 8.3, stress algo v2).
+
+    A window counts when it starts inside its local day, outside that day's sleep (the night that ends on
+    it, else 00:00-06:00) and outside the sleep that began on its evening (the night that ends the next
+    morning), and outside exertion. The fixtures carry no sleep sessions, so only the fallback night applies.
+    """
     valid_days = 0
     hr_only_days = 0
     rr_hr, rr_ln, hro = [], [], []
     for k in range(1, 15):
-        lo, hi = night(day - timedelta(days=k), tz)
-        nights = [w for w in history if is_night(w["start"], lo, hi) and not is_exertion(w["hr"], rhr, mx)]
-        valids = [w for w in nights if w["valid"]]
-        if len(valids) >= 12:
+        d = day - timedelta(days=k)
+        lo, hi = local_ms(d, 0, tz), local_ms(d + timedelta(days=1), 0, tz)
+        sleep = [night(d, tz), night(d + timedelta(days=1), tz)]
+        awake = [w for w in history
+                 if lo <= w["start"] < hi
+                 and not any(is_night(w["start"], s_lo, s_hi) for s_lo, s_hi in sleep)
+                 and not is_exertion(w["hr"], rhr, mx)]
+        valids = [w for w in awake if w["valid"]]
+        if len(valids) >= MIN_AWAKE_WINDOWS:
             valid_days += 1
-        hrn = [w for w in nights if w["hr"] is not None]
-        if len(hrn) >= 12:
+        hrn = [w for w in awake if w["hr"] is not None]
+        if len(hrn) >= MIN_AWAKE_WINDOWS:
             hr_only_days += 1
         rr_hr += [w["hr"] for w in valids if w["hr"] is not None]
         rr_ln += [w["ln"] for w in valids if w["ln"] is not None]
@@ -227,23 +248,23 @@ def score(w, rhr, mx, b):
         if b["valid_days"] < 7:
             return None, "calibrating"
         ok = (w["hr"] is not None and w["ln"] is not None
-              and b["hr_median"] is not None and b["hr_mad"] is not None and b["hr_mad"] > 0
-              and b["ln_rmssd_median"] is not None and b["ln_rmssd_mad"] is not None and b["ln_rmssd_mad"] > 0)
+              and b["hr_median"] is not None and b["hr_mad"] is not None
+              and b["ln_rmssd_median"] is not None and b["ln_rmssd_mad"] is not None)
         if not ok:
             return None, "insufficient"
-        zhr = (w["hr"] - b["hr_median"]) / (1.4826 * b["hr_mad"])
-        zhrv = (w["ln"] - b["ln_rmssd_median"]) / (1.4826 * b["ln_rmssd_mad"])
-        s = 0.5 * zhr - 0.5 * zhrv
+        zhr = (w["hr"] - b["hr_median"]) / sigma(b["hr_mad"], HR_SIGMA_FLOOR)
+        zhrv = (w["ln"] - b["ln_rmssd_median"]) / sigma(b["ln_rmssd_mad"], LN_RMSSD_SIGMA_FLOOR)
+        s = 0.5 * zhr - 0.5 * zhrv + CENTER_OFFSET
         assert margin_ok(100 * phi(s)), ("stress rounding margin", s)
         return rnd(100 * phi(s)), "value"
     if b["hr_only_days"] < 7:
         return None, "calibrating"
-    if (w["hr"] is None or b["hr_only_median"] is None or b["hr_only_mad"] is None
-            or b["hr_only_mad"] <= 0):
+    if (w["hr"] is None or b["hr_only_median"] is None or b["hr_only_mad"] is None):
         return None, "insufficient"
-    z = (w["hr"] - b["hr_only_median"]) / (1.4826 * b["hr_only_mad"])
-    assert margin_ok(100 * phi(z)), ("hr_only rounding margin", z)
-    return rnd(100 * phi(z)), "hr_only"
+    z = (w["hr"] - b["hr_only_median"]) / sigma(b["hr_only_mad"], HR_SIGMA_FLOOR)
+    s = 0.5 * z + CENTER_OFFSET
+    assert margin_ok(100 * phi(s)), ("hr_only rounding margin", s)
+    return rnd(100 * phi(s)), "hr_only"
 
 
 # ---- kcal -----------------------------------------------------------------------------
@@ -305,31 +326,34 @@ def hist_default(k, j):
     return hr, ln
 
 
+AWAKE_HOUR = 8  # awake windows start at 08:00, after the 00:00-06:00 fallback night
+
+
 def history_s1():
-    """Days -1..-8 with 12 valid windows each, day -2 has one exertion window (excluded, leaving 11),
-    day -15 is outside the lookback, and two windows on the scored day must be excluded."""
+    """Days -1..-8 with 24 awake windows each. Day -2 has one exertion window (excluded, leaving 23, which
+    is short of 24), so seven days qualify. Day -15 is outside the lookback, and the scored day must be excluded."""
     rows = []
     for k in list(range(1, 9)):
-        base = local_ms(D - timedelta(days=k), 0, CHI)
-        for j in range(12):
+        base = local_ms(D - timedelta(days=k), AWAKE_HOUR, CHI)
+        for j in range(24):
             hr, ln = hist_default(k, j)
             if k == 2 and j == 0:
                 hr = 130.0
             rows.append([base + j * WIN, hr, True, ln])
-    base15 = local_ms(D - timedelta(days=15), 0, CHI)
-    for j in range(12):
+    base15 = local_ms(D - timedelta(days=15), AWAKE_HOUR, CHI)
+    for j in range(24):
         rows.append([base15 + j * WIN, 150.0, True, 2.0])
     today = local_ms(D, 0, CHI)
-    rows.append([today + 6 * WIN, 160.0, True, 2.0])      # 00:30 tonight, excluded
-    rows.append([local_ms(D, 14, CHI), 90.0, True, 3.0])  # daytime, not a night window
+    rows.append([today + 6 * WIN, 160.0, True, 2.0])      # 00:30 on the scored day, excluded
+    rows.append([local_ms(D, 14, CHI), 90.0, True, 3.0])  # daytime on the scored day, excluded
     return rows
 
 
 def history_wide():
     rows = []
     for k in range(1, 9):
-        base = local_ms(D - timedelta(days=k), 0, CHI)
-        for j in range(12):
+        base = local_ms(D - timedelta(days=k), AWAKE_HOUR, CHI)
+        for j in range(24):
             _, ln = hist_default(k, j)
             rows.append([base + j * WIN, 56.0 + 2.0 * ((k * 7 + j * 3) % 9), True, ln])
     return rows
@@ -338,13 +362,24 @@ def history_wide():
 def history_days(offsets, valid=True, constant=False):
     rows = []
     for k in offsets:
-        base = local_ms(D - timedelta(days=k), 0, CHI)
-        for j in range(12):
+        base = local_ms(D - timedelta(days=k), AWAKE_HOUR, CHI)
+        for j in range(24):
             if constant:
                 hr, ln = 60.0, 3.40
             else:
                 hr, ln = hist_default(k, j)
             rows.append([base + j * WIN, hr, valid, ln])
+    return rows
+
+
+def history_with_sleep():
+    """Eight awake days as in history_days, plus 72 sleep windows at 45 bpm in each 00:00-06:00 night.
+    The sleep windows must not reach the baseline; counted, they would pull the HR median down to 45."""
+    rows = history_days(range(1, 9))
+    for k in range(1, 9):
+        base = local_ms(D - timedelta(days=k), 0, CHI)
+        for j in range(72):
+            rows.append([base + j * WIN, 45.0, True, 3.9])
     return rows
 
 
@@ -518,16 +553,20 @@ def build():
     # stress
     hist_s1 = history_s1()
     stress_cases = [
-        stress_case("value_seven_qualifying_days", hist_s1, [local_ms(D, 3, CHI) + 2 * WIN, 61.0, True, 3.45],
+        stress_case("value_seven_qualifying_days", hist_s1, [local_ms(D, 3, CHI) + 2 * WIN, 62.0, True, 3.45],
                     60.0, 180.0),
         stress_case("calibrating_six_qualifying_days", history_days(range(1, 7)),
-                    [local_ms(D, 3, CHI) + 2 * WIN, 61.0, True, 3.45], 60.0, 180.0),
+                    [local_ms(D, 3, CHI) + 2 * WIN, 62.0, True, 3.45], 60.0, 180.0),
         stress_case("exertion_window", hist_s1, [local_ms(D, 3, CHI) + 2 * WIN, 140.0, True, 3.30], 60.0, 180.0),
         stress_case("hr_only_without_rr", hist_s1, [local_ms(D, 3, CHI) + 2 * WIN, 61.0, False, None], 60.0, 180.0),
-        stress_case("mad_zero_is_insufficient", history_days(range(1, 9), constant=True),
-                    [local_ms(D, 3, CHI) + 2 * WIN, 61.0, True, 3.45], 60.0, 180.0),
+        stress_case("zero_mad_uses_sigma_floor", history_days(range(1, 9), constant=True),
+                    [local_ms(D, 3, CHI) + 2 * WIN, 62.0, True, 3.45], 60.0, 180.0),
         stress_case("hr_only_calibrating_six_days", history_days(range(1, 7), valid=False),
                     [local_ms(D, 3, CHI) + 2 * WIN, 61.0, False, None], 60.0, 180.0),
+        stress_case("sleep_windows_are_not_baseline", history_with_sleep(),
+                    [local_ms(D, AWAKE_HOUR, CHI), 62.0, True, 3.45], 60.0, 180.0),
+        stress_case("value_near_awake_median", history_s1(),
+                    [local_ms(D, AWAKE_HOUR, CHI), 60.0, True, 3.40], 60.0, 180.0),
     ]
     cases["stress_cases"] = stress_cases
 
@@ -576,8 +615,25 @@ def build():
     return cases
 
 
+def regenerate_stress(out_path):
+    """Rewrites the sections that follow `stress_cases` (the stress and minute pipeline cases) in place.
+    Everything before them is kept as it is."""
+    with open(GOLDEN) as f:
+        original = f.read()
+    cut = original.index('  "stress_cases": ')
+    new = build()
+    parts = [f'  "{key}": ' + dump(new[key], 1) for key in ["stress_cases", "minute_metric_cases"]]
+    with open(out_path, "w") as f:
+        f.write(original[:cut] + ",\n".join(parts) + "\n}\n")
+    print("regenerated stress_cases and minute_metric_cases")
+
+
 def main():
-    """Keep the existing text of the file as it is and append the new sections after it."""
+    """Keep the existing text of the file as it is and append the new sections after it.
+    With --regen, rewrite the stress and minute pipeline sections in place instead."""
+    if "--regen" in sys.argv:
+        regenerate_stress(GOLDEN)
+        return
     out_path = sys.argv[1] if len(sys.argv) > 1 else GOLDEN
     with open(GOLDEN) as f:
         original = f.read()

@@ -12,5 +12,5 @@ public struct AlgoVersion: Sendable, Equatable {
         self.kcal = kcal
     }
 
-    public static let current = AlgoVersion(hr: 1, hrv: 1, stress: 1, kcal: 1)
+    public static let current = AlgoVersion(hr: 1, hrv: 1, stress: 2, kcal: 1)
 }
