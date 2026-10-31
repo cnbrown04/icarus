@@ -89,79 +89,39 @@ struct RootView: View {
     }
 }
 
-/// The four tabs, in bar order. Overview is the launch tab.
-enum AppTab: Hashable {
-    case overview
-    case sleep
-    case strain
-    case health
-}
-
+/// The Apple Health–style shell: Summary · Sleep · Strain · Browse. Each tab is its own `NavigationStack` with the
+/// app's route destinations registered once at its root, and one profile button (the account sheet: band,
+/// medications, alarms, settings) trails every tab root's toolbar.
 struct MainTabView: View {
     let environment: AppEnvironment
     let liveState: LiveState
     @Binding var pairingLink: PairingLink?
 
-    @State private var chromeSheet: ChromeSheet?
-    @State private var tab: AppTab = .overview
-
-    /// Journal, alarms and settings sit behind the nav bar's trailing buttons, not in the tab bar.
-    private enum ChromeSheet: String, Identifiable {
-        case journal
-        case alarms
-        case settings
-
-        var id: String { rawValue }
-    }
+    @State private var tab: ShellTab = .summary
+    @State private var showsProfile = false
 
     var body: some View {
         TabView(selection: $tab) {
-            NavigationStack {
-                OverviewView(
-                    environment: environment,
-                    liveState: liveState,
-                    selectTab: { tab = $0 },
-                    openJournal: { chromeSheet = .journal },
-                    openAlarms: { chromeSheet = .alarms },
-                    openSettings: { chromeSheet = .settings }
-                )
-                .toolbar { chromeToolbar() }
-            }
-            .tabItem { Label("Overview", systemImage: "circle.circle").accessibilityIdentifier("tab.overview") }
-            .tag(AppTab.overview)
+            tabRoot(SummaryView(environment: environment, liveState: liveState))
+                .tabItem { Label("Summary", systemImage: "heart.text.square.fill").accessibilityIdentifier("tab.summary") }
+                .tag(ShellTab.summary)
 
-            NavigationStack {
-                SleepView(environment: environment)
-                    .toolbar { chromeToolbar() }
-            }
-            .tabItem { Label("Sleep", systemImage: "bed.double.fill").accessibilityIdentifier("tab.sleep") }
-            .tag(AppTab.sleep)
+            tabRoot(SleepView(environment: environment))
+                .tabItem { Label("Sleep", systemImage: Symbol.sleep).accessibilityIdentifier("tab.sleep") }
+                .tag(ShellTab.sleep)
 
-            NavigationStack {
-                StrainScreen(environment: environment, liveState: liveState)
-                    .toolbar { chromeToolbar() }
-            }
-            .tabItem { Label("Strain", systemImage: "flame.fill").accessibilityIdentifier("tab.strain") }
-            .tag(AppTab.strain)
+            tabRoot(StrainView(environment: environment, liveState: liveState))
+                .tabItem { Label("Strain", systemImage: Symbol.strain).accessibilityIdentifier("tab.strain") }
+                .tag(ShellTab.strain)
 
-            NavigationStack {
-                HealthTabView(environment: environment, liveState: liveState)
-                    .toolbar { chromeToolbar() }
-            }
-            .tabItem { Label("Health", systemImage: "heart.text.square.fill").accessibilityIdentifier("tab.health") }
-            .tag(AppTab.health)
+            tabRoot(BrowseView(environment: environment, liveState: liveState))
+                .tabItem { Label("Browse", systemImage: "square.grid.2x2.fill").accessibilityIdentifier("tab.browse") }
+                .tag(ShellTab.browse)
         }
-        .sheet(item: $chromeSheet) { sheet in
-            NavigationStack {
-                chromeSheetContent(sheet)
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Done") {
-                                chromeSheet = nil
-                            }
-                        }
-                    }
-            }
+        .environment(\.openTab) { tab = $0 }
+        .sheet(isPresented: $showsProfile) {
+            // ProfileSheet brings its own NavigationStack, title and Done button.
+            ProfileSheet(environment: environment, liveState: liveState)
         }
         .sheet(isPresented: Binding(
             get: { pairingLink != nil },
@@ -180,44 +140,22 @@ struct MainTabView: View {
         }
     }
 
-    @ViewBuilder
-    private func chromeSheetContent(_ sheet: ChromeSheet) -> some View {
-        switch sheet {
-        case .journal:
-            JournalView(environment: environment)
-        case .alarms:
-            AlarmsView(environment: environment, liveState: liveState)
-        case .settings:
-            SettingsView(environment: environment, liveState: liveState)
-        }
-    }
-
-    @ToolbarContentBuilder
-    private func chromeToolbar() -> some ToolbarContent {
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            Button {
-                chromeSheet = .journal
-            } label: {
-                Image(systemName: "book.closed")
-            }
-            .accessibilityLabel("Journal")
-            .accessibilityIdentifier("root.journal")
-
-            Button {
-                chromeSheet = .alarms
-            } label: {
-                Image(systemName: "bell")
-            }
-            .accessibilityLabel("Alarms")
-            .accessibilityIdentifier("root.alarms")
-
-            Button {
-                chromeSheet = .settings
-            } label: {
-                Image(systemName: "gearshape")
-            }
-            .accessibilityLabel("Settings")
-            .accessibilityIdentifier("root.settings")
+    /// One tab: its root page in a `NavigationStack`, the app's routes registered once, and the profile button.
+    private func tabRoot(_ root: some View) -> some View {
+        NavigationStack {
+            root
+                .appRouteDestinations(environment: environment, liveState: liveState)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            showsProfile = true
+                        } label: {
+                            Image(systemName: Symbol.profile)
+                        }
+                        .accessibilityLabel("Profile")
+                        .accessibilityIdentifier("root.profile")
+                    }
+                }
         }
     }
 }

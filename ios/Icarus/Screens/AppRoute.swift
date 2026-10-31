@@ -1,7 +1,7 @@
 import Metrics
 import SwiftUI
 
-/// The tabs of the Apple Health–style shell (Summary · Sleep · Strain · Browse). Replaces `AppTab` in Wave C.
+/// The tabs of the Apple Health–style shell (Summary · Sleep · Strain · Browse).
 enum ShellTab: Hashable {
     case summary
     case sleep
@@ -13,7 +13,7 @@ enum ShellTab: Hashable {
 /// destination for each route is decided in exactly one place (`AppRouteDestination`). That is what keeps one page
 /// per kind of information: two screens linking to the same route always land on the same page.
 enum AppRoute: Hashable {
-    /// The one detail page for a metric (D/W/M/6M chart, details, About). `.sleep` goes to the Sleep tab instead.
+    /// The one detail page for a metric (D/W/M/6M chart, details, About). Never `.sleep`: the Sleep tab owns sleep.
     case metric(MetricKind)
     /// Nightly vitals against the personal range.
     case vitals
@@ -35,19 +35,8 @@ struct AppRouteDestination: View {
     var body: some View {
         switch route {
         case let .metric(kind):
-            // Wave C points every metric at `MetricDetailView`; these are the pages that exist today.
-            switch kind {
-            case .heartRate, .restingHR:
-                HeartRateDetailView(environment: environment)
-            case .hrv, .stress:
-                StressDetailView(environment: environment)
-            case .calories:
-                CaloriesDetailView(environment: environment)
-            case .recovery:
-                RecoveryDetailView(environment: environment, liveState: liveState, day: today)
-            case .respiratoryRate, .strain, .sleep:
-                TrendsView(environment: environment, liveState: liveState)
-            }
+            // Sleep has no metric page: the Sleep tab owns it (callers switch tabs instead of pushing).
+            MetricDetailView(kind: kind, environment: environment, liveState: liveState)
         case .vitals:
             HealthMonitorView(environment: environment, liveState: liveState, day: today)
         case .weekly:

@@ -11,23 +11,25 @@ final class SmokeTests: XCTestCase {
         app.launchArguments = ["-IcarusUITest", "1", "-IcarusFixture", "resting_day", "-IcarusNow", "2026-10-07T14:30:00Z"]
         app.launch()
 
-        // Overview is the launch tab; its title is the selected day.
-        XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 30))
-        XCTAssertFalse(app.tabBars.buttons["Trends"].exists)
-        XCTAssertFalse(app.tabBars.buttons["Home"].exists)
-        XCTAssertFalse(app.tabBars.buttons["Today"].exists)
-        for (tab, title) in [("Sleep", "Sleep"), ("Strain", "Strain"), ("Health", "Health"), ("Overview", "Today")] {
+        // Summary is the launch tab; the old Overview / Health / Today tabs are gone.
+        XCTAssertTrue(app.navigationBars["Summary"].waitForExistence(timeout: 30))
+        for gone in ["Overview", "Health", "Today", "Trends"] {
+            XCTAssertFalse(app.tabBars.buttons[gone].exists, "\(gone) is no longer a tab")
+        }
+        for tab in ["Sleep", "Strain", "Browse", "Summary"] {
             app.tabBars.buttons[tab].tap()
-            XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 10), "missing title \(title)")
+            XCTAssertTrue(app.navigationBars[tab].waitForExistence(timeout: 10), "missing title \(tab)")
         }
 
-        // Journal, Alarms and Settings are top-right toolbar sheets, not tabs.
-        app.buttons["root.journal"].tap()
-        XCTAssertTrue(app.navigationBars["Journal"].waitForExistence(timeout: 10))
-        app.buttons["Done"].tap()
+        // Every metric opens the one detail page, titled with the metric.
+        app.tabBars.buttons["Browse"].tap()
+        app.buttons["Heart rate"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Heart rate"].waitForExistence(timeout: 10))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
 
-        app.buttons["root.settings"].tap()
-        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
+        // One profile button holds Band, Medications, Alarms and the settings.
+        app.buttons["root.profile"].tap()
+        XCTAssertTrue(app.navigationBars["Profile"].waitForExistence(timeout: 10))
         let band = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Band")).firstMatch
         XCTAssertTrue(band.waitForExistence(timeout: 10))
         band.tap()

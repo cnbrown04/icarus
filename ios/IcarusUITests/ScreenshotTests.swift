@@ -20,45 +20,43 @@ final class ScreenshotTests: XCTestCase {
         ]
         app.launch()
 
-        // Overview is the launch tab (titled with the selected day, here Today).
-        XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 30))
-        XCTAssertTrue(element(app, "overview.nextDay").waitForExistence(timeout: 30))
+        // Summary is the launch tab. File names stay fixed for CI (07-today is now the Summary tab).
+        XCTAssertTrue(app.navigationBars["Summary"].waitForExistence(timeout: 30))
         attachScreenshot(named: "07-today")
 
-        // Heart rate and calories live on Strain; stress lives on Health.
-        app.tabBars.buttons["Strain"].tap()
-        XCTAssertTrue(element(app, "strain.hrValue").waitForExistence(timeout: 30))
-        openFromTab(app, tap: element(app, "strain.hrValue"), title: "Heart Rate")
+        // Every metric has one detail page, reached from Browse.
+        app.tabBars.buttons["Browse"].tap()
+        XCTAssertTrue(app.navigationBars["Browse"].waitForExistence(timeout: 10))
+        openFromTab(app, tap: app.buttons["Heart rate"].firstMatch, title: "Heart rate")
         attachScreenshot(named: "08-heart-rate")
+        goBack(app, to: "Browse")
+
+        openFromTab(app, tap: app.buttons["Resting heart rate"].firstMatch, title: "Resting heart rate")
         attachTrendScreenshot(app)
-        goBack(app, to: "Strain")
+        goBack(app, to: "Browse")
 
-        openFromTab(app, tap: element(app, "strain.caloriesValue"), title: "Calories")
+        openFromTab(app, tap: app.buttons["Calories"].firstMatch, title: "Calories")
         attachScreenshot(named: "10-calories")
-        goBack(app, to: "Strain")
+        goBack(app, to: "Browse")
 
-        app.tabBars.buttons["Health"].tap()
-        XCTAssertTrue(element(app, "health.stressValue").waitForExistence(timeout: 30))
-        openFromTab(app, tap: element(app, "health.stressValue"), title: "Stress")
+        openFromTab(app, tap: app.buttons["Stress"].firstMatch, title: "Stress")
         attachScreenshot(named: "09-stress")
-        goBack(app, to: "Health")
+        goBack(app, to: "Browse")
 
-        // Alarms and Settings are top-right toolbar sheets now.
-        for title in ["Alarms", "Settings"] {
-            app.buttons[title].tap()
-            XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 10))
-            if title == "Alarms" {
-                // The seed has three alarms (Store SeedData), so the list must show them before the capture.
-                XCTAssertTrue(element(app, "alarms.time").waitForExistence(timeout: 10))
-            }
-            attachScreenshot(named: title == "Alarms" ? "12-alarms" : "17-settings")
-            if title == "Alarms" {
-                attachAlarmEditorScreens(app)
-            }
-            app.buttons["Done"].tap()
-        }
+        // Alarms and the settings live in the profile sheet.
+        app.buttons["root.profile"].tap()
+        XCTAssertTrue(app.navigationBars["Profile"].waitForExistence(timeout: 10))
+        attachScreenshot(named: "17-settings")
+        app.buttons["Alarms"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Alarms"].waitForExistence(timeout: 10))
+        // The seed has three alarms (Store SeedData), so the list must show them before the capture.
+        XCTAssertTrue(element(app, "alarms.time").waitForExistence(timeout: 10))
+        attachScreenshot(named: "12-alarms")
+        attachAlarmEditorScreens(app)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["Profile"].waitForExistence(timeout: 10))
+        app.buttons["Done"].tap()
 
-        // Band sits behind Settings → Band.
         openBand(app)
         scrollToExperimental(app)
         attachScreenshot(named: "15-device")
@@ -150,9 +148,9 @@ final class ScreenshotTests: XCTestCase {
         ]
         app.launch()
 
-        XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 30))
-        app.buttons["Settings"].tap()
-        app.buttons["Server sync"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Summary"].waitForExistence(timeout: 30))
+        app.buttons["root.profile"].tap()
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Sync")).firstMatch.tap()
         XCTAssertTrue(app.navigationBars["Server sync"].waitForExistence(timeout: 10))
         attachScreenshot(named: "16-sync")
     }
@@ -173,29 +171,18 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Alarms"].waitForExistence(timeout: 10))
     }
 
-    /// Selects the 90-day span on the resting-HR card, where the old Trends chart now lives, and captures it.
+    /// Selects the six-month range on the resting heart rate page (Trends now lives on every metric page).
     private func attachTrendScreenshot(_ app: XCUIApplication) {
-        let quarter = app.buttons["90 d"].firstMatch
-        XCTAssertTrue(quarter.waitForExistence(timeout: 10))
-        var swipes = 0
-        while !quarter.isHittable, swipes < 6 {
-            app.swipeUp()
-            swipes += 1
-        }
-        quarter.tap()
-
-        XCTAssertTrue(app.staticTexts["Resting HR"].waitForExistence(timeout: 10))
-        let chart = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@", "Resting HR, 90 d"))
-            .firstMatch
-        _ = chart.waitForExistence(timeout: 5)
+        let sixMonths = app.buttons["6M"].firstMatch
+        XCTAssertTrue(sixMonths.waitForExistence(timeout: 10))
+        sixMonths.tap()
         attachScreenshot(named: "11-trends")
     }
 
-    /// Opens Settings → Band, the screen that used to be the Device tab.
+    /// Opens Profile → Band, the screen that used to be the Device tab.
     private func openBand(_ app: XCUIApplication) {
-        app.buttons["Settings"].tap()
-        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
+        app.buttons["root.profile"].tap()
+        XCTAssertTrue(app.navigationBars["Profile"].waitForExistence(timeout: 10))
         let band = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Band")).firstMatch
         XCTAssertTrue(band.waitForExistence(timeout: 10))
         band.tap()

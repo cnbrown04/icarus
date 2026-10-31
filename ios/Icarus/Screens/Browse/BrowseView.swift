@@ -66,7 +66,6 @@ struct BrowseView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("Browse")
         .navigationBarTitleDisplayMode(.large)
-        .appRouteDestinations(environment: environment, liveState: liveState)
     }
 
     /// A category section. The header is the category title.
