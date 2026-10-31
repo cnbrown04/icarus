@@ -89,7 +89,7 @@ struct RootView: View {
     }
 }
 
-/// The Apple Health–style shell: Summary · Sleep · Strain · Browse. Each tab is its own `NavigationStack` with the
+/// The Apple Health–style shell: Summary · Strain · Sleep · Browse. Each tab is its own `NavigationStack` with the
 /// app's route destinations registered once at its root, and one profile button (the account sheet: band,
 /// medications, alarms, settings) trails every tab root's toolbar.
 struct MainTabView: View {
@@ -106,13 +106,13 @@ struct MainTabView: View {
                 .tabItem { Label("Summary", systemImage: "heart.text.square.fill").accessibilityIdentifier("tab.summary") }
                 .tag(ShellTab.summary)
 
-            tabRoot(SleepView(environment: environment))
-                .tabItem { Label("Sleep", systemImage: Symbol.sleep).accessibilityIdentifier("tab.sleep") }
-                .tag(ShellTab.sleep)
-
             tabRoot(StrainView(environment: environment, liveState: liveState))
                 .tabItem { Label("Strain", systemImage: Symbol.strain).accessibilityIdentifier("tab.strain") }
                 .tag(ShellTab.strain)
+
+            tabRoot(SleepView(environment: environment))
+                .tabItem { Label("Sleep", systemImage: Symbol.sleep).accessibilityIdentifier("tab.sleep") }
+                .tag(ShellTab.sleep)
 
             tabRoot(BrowseView(environment: environment, liveState: liveState))
                 .tabItem { Label("Browse", systemImage: "square.grid.2x2.fill").accessibilityIdentifier("tab.browse") }

@@ -172,7 +172,7 @@ APNs `.p8` key + signing capability), TestFlight (no ASC secrets), Apple Watch, 
 - All packages green (2026-10-31): BandProtocol 120, BandKit 168, Metrics 342, Store 217, SyncKit 59,
   AlarmKitBridge 27. App + test targets build for device (no iPhone simulator installed on this Mac).
 - **Navigation (2026-10-31, Apple Health–style; plan `~/.claude/plans/humming-watching-raven.md`)**: tabs
-  **Summary · Sleep · Strain · Browse**; ONE profile button (`ProfileSheet`: profile, band, medications,
+  **Summary · Strain · Sleep · Browse**; ONE profile button (`ProfileSheet`: profile, band, medications,
   alarms, display, coaching, server, storage, advanced, about) trails every tab root. Rule: each piece of
   information has exactly one page. Pages link by `AppRoute` (`Screens/AppRoute.swift`); `AppRouteDestination`
   is the only route → page switch, registered once per tab stack in `MainTabView`.

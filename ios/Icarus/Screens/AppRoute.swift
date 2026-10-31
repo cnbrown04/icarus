@@ -1,11 +1,11 @@
 import Metrics
 import SwiftUI
 
-/// The tabs of the Apple Health–style shell (Summary · Sleep · Strain · Browse).
+/// The tabs of the Apple Health–style shell (Summary · Strain · Sleep · Browse).
 enum ShellTab: Hashable {
     case summary
-    case sleep
     case strain
+    case sleep
     case browse
 }
 
