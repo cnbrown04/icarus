@@ -7,9 +7,10 @@ Checklist copy of PLAN.md §15. Rule numbers match the plan. Apply to every web 
 - [ ] 1. **No subtitle that restates the title.** "Alarms" does not get "Manage your alarms". A subtitle is allowed only if it carries data (e.g., "Next: 6:30 AM").
 - [ ] 2. **No filler copy:** no "Welcome back!", "Let's get started!", "Here's an overview of…", "Powered by…", "Seamlessly…", "AI-powered…".
 - [ ] 3. **No emoji** in UI text, buttons, empty states, notifications or toasts.
-- [ ] 4. **Sentence case** for titles, buttons and labels ("Pair iPhone", not "Pair iPhone Device Now").
+- [ ] 4. **Apple capitalization** (Caleb, 2026-10-31). iOS: **Title Case** for navigation titles, tab names, section headers, buttons, list-row titles and metric names ("Resting Heart Rate", "Show All", "Previous Nights"); **sentence case** for values, states, captions, footers, empty states and full sentences ("In range", "Last night", "No workouts today"). Web keeps sentence case.
 - [ ] 5. **Numbers before words.** Show "62 bpm", not "Your heart rate is 62 bpm".
-- [ ] 6. **Units always shown** and consistent: `bpm`, `ms`, `kcal`, `%`. Regular space before the unit (`62 bpm`).
+- [ ] 6. **Units always shown** and consistent: `bpm`, `ms`, `kcal`, `%`. Regular space before the unit (`62 bpm`), none before `%` (`47%`).
+- [ ] 6b. **No wrapped rows (iOS).** A row's title, value and caption each fit on one line (`lineLimit(1)`): put long comparisons in the title ("Change from Previous Week" · "+3 bpm"), long details on their own secondary line under the title, and big figures on their own line (Apple Health's metric layout). Only sentences and paragraphs wrap.
 - [ ] 7. **Empty states:** one line saying what's missing and one action. Example: "No alarms" + "New alarm". No illustrations.
 - [ ] 8. **Errors** say what happened and what to do, in one or two short sentences. No apology boilerplate, no stack traces.
 - [ ] 9. **Estimates are labelled once** per metric (e.g., "Estimated" caption on Calories), not repeated on every number.
