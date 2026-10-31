@@ -18,10 +18,6 @@ struct BandChannelExplainerView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Spacing.s16) {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 40, weight: .semibold))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(Palette.warn)
                     Text("Turn on the band channel?")
                         .font(.title2.weight(.semibold))
                     ForEach(Self.paragraphs, id: \.self) { paragraph in
@@ -34,7 +30,7 @@ struct BandChannelExplainerView: View {
                 .padding(.vertical, Spacing.s24)
             }
             .safeAreaInset(edge: .bottom) {
-                Button("Turn On", action: onTurnOn)
+                Button("Turn on", action: onTurnOn)
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .frame(maxWidth: .infinity)

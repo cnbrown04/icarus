@@ -20,8 +20,7 @@ struct JournalInsightsView: View {
             if model.loaded {
                 Section {
                     if confirmed.isEmpty {
-                        Text("No effects yet. Answer the check-in each morning.")
-                            .foregroundStyle(Palette.neutral)
+                        EmptyStateRow(text: "No effects yet. Answer the check-in each morning.", actionTitle: nil, action: nil)
                     } else {
                         ForEach(confirmed) { insight in
                             InsightRow(insight: insight)
@@ -30,9 +29,7 @@ struct JournalInsightsView: View {
                 } header: {
                     Text("Effects")
                 } footer: {
-                    Text("Correlation, not cause. Each row compares the morning after days with a behaviour against "
-                        + "days without it. Shown once both sides have \(JournalInsights.minimumDaysPerSide) days. "
-                        + "n is the number of days with and without.")
+                    Text("Correlation, not cause.")
                 }
 
                 if !pending.isEmpty {

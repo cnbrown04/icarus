@@ -6,22 +6,17 @@ struct WelcomeView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.s32) {
             Spacer()
-            Image(systemName: "heart.text.square.fill")
-                .font(.system(size: 72, weight: .semibold))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(Palette.heartRate)
-                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Spacing.s8) {
                 Text("Icarus")
                     .font(.largeTitle.weight(.bold))
-                Text("Live heart rate from your band, stored on this iPhone.")
+                Text("Live heart rate from your band, stored on this iPhone")
                     .font(.body)
                     .foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: Spacing.s16) {
-                FeatureRow(symbol: "waveform.path.ecg", tint: Palette.heartRate, title: "Live heart rate")
-                FeatureRow(symbol: "gauge.with.dots.needle.67percent", tint: Palette.stressModerate, title: "Stress and HRV")
-                FeatureRow(symbol: "alarm.fill", tint: Palette.sleep, title: "Alarms on your wrist")
+                FeatureRow(symbol: Symbol.heartRate, title: "Live heart rate")
+                FeatureRow(symbol: Symbol.stress, title: "Stress and HRV")
+                FeatureRow(symbol: Symbol.alarms, title: "Alarms on your wrist")
             }
             Button(action: onContinue) {
                 Text("Continue")
@@ -37,20 +32,18 @@ struct WelcomeView: View {
     }
 }
 
+/// A feature as plain text, with a secondary symbol in a fixed-width column so the labels line up.
 private struct FeatureRow: View {
     let symbol: String
-    let tint: Color
     let title: String
 
     var body: some View {
-        HStack(spacing: Spacing.s16) {
+        HStack(spacing: Spacing.s12) {
             Image(systemName: symbol)
-                .font(.title2)
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(tint)
-                .frame(width: Spacing.s48)
+                .foregroundStyle(.secondary)
+                .frame(width: Spacing.s24)
+                .accessibilityHidden(true)
             Text(title)
-                .font(.body)
         }
     }
 }

@@ -22,20 +22,12 @@ struct PairBandView: View {
 
             if liveState.bands.isEmpty {
                 Section {
-                    Text("No band found")
-                        .foregroundStyle(.secondary)
-                }
-                if hintDue, !liveState.isStreaming {
-                    Section {
-                        Label {
-                            Text("Turn on HR Broadcast in the WHOOP app.")
-                                .accessibilityIdentifier("pairBand.hint")
-                        } icon: {
-                            Image(systemName: "info.circle.fill")
-                                .foregroundStyle(.blue)
-                        }
+                    EmptyStateRow(text: "No band found", actionTitle: nil, action: nil)
+                } footer: {
+                    if hintDue, !liveState.isStreaming {
+                        Text("Turn on HR Broadcast in the WHOOP app.")
+                            .accessibilityIdentifier("pairBand.hint")
                     }
-                    .listRowBackground(Color.blue.opacity(0.12))
                 }
             } else {
                 Section("Found") {
@@ -48,13 +40,13 @@ struct PairBandView: View {
                                     Text(band.name ?? "Unnamed band")
                                         .foregroundStyle(.primary)
                                     Text("\(band.rssi) dBm")
-                                        .font(.caption)
+                                        .font(.subheadline)
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer(minLength: Spacing.s8)
                                 Image(systemName: "cellularbars", variableValue: Self.signalLevel(band.rssi))
                                     .symbolRenderingMode(.hierarchical)
-                                    .foregroundStyle(.blue)
+                                    .foregroundStyle(.secondary)
                             }
                             .contentShape(Rectangle())
                             .accessibilityElement(children: .combine)
@@ -64,7 +56,7 @@ struct PairBandView: View {
                 }
             }
         }
-        .navigationTitle("Pair Band")
+        .navigationTitle("Pair band")
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button(finishTitle, action: finish)
@@ -81,7 +73,6 @@ struct PairBandView: View {
         HStack(spacing: Spacing.s16) {
             if liveState.isStreaming {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.title2)
                     .foregroundStyle(Palette.syncOK)
             } else {
                 ProgressView()

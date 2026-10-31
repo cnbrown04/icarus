@@ -32,7 +32,6 @@ struct AlarmEditorView: View {
                 Section {
                     TextField("Label", text: $draft.label)
                         .accessibilityIdentifier("alarmEditor.label")
-                    LabeledContent("Type", value: "Scheduled")
                     DatePicker("Time", selection: $draft.time, displayedComponents: .hourAndMinute)
                         .accessibilityIdentifier("alarmEditor.time")
                 }
@@ -43,7 +42,7 @@ struct AlarmEditorView: View {
                     Text("Repeat")
                 } footer: {
                     if draft.weekdays.isEmpty {
-                        Text("No days chosen. The alarm rings once, at the next time.")
+                        Text("No days chosen. The alarm rings once.")
                     }
                 }
 
@@ -73,8 +72,8 @@ struct AlarmEditorView: View {
                     Text("Channels")
                 } footer: {
                     Text(draft.bandChannel
-                        ? "The phone alarm is always armed. Band alarms depend on the band clock."
-                        : "The phone alarm is always armed. Turn on the band channel on Device to use the band.")
+                        ? "Band alarms depend on the band clock."
+                        : "Turn on the band channel on the Band screen to use the band.")
                 }
 
                 Section {
@@ -88,7 +87,7 @@ struct AlarmEditorView: View {
                     }
                 }
             }
-            .navigationTitle(isNew ? "New Alarm" : "Alarm")
+            .navigationTitle(isNew ? "New alarm" : "Alarm")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

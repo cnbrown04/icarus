@@ -30,8 +30,6 @@ struct JournalView: View {
                             Task { await model.setAnswer(question.id, value: value) }
                         }
                     }
-                } footer: {
-                    Text("Answers feed Journal insights. Turn questions off in the check-in editor.")
                 }
             }
 
@@ -69,7 +67,7 @@ struct JournalView: View {
                 Task { await model.move(by: -1) }
             } label: {
                 Image(systemName: "chevron.left")
-                    .frame(minWidth: 44, minHeight: 44)
+                    .frame(minWidth: MinTouch.size, minHeight: MinTouch.size)
             }
             .accessibilityLabel("Previous day")
             .accessibilityIdentifier("journal.previousDay")
@@ -92,7 +90,7 @@ struct JournalView: View {
                 Task { await model.move(by: 1) }
             } label: {
                 Image(systemName: "chevron.right")
-                    .frame(minWidth: 44, minHeight: 44)
+                    .frame(minWidth: MinTouch.size, minHeight: MinTouch.size)
             }
             .disabled(!JournalFormat.isAfter(model.today, model.day))
             .accessibilityLabel("Next day")
@@ -145,11 +143,4 @@ enum JournalFormat {
         return formatter.string(from: Date(epochMs: LocalTime.localTime(day, hour: 12, in: zone)))
     }
 
-    static func clock(_ ms: Int64, in zone: TimeZone) -> String {
-        let formatter = DateFormatter()
-        formatter.timeZone = zone
-        formatter.timeStyle = .short
-        formatter.dateStyle = .none
-        return formatter.string(from: Date(epochMs: ms))
-    }
 }

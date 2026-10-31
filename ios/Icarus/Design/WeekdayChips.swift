@@ -6,8 +6,8 @@ struct WeekdayChips: View {
     @Binding var selection: Set<Int>
     var tint: Color = Palette.heartRate
 
-    /// Chips are at least this tall, so each one is a 44 pt target (IOS_UI_SPEC, Global look).
-    private static let chipHeight: CGFloat = 44
+    /// Chips are at least this tall, so each one is a full tap target.
+    private static let chipHeight = MinTouch.size
 
     var body: some View {
         HStack(spacing: Spacing.s4) {
@@ -37,7 +37,7 @@ struct WeekdayChips: View {
         .buttonStyle(.plain)
         .accessibilityLabel(Weekdays.fullName(day))
         .accessibilityAddTraits(isOn ? .isSelected : [])
-        .animation(.easeOut(duration: 0.2), value: isOn)
+        .stateAnimation(isOn)
         .accessibilityIdentifier("alarmEditor.day.\(day)")
     }
 }

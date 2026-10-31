@@ -74,7 +74,7 @@ struct RhythmEditorView: View {
                 if !RhythmHapticPlayer.supportsHaptics {
                     Text("Haptics are off on this iPhone.")
                 } else if liveState.tierBState != .ready {
-                    Text("The band preview needs the band channel on Device.")
+                    Text("The band preview needs the band channel on the Band screen.")
                 }
             }
         }

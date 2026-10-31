@@ -2,10 +2,9 @@ import BandKit
 import BandProtocol
 import SwiftUI
 
-/// Advanced raw band data (Settings > Advanced): a live viewer for everything the band sends.
-/// Three sections — the app's live values, the most recent decoded historical record with all its
-/// fields, and a capped stream of the decoded frames arriving now, the REALTIME_RAW_DATA (0x2B)
-/// accel/PPG flood included.
+/// Advanced raw band data (Settings > Advanced): the most recent decoded historical record with all its fields, and a
+/// capped stream of the decoded frames arriving now, the REALTIME_RAW_DATA (0x2B) accel/PPG flood included.
+/// Battery, link and the other live values are on the Band screen.
 ///
 /// Performance: the flood never stops while the band streams (~10 frames/s), so the ring in
 /// `FrameLog` stays tiny and renders only the newest frames, newest first. Hex is built lazily —
@@ -20,7 +19,6 @@ struct RawDataView: View {
 
     var body: some View {
         List {
-            liveValues
             latestRecord
             frameStream
         }
@@ -43,85 +41,6 @@ struct RawDataView: View {
         }
     }
 
-    // MARK: Live values
-
-    private var liveValues: some View {
-        Section {
-            LabeledContent("Connection", value: liveState.connectionText)
-            LabeledContent {
-                Text(liveState.latestBPM.map { "\($0) bpm" } ?? "--")
-                    .monospacedDigit()
-            } label: {
-                Text("Heart rate")
-            }
-            LabeledContent {
-                Text(liveState.batteryPercent.map { Format.percent($0) } ?? "--")
-                    .monospacedDigit()
-            } label: {
-                Text("Battery")
-            }
-            LabeledContent("Channel status", value: tierBStateText)
-            LabeledContent {
-                lastDataText
-            } label: {
-                Text("Last data")
-            }
-            LabeledContent {
-                lastBandEventText
-            } label: {
-                Text("Last band event")
-            }
-            LabeledContent {
-                Text(liveState.now, format: .dateTime)
-            } label: {
-                Text("App clock")
-            }
-            LabeledContent("Source", value: liveState.sourceName)
-            if let firmware = liveState.bandInfo?.firmwareVersion {
-                LabeledContent("Firmware", value: firmware)
-            }
-            if let serial = liveState.bandInfo?.serial {
-                LabeledContent("Serial", value: serial)
-            }
-        } header: {
-            Text("Live values")
-        } footer: {
-            Text("Frames arrive here as the band sends them; nothing is parsed beyond the header.")
-        }
-    }
-
-    private var tierBStateText: String {
-        switch liveState.tierBState {
-        case .disabled: "Off"
-        case .awaitingLink: "Waiting for band"
-        case .handshaking: "Connecting"
-        case .ready: "Ready"
-        case .unavailable: "Unavailable"
-        }
-    }
-
-    @ViewBuilder
-    private var lastDataText: some View {
-        if let last = liveState.lastDataAt {
-            Text(last, style: .time)
-        } else {
-            Text("None")
-        }
-    }
-
-    @ViewBuilder
-    private var lastBandEventText: some View {
-        if let kind = liveState.lastBandEvent, let at = liveState.lastBandEventAt {
-            HStack(spacing: Spacing.s4) {
-                Text(String(describing: kind))
-                Text(at, style: .time)
-                    .foregroundStyle(.secondary)
-            }
-        } else {
-            Text("None")
-        }
-    }
-
     // MARK: Latest decoded record
 
     @ViewBuilder
@@ -130,7 +49,7 @@ struct RawDataView: View {
             if let record = liveState.lastHistoricalRecord {
                 LabeledContent("Version", value: "\(record.version)")
                 LabeledContent("Time", value: Self.recordDate(record))
-                LabeledContent("Heart rate", value: "\(record.heartRate)")
+                LabeledContent("Heart rate", value: Format.bpm(record.heartRate))
                 LabeledContent("R-R ms", value: rrText(record))
                 LabeledContent("PPG green", value: "\(record.ppgGreen)")
                 LabeledContent("PPG red/IR", value: "\(record.ppgRedIr)")
@@ -146,8 +65,7 @@ struct RawDataView: View {
                 LabeledContent("Resp rate raw", value: "\(record.respRateRaw)")
                 LabeledContent("Signal quality", value: "\(record.signalQuality)")
             } else {
-                Text("No drain yet")
-                    .foregroundStyle(.secondary)
+                EmptyStateRow(text: "No drain yet", actionTitle: nil, action: nil)
             }
         }
     }
@@ -158,12 +76,14 @@ struct RawDataView: View {
     }
 
     private static func gravity(_ gravity: HistoricalRecord.Gravity) -> String {
-        String(format: "%.3f / %.3f / %.3f", gravity.x, gravity.y, gravity.z)
+        [gravity.x, gravity.y, gravity.z]
+            .map { $0.formatted(.number.precision(.fractionLength(3))) }
+            .joined(separator: " / ")
     }
 
     private func rrText(_ record: HistoricalRecord) -> String {
         record.rrIntervalsMs.isEmpty
-            ? "None"
+            ? "—"
             : record.rrIntervalsMs.map { String($0) }.joined(separator: ", ")
     }
 
@@ -211,17 +131,23 @@ struct RawDataView: View {
         case .event: return "30 event"
         case .metadata: return "31 metadata"
         case .consoleLogs: return "32 console"
-        case nil: return String(format: "%02X ?", type)
+        case nil: return "\(hexByte(type, uppercase: true)) ?"
         }
     }
 
     /// Hex of the first bytes only, so a stream of flood rows never formats whole payloads.
     private static func hexPreview(_ entry: FrameLog.Entry) -> String {
-        var text = entry.bytes.prefix(rowHexBytes).map { String(format: "%02x", $0) }.joined(separator: " ")
+        var text = entry.bytes.prefix(rowHexBytes).map { hexByte($0) }.joined(separator: " ")
         if entry.bytes.count > rowHexBytes {
             text += " …"
         }
         return text
+    }
+
+    /// Two hex digits for one byte.
+    private static func hexByte(_ byte: UInt8, uppercase: Bool = false) -> String {
+        let digits = String(byte, radix: 16, uppercase: uppercase)
+        return digits.count == 1 ? "0" + digits : digits
     }
 }
 

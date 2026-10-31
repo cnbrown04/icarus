@@ -12,15 +12,10 @@ struct SyncView: View {
     var body: some View {
         Form {
             Section {
-                HStack(spacing: Spacing.s8) {
-                    Text("Status")
-                    Spacer(minLength: Spacing.s8)
-                    TimelineView(.periodic(from: .now, by: 30)) { context in
-                        StatusPill(
-                            text: stateText(now: context.date),
-                            symbol: stateSymbol,
-                            tint: Palette.sync(environment.sync.status.phase)
-                        )
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    LabeledContent("Status") {
+                        Text(stateText(now: context.date))
+                            .foregroundStyle(Palette.sync(environment.sync.status.phase))
                     }
                 }
                 TimelineView(.periodic(from: .now, by: 30)) { context in
@@ -45,7 +40,7 @@ struct SyncView: View {
                     Label("Sync every", systemImage: "timer")
                 }
             } footer: {
-                Text("Uploads to the paired web server; band history is separate (Settings → Band → History). Also runs when you pull to refresh on Today.")
+                Text("Uploads to the paired server. Band history syncs on the Band screen.")
             }
 
             if let quarantined = data?.quarantined, !quarantined.isEmpty {
@@ -84,15 +79,14 @@ struct SyncView: View {
                         }
                     }
                 } else {
-                    Text("No batches yet")
-                        .foregroundStyle(.secondary)
+                    EmptyStateRow(text: "No batches yet", actionTitle: nil, action: nil)
                 }
             }
         }
         .navigationTitle("Server sync")
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("Sync Now") {
+                Button("Sync now") {
                     Task { await environment.sync.runNow() }
                 }
                 .disabled(environment.sync.isRunning)
@@ -110,18 +104,6 @@ struct SyncView: View {
             } catch {
                 data = nil
             }
-        }
-    }
-
-    private var stateSymbol: String {
-        let sync = environment.sync
-        if sync.isRunning { return "arrow.triangle.2.circlepath" }
-        switch sync.status.phase {
-        case .idle: return "checkmark.circle.fill"
-        case .syncing: return "arrow.triangle.2.circlepath"
-        case .retrying: return "clock"
-        case .notPaired: return "minus.circle"
-        case .needsRepair: return "exclamationmark.triangle.fill"
         }
     }
 

@@ -6,15 +6,17 @@ extension View {
         modifier(StateAnimationModifier(value: value))
     }
 
-    /// Digits roll when a live number changes. Off under -IcarusUITest, so screenshots never catch a half-rolled value.
+    /// Digits roll when a live number changes. Off under Reduce Motion and -IcarusUITest, so screenshots never catch a half-rolled value.
     func liveNumberTransition() -> some View {
         modifier(LiveNumberTransitionModifier())
     }
 }
 
 private struct LiveNumberTransitionModifier: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func body(content: Content) -> some View {
-        if LaunchConfig.current.isUITest {
+        if LaunchConfig.current.isUITest || reduceMotion {
             content
         } else {
             content.contentTransition(.numericText())

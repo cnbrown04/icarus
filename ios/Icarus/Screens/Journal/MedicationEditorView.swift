@@ -45,19 +45,18 @@ struct MedicationEditorView: View {
                 Section {
                     Stepper(value: $draft.onsetMinutes, in: 0...720, step: 5) {
                         LabeledContent("Onset") {
-                            Text("\(draft.onsetMinutes) min").monospacedDigit()
+                            Text(Format.duration(minutes: draft.onsetMinutes)).monospacedDigit()
                         }
                     }
                     Stepper(value: $draft.durationMinutes, in: 15...1440, step: 15) {
                         LabeledContent("Duration") {
-                            Text("\(draft.durationMinutes) min").monospacedDigit()
+                            Text(Format.duration(minutes: draft.durationMinutes)).monospacedDigit()
                         }
                     }
                 } header: {
                     Text("Effect")
                 } footer: {
-                    Text("Minutes from a dose to the start of its effect, and how long the effect lasts. Typical label "
-                        + "figures, not measured for you. Approximate, and not medical advice.")
+                    Text("Typical label figures, not measured for you.")
                 }
 
                 Section {
@@ -78,15 +77,15 @@ struct MedicationEditorView: View {
                             draft.scheduleMinutesOfDay.remove(atOffsets: offsets)
                         }
                         Button("Add time") {
-                            draft.scheduleMinutesOfDay.append(draft.scheduleMinutesOfDay.last ?? 8 * 60)
+                            draft.scheduleMinutesOfDay.append(draft.scheduleMinutesOfDay.last ?? MedicationFormat.defaultDoseMinute)
                         }
                     }
                 } header: {
                     Text("Schedule")
                 } footer: {
                     Text(scheduleKind.wrappedValue == .daily
-                        ? "Scheduled doses are assumed taken on the days they fall due, unless skipped."
-                        : "No schedule. Log each dose under Doses.")
+                        ? "Scheduled doses are assumed taken unless skipped."
+                        : "No schedule. Log each dose under Last \(MedicationsModel.logWindowDays) days.")
                 }
 
                 if scheduleKind.wrappedValue == .daily {
@@ -114,8 +113,11 @@ struct MedicationEditorView: View {
                         }
                         let entries = model.recentDoses[draft.id] ?? []
                         if entries.isEmpty {
-                            Text("Nothing logged in the last \(MedicationsModel.logWindowDays) days.")
-                                .foregroundStyle(Palette.neutral)
+                            EmptyStateRow(
+                                text: "Nothing logged in the last \(MedicationsModel.logWindowDays) days",
+                                actionTitle: nil,
+                                action: nil
+                            )
                         } else {
                             ForEach(entries) { entry in
                                 doseRow(entry)
@@ -197,7 +199,7 @@ struct MedicationEditorView: View {
                 Task { await model.removeDose(entry.id) }
             } label: {
                 Image(systemName: "minus.circle")
-                    .frame(minWidth: 44, minHeight: 44)
+                    .frame(minWidth: MinTouch.size, minHeight: MinTouch.size)
             }
             .buttonStyle(.borderless)
             .accessibilityLabel("Remove " + text)
@@ -209,10 +211,10 @@ struct MedicationEditorView: View {
         guard let atMs = entry.override.takenMs else {
             return "\(day), skipped"
         }
-        return "\(day), taken \(JournalFormat.clock(atMs, in: model.timeZone))"
+        return "\(day), taken \(Format.clock(atMs, in: model.timeZone))"
     }
 
-    /// Daily at specific times, or as needed. As needed is an empty schedule. Choosing Daily restores one 08:00 time.
+    /// Daily at specific times, or as needed. As needed is an empty schedule. Choosing Daily restores one default time.
     private enum ScheduleKind: Hashable {
         case daily
         case asNeeded
@@ -227,7 +229,7 @@ struct MedicationEditorView: View {
                     draft.scheduleMinutesOfDay = []
                 case .daily:
                     if draft.scheduleMinutesOfDay.isEmpty {
-                        draft.scheduleMinutesOfDay = [8 * 60]
+                        draft.scheduleMinutesOfDay = [MedicationFormat.defaultDoseMinute]
                     }
                 }
             }

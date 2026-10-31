@@ -44,7 +44,7 @@ struct ServerView: View {
 
             if let onSkip {
                 Section {
-                    Button("Skip for Now", action: onSkip)
+                    Button("Skip for now", action: onSkip)
                         .accessibilityIdentifier("server.skip")
                 } footer: {
                     Text("Without a server, data stays on this iPhone.")
@@ -64,7 +64,7 @@ struct ServerView: View {
 
     private var footerText: String {
         if let failure { return failure.message }
-        return "Scan the QR code on the website with the Camera app to fill these in. Codes expire after 10 min."
+        return "Scan the website's QR code with Camera. Codes expire after 10 min."
     }
 
     private func applyLink() {

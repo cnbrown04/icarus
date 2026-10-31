@@ -39,9 +39,9 @@ struct AlarmsView: View {
                 Button {
                     editor = .new
                 } label: {
-                    Image(systemName: "plus")
+                    Image(systemName: Symbol.record)
                 }
-                .accessibilityLabel("New Alarm")
+                .accessibilityLabel("New alarm")
                 .accessibilityIdentifier("alarms.add")
             }
         }
@@ -54,7 +54,7 @@ struct AlarmsView: View {
             }
         }
         .confirmationDialog(
-            "Delete alarm?",
+            "Delete \(pendingDelete?.label ?? "alarm")?",
             isPresented: Binding(
                 get: { pendingDelete != nil },
                 set: { if !$0 { pendingDelete = nil } }
@@ -79,7 +79,7 @@ struct AlarmsView: View {
                     .onTapGesture { sync.dismissAlarmConflictNotice() }
             }
         }
-        .animation(.easeOut(duration: 0.2), value: sync.alarmConflictNotice)
+        .stateAnimation(sync.alarmConflictNotice)
         .task(id: sync.alarmConflictNotice) {
             guard sync.alarmConflictNotice else { return }
             try? await Task.sleep(for: .seconds(4))
@@ -117,9 +117,9 @@ struct AlarmsView: View {
 
     private var emptyState: some View {
         ContentUnavailableView {
-            Label("No alarms", systemImage: "alarm.fill")
+            Label("No alarms", systemImage: Symbol.alarms)
         } actions: {
-            Button("New Alarm") {
+            Button("New alarm") {
                 editor = .new
             }
             .buttonStyle(.borderedProminent)
@@ -140,7 +140,7 @@ private struct AlarmListRow: View {
             Button(action: onOpen) {
                 VStack(alignment: .leading, spacing: Spacing.s4) {
                     Text(item.timeDate, style: .time)
-                        .font(.system(.largeTitle, design: .rounded, weight: .semibold))
+                        .font(.figureLarge)
                         .monospacedDigit()
                         .foregroundStyle(item.enabled ? Color.primary : Color.secondary)
                         .accessibilityIdentifier("alarms.time")
@@ -150,14 +150,14 @@ private struct AlarmListRow: View {
                         .accessibilityIdentifier("alarms.label")
                     HStack(spacing: Spacing.s8) {
                         Text(item.repeatText)
-                            .font(.caption)
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
                         RhythmChip(name: item.rhythmName)
                         ChannelSymbols(channels: item.channels)
                     }
                     if item.enabled, let next = item.nextFire(after: Date()) {
                         Text("Next \(next, format: .dateTime.weekday(.abbreviated).hour().minute())")
-                            .font(.caption)
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -179,7 +179,7 @@ private struct RhythmChip: View {
 
     var body: some View {
         Text(name)
-            .font(.caption.weight(.semibold))
+            .font(.footnote.weight(.semibold))
             .padding(.horizontal, Spacing.s8)
             .padding(.vertical, Spacing.s4)
             .background(Palette.neutral.opacity(0.15), in: Capsule())
@@ -197,11 +197,11 @@ private struct ChannelSymbols: View {
                     .accessibilityLabel("Phone")
             }
             if channels.contains(.band) {
-                Image(systemName: "bolt.heart.fill")
+                Image(systemName: Symbol.band)
                     .accessibilityLabel("Band")
             }
         }
-        .font(.caption)
+        .font(.footnote)
         .foregroundStyle(.secondary)
     }
 }

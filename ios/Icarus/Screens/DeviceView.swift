@@ -3,7 +3,7 @@ import BandKit
 import BandProtocol
 import SwiftUI
 
-/// The band: a hero card with its state, then signal, battery and the age of the last reading (IOS_UI_SPEC, Screen 15).
+/// The band: its name and link state, then signal, battery and the age of the last reading (IOS_UI_SPEC, Screen 15).
 /// The Experimental section holds the band channel (Tier B). Turning it on needs the explainer's "Turn on" first.
 struct DeviceView: View {
     let liveState: LiveState
@@ -26,25 +26,21 @@ struct DeviceView: View {
             if liveState.isCollectionPaused {
                 Section {
                     Label("Collection paused: open Icarus", systemImage: "exclamationmark.triangle.fill")
+                        .labelStyle(.titleAndIcon)
                         .foregroundStyle(Palette.warn)
                 }
             }
 
             Section {
-                VStack(spacing: Spacing.s12) {
-                    Image(systemName: "bolt.heart.fill")
-                        .font(.system(size: 44, weight: .semibold))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(Palette.heartRate)
+                VStack(spacing: Spacing.s8) {
                     Text(liveState.rememberedID == nil ? "Not paired" : bandName)
                         .font(.title3.weight(.semibold))
-                    // A plain tinted Label renders naturally in the Form's centered stack; the
-                    // capsule pill fought the row height and alignment here.
                     Label(liveState.connectionText, systemImage: liveState.connectionSymbol)
+                        .labelStyle(.titleAndIcon)
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(Palette.link(liveState.state))
                     if let bpm = liveState.latestBPM {
-                        Text("\(bpm) bpm")
+                        Text(Format.bpm(bpm))
                             .font(.subheadline)
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
@@ -92,7 +88,7 @@ struct DeviceView: View {
                 }
                 // Identity the band reported in its bandInfo event (PLAN.md §14 row 15).
                 LabeledContent {
-                    Text(liveState.bandInfo?.firmwareVersion ?? "--")
+                    Text(liveState.bandInfo?.firmwareVersion ?? "—")
                 } label: {
                     Label("Firmware", systemImage: "cpu")
                 }
@@ -110,10 +106,10 @@ struct DeviceView: View {
                     NavigationLink {
                         PairBandView(liveState: liveState)
                     } label: {
-                        Label("Pair Band", systemImage: "plus.circle")
+                        Label("Pair band", systemImage: "plus.circle")
                     }
                 } else {
-                    Button("Forget Band", role: .destructive) {
+                    Button("Forget band", role: .destructive) {
                         confirmsForget = true
                     }
                 }
@@ -165,13 +161,11 @@ struct DeviceView: View {
                 }
             } header: {
                 Text("History")
-            } footer: {
-                Text("Pulls everything the band has recorded but not yet sent, until it is caught up. The band keeps about two weeks, but data it has already handed to the app cannot be sent again.")
             }
 
             Section {
                 Toggle(isOn: bandChannelBinding) {
-                    Label("Band Channel", systemImage: "waveform")
+                    Label("Band channel", systemImage: Symbol.band)
                 }
                 .accessibilityIdentifier("device.bandChannel")
                 LabeledContent {
@@ -182,7 +176,6 @@ struct DeviceView: View {
                 }
                 if liveState.tierBState == .unavailable, let reason = liveState.tierBFailure {
                     Text(reason)
-                        .font(.footnote)
                         .foregroundStyle(Palette.error)
                 }
                 LabeledContent {
@@ -190,7 +183,7 @@ struct DeviceView: View {
                 } label: {
                     Label("Last band event", systemImage: "hand.tap")
                 }
-                Button("Test Buzz") {
+                Button("Test buzz") {
                     playTestBuzz()
                 }
                 .disabled(liveState.tierBState != .ready)
@@ -209,9 +202,10 @@ struct DeviceView: View {
             } header: {
                 Text("Experimental")
             } footer: {
-                Text("Band alarms depend on the band clock. The phone alarm is always armed too. The alarm pull checks the server for pending alarms while the band is awake; it only matters while alarm push is unavailable. Disabling the raw sensor flood speeds up history drains, but the off form of that command is unverified and may affect the strap's own history banking — leave it off unless debugging.")
+                Text("The off form of the raw sensor flood command is unverified and may affect the band's own history banking. Leave it off unless debugging.")
             }
         }
+        .labelStyle(SecondaryIconLabelStyle())
         .sheet(isPresented: $showsExplainer) {
             BandChannelExplainerView(
                 onTurnOn: {
@@ -223,8 +217,8 @@ struct DeviceView: View {
                 }
             )
         }
-        .confirmationDialog("Forget '\(bandName)'?", isPresented: $confirmsForget, titleVisibility: .visible) {
-            Button("Forget Band", role: .destructive) {
+        .confirmationDialog("Forget \(bandName)?", isPresented: $confirmsForget, titleVisibility: .visible) {
+            Button("Forget band", role: .destructive) {
                 liveState.forgetBand()
             }
             Button("Cancel", role: .cancel) {}
@@ -307,7 +301,7 @@ struct DeviceView: View {
                     .foregroundStyle(.secondary)
             }
         } else {
-            Text("None")
+            Text("—")
         }
     }
 
@@ -321,7 +315,7 @@ struct DeviceView: View {
     }
 
     private var signalText: String {
-        liveState.connectedRSSI.map { "\($0) dBm" } ?? "--"
+        liveState.connectedRSSI.map { "\($0) dBm" } ?? "—"
     }
 
     /// Percent, with "Charging" after it while the strap reports charging (whoop-parity §3.7).
@@ -342,7 +336,7 @@ struct DeviceView: View {
                 Text(at, style: .time)
             }
         } else {
-            Text("None")
+            Text("—")
         }
     }
 
@@ -355,7 +349,18 @@ struct DeviceView: View {
                 Text(last, style: .time)
             }
         } else {
-            Text("None")
+            Text("—")
+        }
+    }
+}
+
+/// Row icons take the secondary colour, so the rows read as plain text. Status colour stays on the text it marks.
+private struct SecondaryIconLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Label {
+            configuration.title
+        } icon: {
+            configuration.icon.foregroundStyle(.secondary)
         }
     }
 }

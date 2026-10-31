@@ -35,13 +35,6 @@ struct MedicationsView: View {
         }
     }
 
-    /// Shown once at the top of the screen. It says what the medications feed, not what to do.
-    private static let footnote = "Used to compare stress during medicated hours against your medicated baseline. "
-        + "Scheduled doses are assumed taken."
-
-    /// The default dose time for a new scheduled profile: 08:00, as minutes of the day.
-    private static let defaultDoseMinute = 8 * 60
-
     init(environment: AppEnvironment) {
         self.environment = environment
         _model = State(initialValue: MedicationsModel(database: environment.database, clock: environment.clock,
@@ -61,19 +54,13 @@ struct MedicationsView: View {
             formulation: .immediateRelease,
             onsetMinutes: 30,
             durationMinutes: 240,
-            scheduleMinutesOfDay: [Self.defaultDoseMinute]
+            scheduleMinutesOfDay: [MedicationFormat.defaultDoseMinute]
         )
         editor = .new(profile)
     }
 
     var body: some View {
         List {
-            Section {
-                Text(Self.footnote)
-                    .font(.footnote)
-                    .foregroundStyle(Palette.neutral)
-            }
-
             if model.profiles.isEmpty {
                 Section {
                     emptyState
@@ -111,7 +98,7 @@ struct MedicationsView: View {
                 Button {
                     showingPresets = true
                 } label: {
-                    Image(systemName: "plus")
+                    Image(systemName: Symbol.record)
                 }
                 .accessibilityLabel("Add medication")
                 .accessibilityIdentifier("medications.add")
@@ -120,8 +107,8 @@ struct MedicationsView: View {
         .confirmationDialog("Add medication", isPresented: $showingPresets, titleVisibility: .visible) {
             // Each preset asks which schedule it takes: daily at 08:00 (editable), or as needed (no schedule).
             ForEach(MedicationProfile.Preset.allCases, id: \.self) { preset in
-                Button("\(preset.name), daily at 08:00") {
-                    startNew(preset, schedule: [Self.defaultDoseMinute])
+                Button("\(preset.name), daily at \(MedicationFormat.clock(minuteOfDay: MedicationFormat.defaultDoseMinute))") {
+                    startNew(preset, schedule: [MedicationFormat.defaultDoseMinute])
                 }
                 Button("\(preset.name), as needed") {
                     startNew(preset, schedule: [])
@@ -152,8 +139,6 @@ struct MedicationsView: View {
             Button("Cancel", role: .cancel) {
                 pendingDelete = nil
             }
-        } message: {
-            Text("Its scheduled and logged doses stop showing and stop shading charts. The log is kept.")
         }
         .task {
             await model.load()
@@ -162,7 +147,7 @@ struct MedicationsView: View {
 
     private var emptyState: some View {
         ContentUnavailableView {
-            Label("No medications", systemImage: "pills")
+            Label("No medications", systemImage: Symbol.medications)
         } actions: {
             Button("Add medication") {
                 showingPresets = true
@@ -205,11 +190,22 @@ private struct MedicationListRow: View {
 
 /// Shared text for medication rows and the detail screen.
 enum MedicationFormat {
+    /// The default dose time for a new scheduled profile: 08:00, as minutes of the day.
+    static let defaultDoseMinute = 8 * 60
+
+    /// A minute of the day as a locale-aware clock time, e.g. "8:00 AM".
+    static func clock(minuteOfDay minute: Int) -> String {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: Date())
+        let date = calendar.date(byAdding: .minute, value: minute, to: start) ?? start
+        return date.formatted(date: .omitted, time: .shortened)
+    }
+
     /// "Daily 9:00", "Mon, Wed 9:00, 17:00", or "As needed" for an empty schedule.
     static func schedule(times: [Int], weekdays: Set<Int>) -> String {
         guard !times.isEmpty else { return "As needed" }
         let days = weekdays.isEmpty ? "Daily" : weekdays.sorted().map { Weekdays.shortName($0) }.joined(separator: ", ")
-        let clocks = times.map { String(format: "%d:%02d", $0 / 60, $0 % 60) }.joined(separator: ", ")
+        let clocks = times.map { clock(minuteOfDay: $0) }.joined(separator: ", ")
         return "\(days) \(clocks)"
     }
 }
