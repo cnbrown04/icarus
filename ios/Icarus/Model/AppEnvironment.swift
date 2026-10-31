@@ -130,12 +130,33 @@ final class AppEnvironment {
     /// medication or dose edit invalidated (`Database.markStressStale`). Safe to call repeatedly.
     func recomputeStaleMetrics() {
         let metrics = metrics
+        let database = database
         let nowMs = clock.nowMs
         Task.detached(priority: .utility) {
             do {
-                _ = try await metrics.recomputeStaleRows(nowMs: nowMs)
+                let result = try await metrics.recomputeStaleRows(nowMs: nowMs)
+                // A medication edit changes stress on its days, and the day scores cache holds that stress average.
+                if result.ran {
+                    try await database.refreshDailyScores(lastDays: MetricsWorker.maxBackfillDays, nowMs: nowMs)
+                }
             } catch {
                 BandLog.tierB(.error, "app: stale metric recompute failed: \(String(describing: error))")
+            }
+        }
+    }
+
+    /// Fills the `daily_score` cache for the last `DailyScoreCache.backfillDays` days when it is empty or was built by
+    /// an older score algorithm. Runs once per launch in the background, one write transaction per day.
+    func backfillDailyScoresIfNeeded() {
+        let database = database
+        let nowMs = clock.nowMs
+        Task.detached(priority: .utility) {
+            do {
+                guard try await database.dailyScoresNeedBackfill() else { return }
+                try await database.refreshDailyScores(lastDays: DailyScoreCache.backfillDays, nowMs: nowMs)
+                BandLog.tierB(.info, "app: daily scores backfilled for \(DailyScoreCache.backfillDays) days")
+            } catch {
+                BandLog.tierB(.error, "app: daily score backfill failed: \(String(describing: error))")
             }
         }
     }
@@ -148,6 +169,7 @@ final class AppEnvironment {
         let inputs = inputs
         // Minute rows from an older algorithm version are rebuilt once per launch (PLAN.md 8.5).
         recomputeStaleMetrics()
+        backfillDailyScoresIfNeeded()
         Task { await ingestor.run(inputs) }
         let continuation = inputContinuation
         Task {

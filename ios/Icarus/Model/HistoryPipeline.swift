@@ -103,6 +103,9 @@ enum HistoryPipeline {
                     computedAtMs: nowMs
                 )
             }
+            // Day scores for the drained days (plus the lookback, since a night can begin the evening before),
+            // so every metric screen reads the same cached numbers. One write transaction per day.
+            try await database.refreshDailyScores(fromMs: fromMs - rederiveLookbackMs, toMs: toMs, nowMs: nowMs)
             #if DEBUG
             await AppEnvironment.writeDebugDump(from: fromMs, to: toMs, in: database)
             #endif
