@@ -146,7 +146,7 @@ private struct ContributorRow: View {
                 Text(tonight)
                     .monospacedDigit()
                     .lineLimit(1)
-                    .minimumScaleFactor(0.6)
+                    .fixedSize()
             }
             HStack(spacing: Spacing.s8) {
                 if let reference {

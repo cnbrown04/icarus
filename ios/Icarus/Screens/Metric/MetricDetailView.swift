@@ -32,6 +32,8 @@ struct MetricDetailView: View {
                 }
                 .pickerStyle(.segmented)
                 .accessibilityLabel("Range")
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
             }
 
             Section {
@@ -141,7 +143,9 @@ struct MetricDetailView: View {
                     LabeledRow(title: "Minimum", value: data.minimum.map { MetricFormat.withUnit($0, kind) } ?? "—")
                     LabeledRow(title: "Maximum", value: data.maximum.map { MetricFormat.withUnit($0, kind) } ?? "—")
                 }
-                if let value = data.value, let previous = data.previousValue {
+                // A running total today against all of yesterday is not a comparison (it reads "−1,091 kcal" at 15:51).
+                if let value = data.value, let previous = data.previousValue,
+                   !(data.kind.aggregation == .sum && data.range == .day) {
                     // The comparison is the title and only the change sits on the right, so the row never wraps.
                     LabeledRow(title: changeTitle(data.range), value: MetricFormat.change(value - previous, kind))
                 }
