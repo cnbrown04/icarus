@@ -15,7 +15,7 @@ extension View {
     func cardBackground() -> some View {
         background(
             Color(uiColor: .secondarySystemGroupedBackground),
-            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+            in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
         )
     }
 

@@ -7,9 +7,13 @@ import SyncKit
 /// Semantic colours (IOS_UI_SPEC, "Global look"). System colours, so dark mode and contrast come from the system.
 /// Colour only carries meaning: state, thresholds and chart series.
 enum Palette {
+    /// Deprecated: use `Palette.category(.heart)` (MetricCategory / MetricKind colors).
     static let heartRate = Color.pink
+    /// Deprecated: use `Palette.category(.heart)` (MetricCategory / MetricKind colors).
     static let hrv = Color.indigo
+    /// Deprecated: use `Palette.category(.sleep)` (MetricCategory / MetricKind colors).
     static let sleep = Color.teal
+    /// Deprecated: use `Palette.category(.activity)` (MetricCategory / MetricKind colors).
     static let strain = Color.blue
     /// Stimulant-active windows shaded behind chart data (`MedicationWindowsOverlay`). Neutral on purpose: a
     /// medication window marks a time, not a state, so it must not read as a good or bad colour.
@@ -23,10 +27,15 @@ enum Palette {
         case .green: .green
         }
     }
+    /// Deprecated: stress has one category colour, `Palette.category(.mind)`. Its bands are words, not colours.
     static let stressLow = Color.green
+    /// Deprecated: stress has one category colour, `Palette.category(.mind)`. Its bands are words, not colours.
     static let stressModerate = Color.yellow
+    /// Deprecated: stress has one category colour, `Palette.category(.mind)`. Its bands are words, not colours.
     static let stressHigh = Color.red
+    /// Deprecated: use `Palette.category(.activity)` (MetricCategory / MetricKind colors).
     static let caloriesResting = Color.orange.opacity(0.5)
+    /// Deprecated: use `Palette.category(.activity)` (MetricCategory / MetricKind colors).
     static let caloriesActive = Color.orange
     static let syncOK = Color.green
     static let warn = Color.orange
