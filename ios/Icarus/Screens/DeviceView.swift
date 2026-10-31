@@ -14,6 +14,8 @@ struct DeviceView: View {
     @State private var showsExplainer = false
     @State private var confirmsForget = false
     @State private var showsRestore = false
+    /// The last restore's one-line result, read once the restore returns.
+    @State private var restoreSummary: String?
 
     private var bandName: String {
         liveState.bandName ?? "Paired band"
@@ -143,10 +145,21 @@ struct DeviceView: View {
                     }
                     .accessibilityIdentifier("device.drainProgress")
                 }
+                if let restoreSummary {
+                    LabeledContent {
+                        Text(restoreSummary)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
+                    } label: {
+                        Label("Restore", systemImage: "clock.arrow.circlepath")
+                    }
+                    .accessibilityIdentifier("device.restoreSummary")
+                }
             } header: {
                 Text("History")
             } footer: {
-                Text("Re-reads everything the band has in storage and rebuilds heart rate, sleep and the graphs from it. Use after deleting the app, or whenever history looks wrong. The band keeps roughly the last day and a half.")
+                Text("Re-reads everything still in the band's storage and rebuilds heart rate, sleep and the graphs from it. Use after deleting the app, or whenever history looks wrong.")
             }
 
             Section {
@@ -228,7 +241,10 @@ struct DeviceView: View {
     /// `liveState.drainProgress`, so the manual path, the connect drain and the periodic cadence
     /// all render the same live feedback and nothing is duplicated in local view state.
     private func startRestore() {
-        Task { await liveState.drainFullHistory() }
+        Task {
+            await liveState.drainFullHistory()
+            restoreSummary = await liveState.fullHistorySummary()
+        }
     }
 
     /// Off switches the channel at once. On only opens the explainer, and the switch moves when "Turn on" is tapped.
