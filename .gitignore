@@ -5,6 +5,8 @@
 *.xcodeproj/
 ios/build/
 DerivedData/
+# Per-worktree DerivedData (xcodebuild -derivedDataPath ./.dd)
+ios/.dd/
 .build/
 .swiftpm/
 
