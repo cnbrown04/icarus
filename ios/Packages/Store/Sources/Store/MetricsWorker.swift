@@ -169,8 +169,11 @@ public actor MetricsWorker {
     /// Recomputes the minute rows an older algorithm wrote (`AlgoVersion.storedValue`, PLAN.md 8.5), from the
     /// oldest such row to now. The app calls it once at launch, so a stress change reaches the stored history.
     /// Only rows inside the backfill window are checked, so a stale row older than `maxBackfillDays` is left
-    /// alone instead of being rebuilt on every launch.
+    /// alone instead of being rebuilt on every launch. Medication edits mark their days stale with
+    /// `Database.markStressStale`, and this call picks them up. The baseline cache is dropped first, because a
+    /// medication change alters the medicated and unmedicated baselines.
     public func recomputeStaleRows(nowMs: Int64) async throws -> Result {
+        baseline = nil
         let current = AlgoVersion.current.storedValue
         let windowStart = nowMs - Int64(Self.maxBackfillDays) * 24 * 60 * LocalTime.msPerMinute
         let oldestStale = try await database.writer.read { db in
@@ -203,6 +206,12 @@ public actor MetricsWorker {
             in: timeZone
         )
 
+        // Stimulant windows cover the lookback and the scored day. The baseline splits on them, and a window
+        // on the scored day is scored against the medicated or unmedicated baseline by its own start.
+        let lookbackFirst = LocalTime.adding(days: -Stress.lookbackDays, to: day)
+        let stimulantWindows = try db.medicationWindows(from: lookbackFirst, to: day, in: timeZone)
+            .filter { $0.medClass == .stimulant }
+
         var newCache: BaselineCache?
         let stressBaseline: StressBaseline
         if let cache, cache.day == day, closedThrough - cache.computedAtMs < baselineMaxAgeMs {
@@ -214,7 +223,8 @@ public actor MetricsWorker {
                 day: day,
                 nights: lookback.nights,
                 restingHR: restingHR,
-                maxHR: maxHR
+                maxHR: maxHR,
+                stimulantWindows: stimulantWindows
             )
             newCache = BaselineCache(day: day, computedAtMs: closedThrough, value: stressBaseline)
         }
@@ -230,7 +240,8 @@ public actor MetricsWorker {
             profile: profile,
             restingHR: restingHR,
             maxHR: maxHR,
-            baseline: stressBaseline
+            baseline: stressBaseline,
+            stimulantWindows: stimulantWindows
         )
         let metrics = MinuteMetricsCalculator.rows(
             range: start..<closedThrough,

@@ -142,6 +142,7 @@ extension Database {
     /// Inserts or replaces a profile and clears any delete mark. `nowMs` becomes `updated_at`.
     public func saveMedication(_ profile: MedicationProfile, nowMs: Int64) throws {
         try MedicationRow(profile: profile, updatedAt: nowMs).save(self)
+        try markStressStaleForScheduleChange(nowMs: nowMs)
     }
 
     /// Live profiles (soft-deleted ones excluded), in the order they were created.
@@ -155,6 +156,7 @@ extension Database {
         try execute(sql: """
         UPDATE medication SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL
         """, arguments: [nowMs, nowMs, id])
+        try markStressStaleForScheduleChange(nowMs: nowMs)
     }
 
     /// Records a per-day override and returns its new id (UUIDv7 from `nowMs`).
@@ -162,6 +164,7 @@ extension Database {
     public func addDoseOverride(_ override: DoseOverride, nowMs: Int64) throws -> String {
         let id = UUIDv7.make(unixMs: nowMs).uuidString
         try MedicationOverrideRow(id: id, override: override, createdAt: nowMs).insert(self)
+        try markStressStale(override: override.day)
         return id
     }
 
@@ -170,6 +173,34 @@ extension Database {
         try execute(sql: """
         DELETE FROM medication_dose_override WHERE medication_id = ? AND local_day = ?
         """, arguments: [medicationID, MedicationOverrideRow.text(day)])
+        try markStressStale(override: day)
+    }
+
+    /// Marks minute rows in local days `from...to` (both inclusive) as stale, so `MetricsWorker.recomputeStaleRows`
+    /// rebuilds them. A stale row has `algo_version` 0, which is below any real version, and the rewrite that
+    /// replaces it always differs because the stored value changes. Rows outside the stress backfill window are
+    /// left as they are. Requires a profile (the time zone); without one nothing was computed, so nothing is marked.
+    public func markStressStale(from: LocalDay, to: LocalDay) throws {
+        guard let zone = try profile()?.timeZone else { return }
+        let start = LocalTime.localTime(from, hour: 0, in: zone)
+        let end = LocalTime.localTime(LocalTime.adding(days: 1, to: to), hour: 0, in: zone)
+        try execute(sql: """
+        UPDATE minute_metric SET algo_version = 0 WHERE minute_ms >= ? AND minute_ms < ? AND algo_version > 0
+        """, arguments: [start, end])
+    }
+
+    /// A dose override on `day` changes that day's stress, and the baselines of the following lookback days, which
+    /// read its medicated windows.
+    private func markStressStale(override day: LocalDay) throws {
+        try markStressStale(from: day, to: LocalTime.adding(days: Stress.lookbackDays, to: day))
+    }
+
+    /// A profile or schedule edit replays over every day of the stress backfill window, not one day.
+    private func markStressStaleForScheduleChange(nowMs: Int64) throws {
+        guard let zone = try profile()?.timeZone else { return }
+        let today = LocalTime.localDay(containing: nowMs, in: zone)
+        let first = LocalTime.adding(days: -(MetricsWorker.maxBackfillDays - 1), to: today)
+        try markStressStale(from: first, to: today)
     }
 
     /// Removes one override by its row id. Other doses on the same day are kept.
@@ -219,5 +250,15 @@ extension Database {
             $0.endMs > rangeStartMs && $0.startMs < rangeEndMs
         }
         return MedicationEffect.merged(overlapping)
+    }
+
+    /// Whether a stimulant was active at the main sleep's start or in the hour before it: some stimulant window
+    /// starts at or before `sleepStartMs` and ends after `sleepStartMs - 60 min`. Reads the local days around the
+    /// start, in `timeZone`. Shown as a factual note on the Sleep and Recovery screens, not as a judgement.
+    public func stimulantNearSleepOnset(sleepStartMs: Int64, in timeZone: TimeZone) throws -> Bool {
+        let day = LocalTime.localDay(containing: sleepStartMs, in: timeZone)
+        let windows = try medicationWindows(from: LocalTime.adding(days: -1, to: day), to: day, in: timeZone)
+        let hourBefore = sleepStartMs - 60 * LocalTime.msPerMinute
+        return windows.contains { $0.medClass == .stimulant && $0.startMs <= sleepStartMs && $0.endMs > hourBefore }
     }
 }
