@@ -76,10 +76,16 @@ APNs `.p8` key + signing capability), TestFlight (no ASC secrets), Apple Watch, 
   full-history restore at 00:28 (cursor 74268→0) replayed only ~50k records, starting
   2026-10-22 10:49 EDT. The 2026-10-21 19:35 → 10-22 10:49 span, which the old build had
   drained and ACKED but mostly never stored, did not come back. Treat acked data as gone:
-  persist-then-ack is the only protection.
-- Full-history restore: `drainFullHistory()` rewinds the read cursor to the oldest banked
-  extent (`W ≥ T ? W − T : 0`) via SET_READ_POINTER, then drains back-to-back until empty/
-  COMPLETE/live edge. Safe to re-drain (OpenStrap §4.3).
+  persist-then-ack is the only protection. **Likely explanation (pending hardware
+  verification, not verified):** the rewind went to slot 0, which skipped slots W…T−1, where
+  the oldest data of a wrapped ring sits. The 2026-10-28 restore showed the same shape (cursor
+  95927→0, ~107k records re-drained, W ≈ 106898).
+- Full-history restore: `drainFullHistory()` runs two passes via SET_READ_POINTER. Pass 1
+  rewinds to `(W + 120) mod T` and drains back-to-back to the live edge, reading the wrapped
+  ring oldest-first. Pass 2 rewinds to 0 and runs only when pass 1 stopped on an empty drain
+  or HISTORY_COMPLETE short of the live edge. Each pass logs its start slot, kept count and
+  oldest…newest span. Re-draining is safe per OpenStrap §4.3, but the wrapped-ring reading
+  is [Unverified] on hardware.
 
 ## Hard-won lessons (do not regress)
 
