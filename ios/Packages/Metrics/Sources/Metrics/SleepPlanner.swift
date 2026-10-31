@@ -36,7 +36,7 @@ public enum SleepPlanner {
             switch self {
             case .peak: "Peak"
             case .perform: "Perform"
-            case .getBy: "Get by"
+            case .getBy: "Get By"
             }
         }
     }

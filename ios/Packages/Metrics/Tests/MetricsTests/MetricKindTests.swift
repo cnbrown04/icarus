@@ -11,7 +11,7 @@ struct MetricKindTests {
 
     @Test func titlesAreTheUserFacingNames() {
         #expect(MetricKind.allCases.map(\.title) == [
-            "Heart rate", "Resting heart rate", "Heart rate variability", "Stress", "Respiratory rate",
+            "Heart Rate", "Resting Heart Rate", "Heart Rate Variability", "Stress", "Respiratory Rate",
             "Recovery", "Strain", "Calories", "Sleep",
         ])
     }

@@ -23,8 +23,8 @@ final class SmokeTests: XCTestCase {
 
         // Every metric opens the one detail page, titled with the metric.
         app.tabBars.buttons["Browse"].tap()
-        app.buttons["Heart rate"].firstMatch.tap()
-        XCTAssertTrue(app.navigationBars["Heart rate"].waitForExistence(timeout: 10))
+        app.buttons["Heart Rate"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Heart Rate"].waitForExistence(timeout: 10))
         app.navigationBars.buttons.element(boundBy: 0).tap()
 
         // One profile button holds Band, Medications, Alarms and the settings.

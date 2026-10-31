@@ -27,11 +27,11 @@ final class ScreenshotTests: XCTestCase {
         // Every metric has one detail page, reached from Browse.
         app.tabBars.buttons["Browse"].tap()
         XCTAssertTrue(app.navigationBars["Browse"].waitForExistence(timeout: 10))
-        openFromTab(app, tap: app.buttons["Heart rate"].firstMatch, title: "Heart rate")
+        openFromTab(app, tap: app.buttons["Heart Rate"].firstMatch, title: "Heart Rate")
         attachScreenshot(named: "08-heart-rate")
         goBack(app, to: "Browse")
 
-        openFromTab(app, tap: app.buttons["Resting heart rate"].firstMatch, title: "Resting heart rate")
+        openFromTab(app, tap: app.buttons["Resting Heart Rate"].firstMatch, title: "Resting Heart Rate")
         attachTrendScreenshot(app)
         goBack(app, to: "Browse")
 

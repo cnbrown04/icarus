@@ -25,11 +25,11 @@ public enum MetricKind: String, CaseIterable, Sendable {
     /// The name shown on rows and page titles.
     public var title: String {
         switch self {
-        case .heartRate: "Heart rate"
-        case .restingHR: "Resting heart rate"
-        case .hrv: "Heart rate variability"
+        case .heartRate: "Heart Rate"
+        case .restingHR: "Resting Heart Rate"
+        case .hrv: "Heart Rate Variability"
         case .stress: "Stress"
-        case .respiratoryRate: "Respiratory rate"
+        case .respiratoryRate: "Respiratory Rate"
         case .recovery: "Recovery"
         case .strain: "Strain"
         case .calories: "Calories"

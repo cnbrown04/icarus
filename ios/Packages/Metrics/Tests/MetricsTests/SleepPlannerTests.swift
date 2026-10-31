@@ -22,7 +22,7 @@ struct SleepPlannerTests {
         #expect(SleepPlanner.Target.peak.fraction == 1.0)
         #expect(SleepPlanner.Target.perform.fraction == 0.85)
         #expect(SleepPlanner.Target.getBy.fraction == 0.70)
-        #expect(SleepPlanner.Target.allCases.map(\.label) == ["Peak", "Perform", "Get by"])
+        #expect(SleepPlanner.Target.allCases.map(\.label) == ["Peak", "Perform", "Get By"])
     }
 
     @Test func timeInBedIsNeedTimesTargetOverEfficiencyPlusLatency() {
