@@ -2,8 +2,9 @@ import Metrics
 import Store
 import SwiftUI
 
-/// Medication profiles (Settings > Medications). Lists every profile with its schedule and effect window, and adds
-/// one from a preset or as a custom entry. Tapping a row edits it; swipe deletes after a confirmation naming it.
+/// Medications: a set-once calculation setting, not a daily tracker. Used to compare stress during medicated hours
+/// against the medicated baseline. Lists each profile with its schedule, and adds one from a preset or as a custom
+/// entry. Tapping a row opens its detail, where doses are skipped or logged. Swipe deletes after a confirmation.
 struct MedicationsView: View {
     let environment: AppEnvironment
 
@@ -34,13 +35,44 @@ struct MedicationsView: View {
         }
     }
 
+    /// Shown once at the top of the screen. It says what the medications feed, not what to do.
+    private static let footnote = "Used to compare stress during medicated hours against your medicated baseline. "
+        + "Scheduled doses are assumed taken."
+
+    /// The default dose time for a new scheduled profile: 08:00, as minutes of the day.
+    private static let defaultDoseMinute = 8 * 60
+
     init(environment: AppEnvironment) {
         self.environment = environment
         _model = State(initialValue: MedicationsModel(database: environment.database, clock: environment.clock))
     }
 
+    private func startNew(_ preset: MedicationProfile.Preset, schedule: [Int]) {
+        let profile: MedicationProfile = preset.profile(id: model.newID(), scheduleMinutesOfDay: schedule)
+        editor = .new(profile)
+    }
+
+    private func startCustom() {
+        let profile = MedicationProfile(
+            id: model.newID(),
+            name: "",
+            medClass: .other,
+            formulation: .immediateRelease,
+            onsetMinutes: 30,
+            durationMinutes: 240,
+            scheduleMinutesOfDay: [Self.defaultDoseMinute]
+        )
+        editor = .new(profile)
+    }
+
     var body: some View {
         List {
+            Section {
+                Text(Self.footnote)
+                    .font(.footnote)
+                    .foregroundStyle(Palette.neutral)
+            }
+
             if model.profiles.isEmpty {
                 Section {
                     emptyState
@@ -51,7 +83,7 @@ struct MedicationsView: View {
                         Button {
                             editor = .edit(profile)
                         } label: {
-                            MedicationListRow(profile: profile, timeZone: model.timeZone)
+                            MedicationListRow(profile: profile)
                         }
                         .buttonStyle(.plain)
                         .swipeActions(edge: .trailing) {
@@ -62,9 +94,6 @@ struct MedicationsView: View {
                             }
                         }
                     }
-                } footer: {
-                    Text("Onset and duration are typical label figures, not measured for you. Effects are approximate "
-                        + "and not medical advice.")
                 }
             }
 
@@ -91,22 +120,14 @@ struct MedicationsView: View {
             // Each preset asks which schedule it takes: daily at 08:00 (editable), or as needed (no schedule).
             ForEach(MedicationProfile.Preset.allCases, id: \.self) { preset in
                 Button("\(preset.name), daily at 08:00") {
-                    editor = .new(preset.profile(id: model.newID(), scheduleMinutesOfDay: [8 * 60]))
+                    startNew(preset, schedule: [Self.defaultDoseMinute])
                 }
                 Button("\(preset.name), as needed") {
-                    editor = .new(preset.profile(id: model.newID(), scheduleMinutesOfDay: []))
+                    startNew(preset, schedule: [])
                 }
             }
             Button("Custom") {
-                editor = .new(MedicationProfile(
-                    id: model.newID(),
-                    name: "",
-                    medClass: .other,
-                    formulation: .immediateRelease,
-                    onsetMinutes: 30,
-                    durationMinutes: 240,
-                    scheduleMinutesOfDay: [8 * 60]
-                ))
+                startCustom()
             }
             Button("Cancel", role: .cancel) {}
         }
@@ -151,10 +172,9 @@ struct MedicationsView: View {
     }
 }
 
-/// One profile: name, class and formulation, then the schedule and its days.
+/// One profile: name, then its schedule summary and class and formulation.
 private struct MedicationListRow: View {
     let profile: MedicationProfile
-    let timeZone: TimeZone
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.s4) {
@@ -177,23 +197,18 @@ private struct MedicationListRow: View {
     private var detail: String {
         let kind = profile.medClass == .stimulant ? "Stimulant" : "Other"
         let formulation = profile.formulation == .extendedRelease ? "extended release" : "immediate release"
-        guard !profile.scheduleMinutesOfDay.isEmpty else {
-            return "\(kind), \(formulation), as needed"
-        }
-        let times = profile.scheduleMinutesOfDay.map { MedicationFormat.clock(minuteOfDay: $0) }.joined(separator: ", ")
-        return "\(kind), \(formulation), \(times), \(MedicationFormat.days(profile.weekdays))"
+        let schedule = MedicationFormat.schedule(times: profile.scheduleMinutesOfDay, weekdays: profile.weekdays)
+        return "\(schedule) · \(kind), \(formulation)"
     }
 }
 
-/// Shared text for medication rows and the editor.
+/// Shared text for medication rows and the detail screen.
 enum MedicationFormat {
-    static func clock(minuteOfDay minute: Int) -> String {
-        String(format: "%02d:%02d", minute / 60, minute % 60)
-    }
-
-    /// "every day" for an empty set, else the short day names in calendar order.
-    static func days(_ weekdays: Set<Int>) -> String {
-        guard !weekdays.isEmpty else { return "every day" }
-        return weekdays.sorted().map { Weekdays.veryShortName($0) }.joined(separator: " ")
+    /// "Daily 9:00", "Mon, Wed 9:00, 17:00", or "As needed" for an empty schedule.
+    static func schedule(times: [Int], weekdays: Set<Int>) -> String {
+        guard !times.isEmpty else { return "As needed" }
+        let days = weekdays.isEmpty ? "Daily" : weekdays.sorted().map { Weekdays.shortName($0) }.joined(separator: ", ")
+        let clocks = times.map { String(format: "%d:%02d", $0 / 60, $0 % 60) }.joined(separator: ", ")
+        return "\(days) \(clocks)"
     }
 }

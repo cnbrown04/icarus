@@ -1,8 +1,10 @@
 import Metrics
+import Store
 import SwiftUI
 
 /// Creates or edits one medication profile: name, class, formulation, onset, duration, dose times, repeat days and
-/// active state. Delete is at the bottom of an existing profile and asks first.
+/// active state. An existing profile also has its doses: skip a scheduled day, or log an as-needed dose, and the last
+/// seven days with remove. Delete is at the bottom of an existing profile and asks first.
 struct MedicationEditorView: View {
     let model: MedicationsModel
     let isNew: Bool
@@ -11,6 +13,8 @@ struct MedicationEditorView: View {
     @State private var draft: MedicationProfile
     @State private var confirmingDelete = false
     @State private var saving = false
+    @State private var skipping = false
+    @State private var logging = false
 
     init(model: MedicationsModel, initial: MedicationProfile, isNew: Bool) {
         self.model = model
@@ -52,7 +56,8 @@ struct MedicationEditorView: View {
                 } header: {
                     Text("Effect")
                 } footer: {
-                    Text("Minutes from a dose to the start of its effect, and how long the effect lasts.")
+                    Text("Minutes from a dose to the start of its effect, and how long the effect lasts. Typical label "
+                        + "figures, not measured for you. Approximate, and not medical advice.")
                 }
 
                 Section {
@@ -80,8 +85,8 @@ struct MedicationEditorView: View {
                     Text("Schedule")
                 } footer: {
                     Text(scheduleKind.wrappedValue == .daily
-                        ? "Scheduled doses count as taken on the days they fall due until you log or skip them."
-                        : "No schedule. Each dose is logged on the check-in when it is taken.")
+                        ? "Scheduled doses are assumed taken on the days they fall due, unless skipped."
+                        : "No schedule. Log each dose under Doses.")
                 }
 
                 if scheduleKind.wrappedValue == .daily {
@@ -94,10 +99,37 @@ struct MedicationEditorView: View {
                     }
                 }
 
+                if !isNew {
+                    Section {
+                        if draft.scheduleMinutesOfDay.isEmpty {
+                            Button("Log a dose…") {
+                                logging = true
+                            }
+                            .accessibilityIdentifier("medication.logDose")
+                        } else {
+                            Button("Skip a day…") {
+                                skipping = true
+                            }
+                            .accessibilityIdentifier("medication.skipDay")
+                        }
+                        let entries = model.recentDoses[draft.id] ?? []
+                        if entries.isEmpty {
+                            Text("Nothing logged in the last \(MedicationsModel.logWindowDays) days.")
+                                .foregroundStyle(Palette.neutral)
+                        } else {
+                            ForEach(entries) { entry in
+                                doseRow(entry)
+                            }
+                        }
+                    } header: {
+                        Text("Last \(MedicationsModel.logWindowDays) days")
+                    }
+                }
+
                 Section {
                     Toggle("Active", isOn: $draft.active)
                 } footer: {
-                    Text("Inactive medications add no check-in rows, doses or shading.")
+                    Text("Inactive medications add no doses or stress shading.")
                 }
 
                 if !isNew {
@@ -108,6 +140,12 @@ struct MedicationEditorView: View {
                         .accessibilityIdentifier("medication.delete")
                     }
                 }
+            }
+            .sheet(isPresented: $skipping) {
+                SkipDaySheet(model: model, medicationID: draft.id)
+            }
+            .sheet(isPresented: $logging) {
+                LogDoseSheet(model: model, medicationID: draft.id)
             }
             .navigationTitle(isNew ? "New medication" : (trimmedName.isEmpty ? "Medication" : trimmedName))
             .navigationBarTitleDisplayMode(.inline)
@@ -148,8 +186,33 @@ struct MedicationEditorView: View {
         }
     }
 
-    /// Daily at specific times, or as needed. As needed is an empty schedule, which yields doses only where a dose
-    /// was logged. Choosing Daily restores one 08:00 time.
+    /// One logged dose or skip, with remove.
+    private func doseRow(_ entry: DoseOverrideEntry) -> some View {
+        let text = doseText(entry)
+        return HStack {
+            Text(text)
+                .font(.subheadline)
+            Spacer()
+            Button {
+                Task { await model.removeDose(entry.id) }
+            } label: {
+                Image(systemName: "minus.circle")
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Remove " + text)
+        }
+    }
+
+    private func doseText(_ entry: DoseOverrideEntry) -> String {
+        let day = JournalFormat.dayTitle(entry.override.day, in: model.timeZone)
+        guard let atMs = entry.override.takenMs else {
+            return "\(day), skipped"
+        }
+        return "\(day), taken \(JournalFormat.clock(atMs, in: model.timeZone))"
+    }
+
+    /// Daily at specific times, or as needed. As needed is an empty schedule. Choosing Daily restores one 08:00 time.
     private enum ScheduleKind: Hashable {
         case daily
         case asNeeded
@@ -200,5 +263,82 @@ struct MedicationEditorView: View {
     private func minuteOfDay(_ date: Date) -> Int {
         let parts = calendar().dateComponents([.hour, .minute], from: date)
         return (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+    }
+}
+
+/// Skips the scheduled dose on one chosen day. Writes a skip that replaces anything logged that day.
+private struct SkipDaySheet: View {
+    let model: MedicationsModel
+    let medicationID: String
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var day = Date()
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    DatePicker("Day", selection: $day, displayedComponents: .date)
+                        .accessibilityIdentifier("medication.skipDate")
+                } footer: {
+                    Text("The scheduled dose on that day is not counted as taken.")
+                }
+            }
+            .navigationTitle("Skip a day")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Skip") {
+                        Task {
+                            await model.skipDay(medicationID, on: MedicationsModel.deviceDay(day))
+                            dismiss()
+                        }
+                    }
+                    .accessibilityIdentifier("medication.skipConfirm")
+                }
+            }
+        }
+    }
+}
+
+/// Logs one as-needed dose. The day defaults to today and the time to now. Other doses that day are kept.
+private struct LogDoseSheet: View {
+    let model: MedicationsModel
+    let medicationID: String
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var day = Date()
+    @State private var time = Date()
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    DatePicker("Day", selection: $day, displayedComponents: .date)
+                        .accessibilityIdentifier("medication.logDate")
+                    DatePicker("Time", selection: $time, displayedComponents: .hourAndMinute)
+                        .accessibilityIdentifier("medication.logTime")
+                }
+            }
+            .navigationTitle("Log a dose")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Log") {
+                        Task {
+                            await model.logDose(medicationID, on: MedicationsModel.deviceDay(day), at: time)
+                            dismiss()
+                        }
+                    }
+                    .accessibilityIdentifier("medication.logConfirm")
+                }
+            }
+        }
     }
 }
