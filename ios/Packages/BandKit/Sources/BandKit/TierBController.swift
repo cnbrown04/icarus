@@ -38,6 +38,16 @@ public enum TierBState: Sendable, Equatable {
     case unavailable
 }
 
+/// Outcome of the GET_ALARM_TIME read-back that follows each band alarm arming (whoop-parity §3.11).
+public enum AlarmReadBack: Sendable, Equatable {
+    /// The strap's reply carries the armed unix time.
+    case matched
+    /// The reply came back but does not carry the armed time. The raw payload is logged.
+    case mismatched
+    /// No reply, or the read-back was refused (disabled, not connected).
+    case noReply
+}
+
 public enum TierBError: Error, Sendable, Equatable {
     /// The toggle is off. Every call is rejected and nothing is written.
     case disabled
@@ -66,6 +76,9 @@ public actor TierBController {
     public static let batteryInterval: TimeInterval = 600
     /// The live HR stream is re-armed this often while the link is ready (NOOP's keep-alive).
     public static let realtimeRearmInterval: TimeInterval = 30
+    /// LINK_VALID (cmd 1) keep-alive cadence while the link is ready (whoop-parity §3.8). [Unverified]:
+    /// 30 s is the starting point, the same as the realtime re-arm; measure on hardware.
+    public static let linkValidInterval: TimeInterval = 30
     /// The history offload is restarted this often while the link is ready (NOOP's backfill cadence).
     /// The BACKFILL POLICY floors (see `BackfillPolicy`) are the real gate; this constant survives as
     /// the base periodic interval for callers that reference it.
@@ -107,6 +120,16 @@ public actor TierBController {
     private var lastBatteryRequest: Date?
     /// Re-arms the strap's live HR stream while the link is ready (PLAN.md 7.2).
     private var realtimeTask: Task<Void, Never>?
+    /// Sends LINK_VALID (cmd 1) every `linkValidInterval` while `.ready`. Cancelled wherever the realtime
+    /// task is, so the keep-alive never runs with the channel off or the link down.
+    private var linkTask: Task<Void, Never>?
+    /// Consecutive LINK_VALID writes that failed. Counted and logged only: no reconnect is forced yet.
+    public private(set) var linkValidFailures = 0
+    /// When the last LINK_VALID write was confirmed by the link on this connection, for the Device screen.
+    public private(set) var lastLinkValidAt: Date?
+    /// The last GET_ALARM_TIME read-back after arming: whether the strap's reply matched the armed time.
+    /// Nil until the first arming on this connection reads back. [Unverified] reply offset (see `rearmNext`).
+    public private(set) var lastAlarmReadBack: AlarmReadBack?
     /// Drives the strap's history offload: decodes type-47 records and produces the write and stop
     /// effects (PLAN.md 5.3.4).
     private var offload: HistoricalOffloadHandler
@@ -199,6 +222,7 @@ public actor TierBController {
             armedAlarm = nil
             realtimeTask?.cancel()
             realtimeTask = nil
+            stopLinkKeepAlive()
             stopOffloadForLinkLoss()
             failPending(.disabled)
             rhythmTask?.cancel()
@@ -306,6 +330,7 @@ public actor TierBController {
         await refreshBattery()
         await rearmRealtime()
         startRealtime()
+        startLinkKeepAlive()
         await runDrain(.connect)
         startOffloadCadence()
     }
@@ -317,6 +342,7 @@ public actor TierBController {
         armedAlarm = nil
         realtimeTask?.cancel()
         realtimeTask = nil
+        stopLinkKeepAlive()
         stopOffloadForLinkLoss()
         failPending(.notConnected)
         BandLog.tierB(.info, "link closed (enabled=\(enabled), state=\(state))")
@@ -332,6 +358,7 @@ public actor TierBController {
         handshakeStarted = false
         realtimeTask?.cancel()
         realtimeTask = nil
+        stopLinkKeepAlive()
         stopOffloadForLinkLoss()
         failPending(.notConnected)
         BandLog.tierB(.error, "link failed (enabled=\(enabled))")
@@ -622,6 +649,46 @@ public actor TierBController {
     private func rearmRealtime() async {
         guard enabled, state == .ready, linkOpen else { return }
         try? await writeConfirmedWithoutReply(.toggleRealtimeHR(on: true))
+    }
+
+    // MARK: Link keep-alive (LINK_VALID, cmd 1; whoop-parity §3.8)
+
+    /// Starts the LINK_VALID loop for this connection. [Unverified] layout and cadence: NOOP sends
+    /// cmd 1 while connected; nothing on hardware confirms the reply behaviour, so failures are only
+    /// counted and logged. The loop runs in its own task, like the realtime re-arm, and never takes
+    /// a slot in the one-at-a-time command queue.
+    private func startLinkKeepAlive() {
+        linkTask?.cancel()
+        linkValidFailures = 0
+        lastLinkValidAt = nil
+        let clock = clock
+        linkTask = Task {
+            while !Task.isCancelled {
+                try? await clock.sleep(seconds: Self.linkValidInterval)
+                guard !Task.isCancelled else { break }
+                await self.sendLinkValid()
+            }
+        }
+    }
+
+    private func stopLinkKeepAlive() {
+        linkTask?.cancel()
+        linkTask = nil
+    }
+
+    /// One LINK_VALID write. Fire-and-forget like `rearmRealtime`: a confirmed GATT write, no reply
+    /// awaited. Does nothing unless the channel is ready, so it is silent in every other state.
+    private func sendLinkValid() async {
+        guard enabled, state == .ready, linkOpen else { return }
+        do {
+            try await writeConfirmedWithoutReply(.linkValid())
+            linkValidFailures = 0
+            lastLinkValidAt = clock.now()
+        } catch {
+            linkValidFailures += 1
+            BandLog.tierB(.error, "LINK_VALID (cmd 1) write failed; \(linkValidFailures) in a row: \(String(describing: error))")
+        }
+        emit(.linkKeepAlive(sentAt: lastLinkValidAt, consecutiveFailures: linkValidFailures))
     }
 
     // MARK: Realtime-raw flood (PLAN.md 7.2 step 4)
@@ -1043,10 +1110,23 @@ public actor TierBController {
         } else if let kind = BandEventParser.parse(frame) {
             BandLog.tierB(.debug, "event: \(kind)")
             emit(.bandEvent(kind))
+            if kind == .batteryLevel || kind == .chargingOn || kind == .chargingOff {
+                // Payload layouts for these events are not pinned (whoop-parity §3.7), so the raw
+                // bytes go to the log for hardware capture rather than being guessed at.
+                BandLog.tierB(.info, "battery/charging event \(frame.cmd) payload=\(hex(frame.payload))")
+            }
             if kind == .batteryLevel, let percent = BatteryEvent.percent(frame.payload) {
                 // The battery EVENT carries a percent as well [Unverified]; the GET_BATTERY_LEVEL
                 // reply already emitted it, but the event is the strap's own push.
                 emit(.battery(percent))
+            }
+            if kind == .chargingOn || kind == .chargingOff {
+                // The event id itself is the state (events 7 and 8 per PLAN.md 5.3.4): no payload decode needed.
+                let charging = kind == .chargingOn
+                emit(.charging(charging))
+                // A charging change is the moment the percent moves, so read it now rather than at the next
+                // 10-minute poll. Detached: a reply arrives through this same receive path.
+                Task { await self.refreshBattery(force: true) }
             }
             if kind == .strapDrivenAlarmExecuted {
                 // The band has fired the alarm it was given. Drop it and arm the next due one.
@@ -1067,23 +1147,37 @@ public actor TierBController {
             // the raw-data viewer can show it. The emit is cheap — no hex formatting here.
             BandLog.tierB(.debug, "realtime raw: \(frame.payload.count) payload bytes")
             emit(.rawFrame(frame, at: clock.now()))
+        } else if frame.packetType == .consoleLogs {
+            // The firmware console (type 50, whoop-parity §3.5). Decoded to printable lines here; the
+            // app keeps a bounded ring of them for the Debug screen.
+            let lines = ConsoleLog.lines(payload: frame.payload)
+            if !lines.isEmpty {
+                emit(.consoleLines(lines, at: clock.now()))
+            }
         }
     }
 
     // MARK: Battery
 
     /// Reads the battery at most once per `batteryInterval` (PLAN.md 6.5). Does nothing before the handshake is done.
-    public func refreshBattery() async {
+    /// Each read is GET_BATTERY_LEVEL (26) followed by GET_EXTENDED_BATTERY_INFO (98), which is logged raw
+    /// because its layout is [Unverified] (whoop-parity §3.7). `force` skips the limiter for a charging change.
+    public func refreshBattery(force: Bool = false) async {
         guard enabled, state == .ready else { return }
         let now = clock.now()
-        if let last = lastBatteryRequest, now.timeIntervalSince(last) < Self.batteryInterval {
+        if !force, let last = lastBatteryRequest, now.timeIntervalSince(last) < Self.batteryInterval {
             return
         }
         lastBatteryRequest = now
-        guard let frame = try? await send(.getBatteryLevel()),
-              let percent = BatteryLevel.percent(payload: frame.payload)
-        else { return }
-        emit(.battery(Int(percent.rounded())))
+        if let frame = try? await send(.getBatteryLevel()),
+           let percent = BatteryLevel.percent(payload: frame.payload) {
+            emit(.battery(Int(percent.rounded())))
+        }
+        if let extended = try? await send(.getExtendedBatteryInfo()) {
+            BandLog.tierB(.info, "extended battery (cmd 98) reply: \(hex(extended.payload))")
+        } else {
+            BandLog.tierB(.info, "extended battery (cmd 98) got no reply")
+        }
     }
 
     // MARK: Band alarm (PLAN.md 9.5)
@@ -1105,8 +1199,31 @@ public actor TierBController {
         BandLog.tierB(.info, "arming band alarm for \(next)")
         if (try? await send(.setAlarmTime(unix: UInt32(unix)))) != nil {
             armedAlarm = next
+            await readBackAlarm(unix: UInt32(unix))
         } else {
             BandLog.tierB(.error, "arming band alarm for \(next) failed")
+        }
+    }
+
+    /// GET_ALARM_TIME (cmd 67) once after each arming: logs whether the strap holds the armed time.
+    /// [Unverified] reply layout: the armed time is read as a u32 LE at payload offset 2, the same spot
+    /// GET_CLOCK's reply carries its clock. A mismatch logs the raw payload so the layout can be pinned on hardware.
+    private func readBackAlarm(unix: UInt32) async {
+        guard let reply = try? await send(.getAlarmTime()) else {
+            lastAlarmReadBack = .noReply
+            BandLog.tierB(.info, "alarm read-back (cmd 67): no reply")
+            return
+        }
+        let p = reply.payload
+        let stored: UInt32? = p.count >= 6
+            ? UInt32(p[2]) | UInt32(p[3]) << 8 | UInt32(p[4]) << 16 | UInt32(p[5]) << 24
+            : nil
+        if stored == unix {
+            lastAlarmReadBack = .matched
+            BandLog.tierB(.info, "alarm read-back (cmd 67): matches the armed time \(unix)")
+        } else {
+            lastAlarmReadBack = .mismatched
+            BandLog.tierB(.error, "alarm read-back (cmd 67): armed \(unix), strap replied \(hex(p))")
         }
     }
 

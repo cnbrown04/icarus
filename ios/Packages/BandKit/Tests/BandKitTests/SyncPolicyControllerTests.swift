@@ -43,7 +43,7 @@ struct SyncPolicyControllerTests {
     @Test func aHealthyClockIsNotGratuitouslyReset() async {
         let h = Harness(responder: clockResponder(drift: 0))
         await h.controller.connectionOpened()
-        #expect(h.band.opcodes == [35, 11, 11, 34, 26, 3, 22], "no SET_CLOCK on a healthy clock")
+        #expect(h.band.opcodes == [35, 11, 11, 34, 26, 98, 3, 22], "no SET_CLOCK on a healthy clock")
         #expect(BandLog.capturedLines(2000).contains { $0.contains("clock within threshold; not set") })
     }
 
@@ -168,7 +168,7 @@ struct SyncPolicyControllerTests {
     @Test func aDrainIsCappedAtSixtySecondsSoLiveHRNeverStarves() async {
         let h = Harness()
         await h.controller.connectionOpened()
-        await settle { h.clock.sleeperCount == 3 }   // realtime re-arm + runCap + cadence
+        await settle { h.clock.sleeperCount == 4 }   // realtime re-arm + runCap + cadence
         // The quiet watchdog re-parks after each record, but its repark is lazy (no yield here),
         // so it never registers: the run-cap sleeper is the only registered deadline past t=60.
         for index in 0..<15 {
@@ -226,7 +226,7 @@ struct SyncPolicyControllerTests {
     @Test func theForegroundTriggerKeepsTheNinetySecondFloorAndManualIsUnfloored() async {
         let h = Harness()
         await h.controller.connectionOpened()
-        await settle { h.clock.sleeperCount == 3 }
+        await settle { h.clock.sleeperCount == 4 }
         await h.controller.syncNow(trigger: .foreground)
         #expect(h.band.opcodes.filter { $0 == 22 }.count == 1, "inside the event floor → skipped")
         // The advance wakes the connect drain's watchdogs; let the drain settle before kicking.
@@ -235,7 +235,7 @@ struct SyncPolicyControllerTests {
         await h.controller.syncNow(trigger: .foreground)
         #expect(h.band.opcodes.filter { $0 == 22 }.count == 2)
         // Wait until the new drain's run-cap sleeper is parked (registration is lazy)…
-        await settle { h.clock.sleeperCount == 3 }
+        await settle { h.clock.sleeperCount == 4 }
         // …then end it (run cap) before the manual kick.
         h.clock.advance(by: OffloadStateMachine.runCap)
         await settle { await h.controller.drainPhase != .draining }
@@ -246,7 +246,7 @@ struct SyncPolicyControllerTests {
     @Test func theStrapPromptEventKicksAStrapTriggeredDrain() async {
         let h = Harness()
         await h.controller.connectionOpened()
-        await settle { h.clock.sleeperCount == 3 }
+        await settle { h.clock.sleeperCount == 4 }
         // Immediately after the connect drain the .strap event floor (90 s) denies it…
         await h.controller.receive(eventFrame(96))
         #expect(h.band.opcodes.filter { $0 == 22 }.count == 1)

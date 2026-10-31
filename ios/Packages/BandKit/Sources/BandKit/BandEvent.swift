@@ -49,4 +49,11 @@ public enum BandEvent: Sendable, Equatable {
     /// (0x2B) accel/PPG flood (~1.9 KB/s), which nothing parses. The raw-data viewer shows its
     /// header and hex; consumers format hex lazily, because the flood never stops while streaming.
     case rawFrame(Frame, at: Date)
+    /// Charging state from the strap's charging-on (event 7) or charging-off (event 8) event (whoop-parity §3.7).
+    case charging(Bool)
+    /// The LINK_VALID keep-alive (cmd 1): when the last one was written and how many have failed in a row.
+    /// `sentAt` is nil until the first successful write on this link. [Unverified] cadence and behaviour.
+    case linkKeepAlive(sentAt: Date?, consecutiveFailures: Int)
+    /// Decoded lines of one CONSOLE_LOGS (type 50) frame, already stripped of non-printables (whoop-parity §3.5).
+    case consoleLines([String], at: Date)
 }
