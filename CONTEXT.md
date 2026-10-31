@@ -133,26 +133,46 @@ APNs `.p8` key + signing capability), TestFlight (no ASC secrets), Apple Watch, 
 
 ## Scores (2026-10-23)
 
-- `Database.dailyScores(day:in:)` (Store/DailyScores.swift) feeds Home (Recovery, Strain tiles) and
+- `Database.dailyScores(day:in:)` (Store/DailyScores.swift) feeds the Overview dials and
   Sleep (performance, need, debt, respiratory rate, regularity). Metrics ports: Recovery/Strain
   (NOOP), SleepNeed/SleepRegularity (NOOP debt + OpenStrap need/SRI), RespiratoryRate (OpenStrap RSA).
 - Strain uses Banister: Edwards zones start at 50 % HRR and scored a normal day 0.
-- Recovery baseline is one entry per local day over 60 days; shown as "Calibrating · n/14" until 14.
-- Nightly RHR/HRV/stress baselines come from the main sleep that ended on the day (fallback
+- Recovery baseline is one entry per local day over 60 days; shown as "Calibrating · n/14" until 14
+  (`RecoveryReadout` in HealthModel.swift is the one place that logic lives).
+- Nightly RHR/HRV baselines come from the main sleep that ended on the day (fallback
   00:00–06:00). Session RHR = lowest gated 5-min mean; RMSSD = mean of 5-min windows, never across gaps.
 - Sleep edits (`sleep_edit`, v6) are replayed onto every re-derivation.
+- **Stress (algo v3, 2026-10-30).** v1 scored awake windows against the SLEEP baseline (median ≈ 62 bpm,
+  tiny MAD), so 49 % of the user's scored minutes were ≥ 95. Now: baseline = awake windows (outside
+  sleep, not exertion) of the 14 prior local days; a day qualifies with 24 HR windows (12 for the R-R
+  baseline); sigma floors 4 bpm / 0.15 lnRMSSD; stress = round(100·Φ(raw − 0.44)) so the awake median
+  scores ≈ 33; hr_only weight 0.5; a valid-R-R window falls back to hr_only while the R-R baseline
+  calibrates. With stimulant windows (medications), medicated and unmedicated windows get their own
+  baselines (≥ 5 qualifying days each), else the combined one. Rust mirror (`icarus-core`) has the
+  non-medication rules only and was edited without `cargo` locally — CI is its first compile.
+- Stale minute rows (old algo, or `algo_version = 0` set by `markStressStale` after a medication edit)
+  rebuild via `MetricsWorker.recomputeStaleRows` — at launch and right after medication edits.
+- **Medications are a calculation input, not a tracker** (user's call): Settings → Medications only.
+  Scheduled doses are assumed taken (opt-in "Skip a day"); as-needed doses are logged there. They feed
+  the medicated stress baseline and the "stimulant within 1 h of sleep onset" line on Sleep/Recovery.
 
-## Current status (as of 2026-10-20)
+## Current status (as of 2026-10-30)
 
-- All packages green: BandProtocol 105, BandKit 154, Metrics 132, Store 102, SyncKit 58.
-- **Navigation**: bottom tabs **Home + Today**; **Settings (gear) and Alarms (bell) are top-right
-  toolbar buttons** opening modal sheets (rooted in NavigationStack with Done).
-- **Home** (summary): greeting + live pill; Last night (duration, quality, bedtime→wake, night RHR,
-  compact stage bar; tap → Sleep); vitals row (RHR / HRV / stress incl. calibrating X/7); today's
-  activity (zones + calories); next alarm; one-line server-sync status.
-- **Today** (decluttered): live HR hero + one stat line; 2×2 tiles (RHR, HRV, Stress, Calories);
-  zone timeline + slim zone strip; stress timeline + band strip; compact sleep card. Detail
-  explainers live only on the detail screens.
+- All packages green (2026-10-30): BandProtocol 111, BandKit 161, Metrics 336, Store 197, SyncKit 59,
+  AlarmKitBridge 27. App + test targets build for device (no iPhone simulator installed on this Mac).
+- **Navigation (2026-10-30, WHOOP-style; replaces Home + Today)**: tabs **Overview · Sleep · Strain ·
+  Health**; toolbar on every tab: Journal, Alarms, Settings (sheets). Plan and per-feature status:
+  `docs/whoop-app-roadmap.md`.
+  - **Overview**: day pager (chevrons/swipe, not past today) + Sleep / Recovery / Strain `ScoreDial`s
+    (strain shows the `StrainCoach` target band); cards: log-yesterday prompt, Health Monitor summary,
+    activities, sleep planner, next alarm, sync line, weekly assessment.
+  - **Sleep**: `SleepView` + `SleepPlannerCard` (Peak/Perform/Get-by bedtimes).
+  - **Strain**: live HR hero, strain dial + coach band (optional once-a-day band buzz on reaching it,
+    Settings → Coaching), zones, calories, activities (auto-detected from HR + manual recording, v9).
+  - **Health**: RHR/HRV/stress row, stress-today card, Health Monitor (vitals vs 30-night range; skin
+    temp relative only), Recovery detail, Trends (7/30/90 d), Journal insights, HR/stress/calorie details.
+  - Journal (v10): morning check-in on yesterday's behaviours + insights (≥ 5 days each side; correlation).
+  - Appearance defaults to Dark (Settings). Medication windows shade the HR and stress charts.
 - **Sleep staging**: faithful port of NOOP `SleepStagerV2` (30 s epochs; gravity movement/jerk,
   HR mean/flatness, R-R RSA regularity, cycle prior + REM-latency guard, Viterbi smoothing).
   Runs during sleep derivation, persisted in `sleep_stage_segment` (schema v4), keyed by
