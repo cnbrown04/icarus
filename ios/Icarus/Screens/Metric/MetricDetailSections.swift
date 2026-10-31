@@ -52,7 +52,8 @@ struct MetricSpecificSections: View {
 
     private func restingText(_ calories: CaloriesSplit) -> String {
         guard let total = calories.total, let active = calories.active else { return "—" }
-        return MetricFormat.withUnit(max(total - active, 0), .calories)
+        // From the rounded figures, so Active and Resting add up to the Total shown above them.
+        return MetricFormat.withUnit(max(total.rounded() - active.rounded(), 0), .calories)
     }
 }
 
