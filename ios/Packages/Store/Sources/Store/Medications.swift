@@ -125,6 +125,17 @@ struct MedicationOverrideRow: Codable, Equatable, FetchableRecord, PersistableRe
     }
 }
 
+/// One logged dose override with its row id, so a single dose can be listed and removed (v8).
+public struct DoseOverrideEntry: Sendable, Equatable, Identifiable {
+    public var id: String
+    public var override: DoseOverride
+
+    public init(id: String, override: DoseOverride) {
+        self.id = id
+        self.override = override
+    }
+}
+
 /// Medication profiles, dose overrides and the active-effect windows they produce (v8). Local only: nothing
 /// here syncs to the server. Call inside `DatabaseWriter.write` or `read`.
 extension Database {
@@ -159,6 +170,21 @@ extension Database {
         try execute(sql: """
         DELETE FROM medication_dose_override WHERE medication_id = ? AND local_day = ?
         """, arguments: [medicationID, MedicationOverrideRow.text(day)])
+    }
+
+    /// Removes one override by its row id. Other doses on the same day are kept.
+    public func deleteDoseOverride(id: String) throws {
+        try execute(sql: "DELETE FROM medication_dose_override WHERE id = ?", arguments: [id])
+    }
+
+    /// Every override for `day` with its row id, in the order they were logged. Lists the doses of an as-needed
+    /// medication so that one can be removed.
+    public func doseOverrideEntries(day: LocalDay) throws -> [DoseOverrideEntry] {
+        try MedicationOverrideRow.fetchAll(self, sql: """
+        SELECT * FROM medication_dose_override WHERE local_day = ? ORDER BY created_at, rowid
+        """, arguments: [MedicationOverrideRow.text(day)]).compactMap { row in
+            row.doseOverride().map { DoseOverrideEntry(id: row.id, override: $0) }
+        }
     }
 
     /// Overrides for days in `from...to` (both inclusive), oldest day first.
