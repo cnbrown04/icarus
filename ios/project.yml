@@ -146,3 +146,4 @@ schemes:
         - path: Unit.xctestplan
           defaultPlan: true
         - path: Screenshots.xctestplan
+        - path: Verify.xctestplan
