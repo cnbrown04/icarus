@@ -1,6 +1,9 @@
 /// Commands Icarus may send to the band (PLAN.md 5.3.4, decimal opcodes).
 /// `FrameCodec.encodeCommand` accepts only these, so denied opcodes cannot be built.
 public enum SafeCommand: UInt8, Sendable, CaseIterable {
+    /// LINK_VALID (cmd 1). Periodic link keep-alive while the custom service is ready (whoop-parity
+    /// §3.8). Payload and reply behaviour are [Unverified] beyond NOOP's use.
+    case linkValid = 1
     case toggleRealtimeHR = 3
     case setClock = 10
     case getClock = 11
@@ -8,6 +11,9 @@ public enum SafeCommand: UInt8, Sendable, CaseIterable {
     case sendHistoricalData = 22
     case historicalDataResult = 23
     case getBatteryLevel = 26
+    /// GET_EXTENDED_BATTERY_INFO (cmd 98). Read alongside cmd 26 on the 10-minute battery limiter
+    /// (whoop-parity §3.7). Reply layout is [Unverified]; the controller logs it raw.
+    case getExtendedBatteryInfo = 98
     /// SET_READ_POINTER (cmd 33, 0x21). Rewinds/positions the strap's persistent read cursor
     /// (OpenStrap PROTOCOL.md §2, §4.3: "the cursor can be repositioned with SET_READ_POINTER";
     /// the cursor survives connections and acks, so a rewind enables re-reading the whole stored

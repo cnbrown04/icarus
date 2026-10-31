@@ -90,6 +90,23 @@ struct BandCommandTests {
         #expect(hex(on.frame(seq: 0x15)) == "aa0800a823153f01fda4f7a6")
     }
 
+    /// LINK_VALID (cmd 1) and GET_EXTENDED_BATTERY_INFO (cmd 98) carry the standard `[0x00]` byte
+    /// and their envelopes are byte-exact (same CRC-8 / CRC-32 convention as the stop-haptics and
+    /// battery vectors). No capture pins either frame.
+    @Test func linkValidAndExtendedBatteryEncodeWithAPayloadByte() {
+        let link = BandCommand.linkValid()
+        #expect(link.command == .linkValid)
+        #expect(link.command.rawValue == 1)
+        #expect(link.payload == [0x00])
+        #expect(hex(link.frame(seq: 0x1A)) == "aa0800a8231a01002bc8699b")
+
+        let extended = BandCommand.getExtendedBatteryInfo()
+        #expect(extended.command == .getExtendedBatteryInfo)
+        #expect(extended.command.rawValue == 98)
+        #expect(extended.payload == [0x00])
+        #expect(hex(extended.frame(seq: 0x1B)) == "aa0800a8231b6200789a7bd4")
+    }
+
     // MARK: Envelope vectors (no captured band frame exists for these)
 
     /// SET_READ_POINTER (cmd 33, 0x21): the u32 offset, little-endian (OpenStrap §2/§4.3,

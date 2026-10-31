@@ -88,6 +88,20 @@ public struct BandCommand: Sendable, Equatable {
         BandCommand(.getBatteryLevel, payload: [0x00])
     }
 
+    /// GET_EXTENDED_BATTERY_INFO (cmd 98). Carries `[0x00]` (a command with an empty payload is
+    /// silently discarded by the strap). The reply layout is [Unverified]: NOOP decodes battery
+    /// fields from it, but no capture pins the offsets, so the controller logs the raw reply.
+    public static func getExtendedBatteryInfo() -> BandCommand {
+        BandCommand(.getExtendedBatteryInfo, payload: [0x00])
+    }
+
+    /// LINK_VALID (cmd 1). Carries `[0x00]`. The link keep-alive NOOP sends while connected
+    /// (whoop-parity §3.8). [Unverified]: the reply behaviour and the exact cadence on this firmware.
+    /// Sent as a fire-and-forget confirmed write by `TierBController`, never through the queue.
+    public static func linkValid() -> BandCommand {
+        BandCommand(.linkValid, payload: [0x00])
+    }
+
     /// GET_DATA_RANGE (cmd 34). Carries `[0x00]` (NOOP, verified on 4.0). [Unverified]
     public static func getDataRange() -> BandCommand {
         BandCommand(.getDataRange, payload: [0x00])

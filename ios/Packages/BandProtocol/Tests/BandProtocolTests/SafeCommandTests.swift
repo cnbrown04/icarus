@@ -32,6 +32,7 @@ struct SafeCommandTests {
         // original table (whoop-parity §3.4, PLAN.md §1 ground rules). 33 (SET_READ_POINTER) is
         // the same kind of addition: OpenStrap PROTOCOL.md §2/§4.3's repositionable read cursor,
         // which the app-deleted full-history restore needs.
-        #expect(raw == [3, 10, 11, 14, 22, 23, 26, 33, 34, 35, 63, 66, 67, 79, 80, 122])
+        // 1 (LINK_VALID) and 98 (GET_EXTENDED_BATTERY_INFO) are whoop-parity §3.8 and §3.7 additions.
+        #expect(raw == [1, 3, 10, 11, 14, 22, 23, 26, 33, 34, 35, 63, 66, 67, 79, 80, 98, 122])
     }
 }
