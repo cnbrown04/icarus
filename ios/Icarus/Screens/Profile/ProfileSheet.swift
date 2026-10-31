@@ -93,6 +93,7 @@ struct ProfileSheet: View {
                         LabeledContent("Band") {
                             Text(liveState.connectionText)
                                 .foregroundStyle(Palette.link(liveState.state))
+                                .lineLimit(1)
                         }
                     }
                 }
@@ -115,7 +116,7 @@ struct ProfileSheet: View {
                 }
 
                 Section("Display") {
-                    Picker("Length and mass", selection: $units.lengthMass) {
+                    Picker("Length and Mass", selection: $units.lengthMass) {
                         ForEach(LengthMassUnits.allCases) { unit in
                             Text(unit.label).tag(unit)
                         }
@@ -134,7 +135,7 @@ struct ProfileSheet: View {
                 }
 
                 Section("Coaching") {
-                    Toggle("Buzz when strain target is reached", isOn: $buzzOnTarget)
+                    Toggle("Buzz at Strain Target", isOn: $buzzOnTarget)
                         .accessibilityIdentifier("settings.buzzOnTarget")
                 }
 
@@ -145,13 +146,14 @@ struct ProfileSheet: View {
                         LabeledContent("Sync") {
                             Text(syncPhaseText)
                                 .foregroundStyle(Palette.sync(environment.sync.status.phase))
+                                .lineLimit(1)
                         }
                     }
                     if environment.sync.status.phase == .notPaired {
                         NavigationLink {
                             ServerView(sync: environment.sync)
                         } label: {
-                            Text("Pair with server")
+                            Text("Pair with Server")
                         }
                     } else {
                         NavigationLink {
@@ -166,13 +168,13 @@ struct ProfileSheet: View {
                 }
 
                 Section {
-                    Picker("Raw heart rate kept", selection: rawRetention) {
+                    Picker("Raw Heart Rate Kept", selection: rawRetention) {
                         ForEach(Self.rawRetentionChoices) { choice in
                             Text(choice.label).tag(choice.days)
                         }
                     }
                     .pickerStyle(.menu)
-                    Picker("Minute metrics kept", selection: minuteRetention) {
+                    Picker("Minute Metrics Kept", selection: minuteRetention) {
                         ForEach(Self.minuteRetentionChoices) { choice in
                             Text(choice.label).tag(choice.days)
                         }
@@ -188,7 +190,7 @@ struct ProfileSheet: View {
                     NavigationLink {
                         RawDataView(liveState: liveState)
                     } label: {
-                        Text("Raw band data")
+                        Text("Raw Band Data")
                     }
                 }
 

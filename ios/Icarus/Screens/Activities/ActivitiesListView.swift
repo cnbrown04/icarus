@@ -64,7 +64,7 @@ struct ActivitiesListView: View {
                 } label: {
                     Image(systemName: Symbol.record)
                 }
-                .accessibilityLabel("Record activity")
+                .accessibilityLabel("Record Activity")
             }
         }
         .sheet(isPresented: $isRecording) {
@@ -107,6 +107,7 @@ struct ActivityRowView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+            .lineLimit(1)
             Spacer(minLength: Spacing.s8)
             Text(ActivitiesModel.strainText(row.strain))
                 .font(.figure)

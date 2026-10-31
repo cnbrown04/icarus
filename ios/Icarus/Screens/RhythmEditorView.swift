@@ -47,7 +47,7 @@ struct RhythmEditorView: View {
                         add(.pause(ms: 300))
                     }
                 } label: {
-                    Label("Add step", systemImage: "plus.circle")
+                    Label("Add Step", systemImage: "plus.circle")
                 }
                 .disabled(!RhythmSpec.isValid(steps + [.buzz(preset: Self.buzzPreset, loops: 1)]))
                 .accessibilityIdentifier("rhythmEditor.add")
@@ -57,14 +57,14 @@ struct RhythmEditorView: View {
                 Button {
                     playOnPhone()
                 } label: {
-                    Label("Preview on phone", systemImage: "iphone")
+                    Label("Preview on Phone", systemImage: "iphone")
                 }
                 .accessibilityIdentifier("rhythmEditor.phone")
 
                 Button {
                     playOnBand()
                 } label: {
-                    Label("Preview on band", systemImage: "bolt.heart.fill")
+                    Label("Preview on Band", systemImage: "bolt.heart.fill")
                 }
                 .disabled(liveState.tierBState != .ready)
                 .accessibilityIdentifier("rhythmEditor.band")

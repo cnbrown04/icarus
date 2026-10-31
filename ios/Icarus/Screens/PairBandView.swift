@@ -56,7 +56,7 @@ struct PairBandView: View {
                 }
             }
         }
-        .navigationTitle("Pair band")
+        .navigationTitle("Pair Band")
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button(finishTitle, action: finish)

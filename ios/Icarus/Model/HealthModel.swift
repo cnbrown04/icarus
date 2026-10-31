@@ -102,8 +102,8 @@ extension HealthMonitor.Vital {
         switch self {
         case .restingHR: "Resting HR"
         case .hrv: "HRV"
-        case .respiratoryRate: "Respiratory rate"
-        case .skinTemp: "Skin temperature"
+        case .respiratoryRate: "Respiratory Rate"
+        case .skinTemp: "Skin Temperature"
         }
     }
 

@@ -17,9 +17,9 @@ struct BrowseView: View {
                 metricRow("Workouts", symbol: Symbol.workouts, category: .activity, route: .workouts)
             }
             categorySection(.heart) {
-                metricRow("Heart rate", symbol: Symbol.heartRate, category: .heart, route: .metric(.heartRate))
-                metricRow("Resting heart rate", symbol: Symbol.restingHR, category: .heart, route: .metric(.restingHR))
-                metricRow("Heart rate variability", symbol: Symbol.hrv, category: .heart, route: .metric(.hrv))
+                metricRow("Heart Rate", symbol: Symbol.heartRate, category: .heart, route: .metric(.heartRate))
+                metricRow("Resting Heart Rate", symbol: Symbol.restingHR, category: .heart, route: .metric(.restingHR))
+                metricRow("Heart Rate Variability", symbol: Symbol.hrv, category: .heart, route: .metric(.hrv))
             }
             categorySection(.recovery) {
                 metricRow("Recovery", symbol: Symbol.recovery, category: .recovery, route: .metric(.recovery))
@@ -30,7 +30,7 @@ struct BrowseView: View {
             }
             categorySection(.respiratory) {
                 metricRow(
-                    "Respiratory rate",
+                    "Respiratory Rate",
                     symbol: Symbol.respiratoryRate,
                     category: .respiratory,
                     route: .metric(.respiratoryRate)
@@ -58,7 +58,7 @@ struct BrowseView: View {
 
             Section("Reports") {
                 NavigationLink(value: AppRoute.weekly) {
-                    browseLabel("Weekly assessment", symbol: Symbol.weekly, color: .secondary)
+                    browseLabel("Weekly Assessment", symbol: Symbol.weekly, color: .secondary)
                 }
                 .accessibilityIdentifier("browse.weekly")
             }

@@ -58,7 +58,7 @@ struct HealthMonitorView: View {
                         .font(.subheadline)
                     EmptyStateRow(
                         text: "Vitals come from the night's sleep, so they appear after the band syncs it.",
-                        actionTitle: "Sync now"
+                        actionTitle: "Sync Now"
                     ) {
                         Task { await environment.sync.runNow() }
                     }
@@ -67,7 +67,7 @@ struct HealthMonitorView: View {
                 VStack(alignment: .leading, spacing: Spacing.s4) {
                     Text("Calibrating")
                         .font(.figure)
-                    Text("\(snapshot?.vitals.priorNights ?? 0) of \(HealthMonitor.minimumNights) nights. A personal range needs \(HealthMonitor.minimumNights) nights with a value.")
+                    Text("\(snapshot?.vitals.priorNights ?? 0) of \(HealthMonitor.minimumNights) nights for a personal range")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }

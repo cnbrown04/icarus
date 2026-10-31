@@ -56,7 +56,7 @@ struct AlarmEditorView: View {
                     NavigationLink {
                         RhythmEditorView(rhythm: $draft.rhythm, liveState: liveState)
                     } label: {
-                        Text("Edit steps")
+                        Text("Edit Steps")
                     }
                     .accessibilityIdentifier("alarmEditor.rhythm")
                 } header: {
@@ -87,7 +87,7 @@ struct AlarmEditorView: View {
                     }
                 }
             }
-            .navigationTitle(isNew ? "New alarm" : "Alarm")
+            .navigationTitle(isNew ? "New Alarm" : "Alarm")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

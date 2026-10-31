@@ -33,7 +33,7 @@ struct JournalInsightsView: View {
                 }
 
                 if !pending.isEmpty {
-                    Section("Needs more days") {
+                    Section("Needs More Days") {
                         ForEach(pending, id: \.id) { item in
                             Text("\(item.label) needs \(item.moreDays) more \(item.moreDays == 1 ? "day" : "days")")
                         }

@@ -192,7 +192,7 @@ struct SleepNightBars: View {
                     )
             }
         }
-        .accessibilityLabel("Sleep by night")
+        .accessibilityLabel("Sleep by Night")
     }
 
     private func nearest(to date: Date) -> SleepModel.Day? {
@@ -222,7 +222,7 @@ struct SleepStageBar: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Sleep stages")
+        .accessibilityLabel("Sleep Stages")
         .accessibilityValue(accessibilityValueText)
     }
 

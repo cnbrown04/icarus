@@ -36,7 +36,7 @@ struct ProfileView: View {
                         Text(sex.label).tag(ProfileDraft.Sex?.some(sex))
                     }
                 } label: {
-                    Text("Formula sex")
+                    Text("Formula Sex")
                 }
 
                 LabeledContent {
@@ -45,7 +45,7 @@ struct ProfileView: View {
                         .multilineTextAlignment(.trailing)
                         .accessibilityIdentifier("profile.birthYear")
                 } label: {
-                    Text("Birth year")
+                    Text("Birth Year")
                 }
 
                 if units.isImperial {
@@ -127,7 +127,7 @@ struct ProfileView: View {
                             .foregroundStyle(.secondary)
                     }
                 } label: {
-                    Text("Max heart rate")
+                    Text("Max Heart Rate")
                 }
             } footer: {
                 Text(hrMaxFooter)

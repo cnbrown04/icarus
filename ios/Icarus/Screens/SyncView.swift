@@ -19,9 +19,9 @@ struct SyncView: View {
                     }
                 }
                 TimelineView(.periodic(from: .now, by: 30)) { context in
-                    LabeledContent("Last success", value: lastSuccessText(now: context.date))
+                    LabeledContent("Last Success", value: lastSuccessText(now: context.date))
                 }
-                LabeledContent("Pending rows") {
+                LabeledContent("Pending Rows") {
                     Text("\(data?.pendingRows ?? 0) rows")
                         .monospacedDigit()
                 }
@@ -37,7 +37,7 @@ struct SyncView: View {
                         Text(interval.label).tag(interval.rawValue)
                     }
                 } label: {
-                    Label("Sync every", systemImage: "timer")
+                    Label("Sync Every", systemImage: "timer")
                 }
             } footer: {
                 Text("Uploads to the paired server. Band history syncs on the Band screen.")
@@ -83,10 +83,10 @@ struct SyncView: View {
                 }
             }
         }
-        .navigationTitle("Server sync")
+        .navigationTitle("Server Sync")
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("Sync now") {
+                Button("Sync Now") {
                     Task { await environment.sync.runNow() }
                 }
                 .disabled(environment.sync.isRunning)

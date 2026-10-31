@@ -56,12 +56,12 @@ struct SleepEditView: View {
                 }
 
                 Section {
-                    Button("Delete night", role: .destructive) {
+                    Button("Delete Night", role: .destructive) {
                         confirmDelete = true
                     }
                     .accessibilityIdentifier("sleepEdit.delete")
                     if night.isEdited {
-                        Button("Restore detected times") {
+                        Button("Restore Detected Times") {
                             restoreDetected()
                         }
                         .accessibilityIdentifier("sleepEdit.restore")
@@ -80,7 +80,7 @@ struct SleepEditView: View {
             }
             .environment(\.timeZone, timeZone)
             .environment(\.calendar, calendar)
-            .navigationTitle("Edit times")
+            .navigationTitle("Edit Times")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -97,7 +97,7 @@ struct SleepEditView: View {
                 }
             }
             .confirmationDialog("Delete the night of \(nightName)?", isPresented: $confirmDelete, titleVisibility: .visible) {
-                Button("Delete night", role: .destructive) {
+                Button("Delete Night", role: .destructive) {
                     deleteNight()
                 }
             }

@@ -96,10 +96,10 @@ struct ActivityDetailView: View {
         }
 
         Section {
-            LabeledContent("Average heart rate") {
+            LabeledContent("Average Heart Rate") {
                 Text(ActivitiesModel.bpmText(row.avgHR))
             }
-            LabeledContent("Max heart rate") {
+            LabeledContent("Max Heart Rate") {
                 Text(ActivitiesModel.bpmText(row.maxHR.map(Double.init)))
             }
             LabeledContent("Calories") {
@@ -107,7 +107,7 @@ struct ActivityDetailView: View {
             }
         }
 
-        Section("Heart rate") {
+        Section("Heart Rate") {
             if detail.points.isEmpty {
                 EmptyStateRow(text: "No heart rate in this span", actionTitle: nil, action: nil)
             } else {
@@ -156,7 +156,7 @@ struct ActivityDetailView: View {
         let average = detail.row.avgHR
         return Chart {
             ForEach(detail.points) { point in
-                LineMark(x: .value("Time", point.date), y: .value("Heart rate", point.bpm))
+                LineMark(x: .value("Time", point.date), y: .value("Heart Rate", point.bpm))
                     .interpolationMethod(.catmullRom)
                     .foregroundStyle(MetricCategory.activity.color)
             }
@@ -168,7 +168,7 @@ struct ActivityDetailView: View {
             if let selected {
                 RuleMark(x: .value("Selected", selected.date))
                     .foregroundStyle(.secondary)
-                PointMark(x: .value("Selected", selected.date), y: .value("Heart rate", selected.bpm))
+                PointMark(x: .value("Selected", selected.date), y: .value("Heart Rate", selected.bpm))
                     .foregroundStyle(MetricCategory.activity.color)
             }
         }
@@ -224,7 +224,7 @@ struct ActivityEditView: View {
             TextField("Name", text: $name)
                 .submitLabel(.done)
         }
-        .navigationTitle("Edit workout")
+        .navigationTitle("Edit Workout")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {

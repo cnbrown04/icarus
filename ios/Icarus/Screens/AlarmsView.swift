@@ -41,7 +41,7 @@ struct AlarmsView: View {
                 } label: {
                     Image(systemName: Symbol.record)
                 }
-                .accessibilityLabel("New alarm")
+                .accessibilityLabel("New Alarm")
                 .accessibilityIdentifier("alarms.add")
             }
         }
@@ -117,9 +117,9 @@ struct AlarmsView: View {
 
     private var emptyState: some View {
         ContentUnavailableView {
-            Label("No alarms", systemImage: Symbol.alarms)
+            Label("No Alarms", systemImage: Symbol.alarms)
         } actions: {
-            Button("New alarm") {
+            Button("New Alarm") {
                 editor = .new
             }
             .buttonStyle(.borderedProminent)

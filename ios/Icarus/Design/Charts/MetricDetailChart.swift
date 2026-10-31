@@ -38,7 +38,7 @@ struct MetricDetailChart: View {
             .chartXScale(domain: domain)
             .metricChartStyle()
             .chartXSelection(value: $selection)
-            .accessibilityLabel("Calories, today")
+            .accessibilityLabel("Calories, Today")
         } else {
             let range = dayDomain
             Chart {
@@ -112,7 +112,7 @@ struct MetricDetailChart: View {
             .chartYScale(domain: ChartDomain.line(data.rows.flatMap { [$0.low, $0.high].compactMap { $0 } }))
             .metricChartStyle()
             .chartXSelection(value: $selection)
-            .accessibilityLabel("Heart rate range by day")
+            .accessibilityLabel("Heart Rate Range by Day")
         } else if data.kind.aggregation == .sum {
             Chart {
                 ForEach(data.rows) { row in

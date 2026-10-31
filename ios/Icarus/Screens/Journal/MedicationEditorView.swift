@@ -37,8 +37,8 @@ struct MedicationEditorView: View {
                         Text("Other").tag(MedicationClass.other)
                     }
                     Picker("Formulation", selection: $draft.formulation) {
-                        Text("Immediate release").tag(MedicationFormulation.immediateRelease)
-                        Text("Extended release").tag(MedicationFormulation.extendedRelease)
+                        Text("Immediate Release").tag(MedicationFormulation.immediateRelease)
+                        Text("Extended Release").tag(MedicationFormulation.extendedRelease)
                     }
                 }
 
@@ -61,8 +61,8 @@ struct MedicationEditorView: View {
 
                 Section {
                     Picker("Schedule", selection: scheduleKind) {
-                        Text("Daily at").tag(ScheduleKind.daily)
-                        Text("As needed").tag(ScheduleKind.asNeeded)
+                        Text("Daily").tag(ScheduleKind.daily)
+                        Text("As Needed").tag(ScheduleKind.asNeeded)
                     }
                     .pickerStyle(.segmented)
                     if scheduleKind.wrappedValue == .daily {
@@ -76,7 +76,7 @@ struct MedicationEditorView: View {
                         .onDelete { offsets in
                             draft.scheduleMinutesOfDay.remove(atOffsets: offsets)
                         }
-                        Button("Add time") {
+                        Button("Add Time") {
                             draft.scheduleMinutesOfDay.append(draft.scheduleMinutesOfDay.last ?? MedicationFormat.defaultDoseMinute)
                         }
                     }
@@ -101,12 +101,12 @@ struct MedicationEditorView: View {
                 if !isNew {
                     Section {
                         if draft.scheduleMinutesOfDay.isEmpty {
-                            Button("Log a dose…") {
+                            Button("Log a Dose…") {
                                 logging = true
                             }
                             .accessibilityIdentifier("medication.logDose")
                         } else {
-                            Button("Skip a day…") {
+                            Button("Skip a Day…") {
                                 skipping = true
                             }
                             .accessibilityIdentifier("medication.skipDay")
@@ -136,7 +136,7 @@ struct MedicationEditorView: View {
 
                 if !isNew {
                     Section {
-                        Button("Delete medication", role: .destructive) {
+                        Button("Delete Medication", role: .destructive) {
                             confirmingDelete = true
                         }
                         .accessibilityIdentifier("medication.delete")
@@ -149,7 +149,7 @@ struct MedicationEditorView: View {
             .sheet(isPresented: $logging) {
                 LogDoseSheet(model: model, medicationID: draft.id)
             }
-            .navigationTitle(isNew ? "New medication" : (trimmedName.isEmpty ? "Medication" : trimmedName))
+            .navigationTitle(isNew ? "New Medication" : (trimmedName.isEmpty ? "Medication" : trimmedName))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -286,7 +286,7 @@ private struct SkipDaySheet: View {
                     Text("The scheduled dose on that day is not counted as taken.")
                 }
             }
-            .navigationTitle("Skip a day")
+            .navigationTitle("Skip a Day")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -325,7 +325,7 @@ private struct LogDoseSheet: View {
                         .accessibilityIdentifier("medication.logTime")
                 }
             }
-            .navigationTitle("Log a dose")
+            .navigationTitle("Log a Dose")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

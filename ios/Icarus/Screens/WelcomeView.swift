@@ -14,9 +14,9 @@ struct WelcomeView: View {
                     .foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: Spacing.s16) {
-                FeatureRow(symbol: Symbol.heartRate, title: "Live heart rate")
+                FeatureRow(symbol: Symbol.heartRate, title: "Live Heart Rate")
                 FeatureRow(symbol: Symbol.stress, title: "Stress and HRV")
-                FeatureRow(symbol: Symbol.alarms, title: "Alarms on your wrist")
+                FeatureRow(symbol: Symbol.alarms, title: "Alarms on Your Wrist")
             }
             Button(action: onContinue) {
                 Text("Continue")

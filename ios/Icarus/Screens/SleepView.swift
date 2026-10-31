@@ -185,7 +185,7 @@ struct SleepView: View {
         let latestID = snapshot.latest?.id
         let nights = snapshot.recent.nights.filter { $0.id != latestID }
         if !nights.isEmpty {
-            Section("Previous nights") {
+            Section("Previous Nights") {
                 ForEach(nights) { night in
                     NavigationLink {
                         SleepNightDetailView(
@@ -225,7 +225,7 @@ struct SleepView: View {
 
     private var aboutSection: some View {
         Section {
-            DisclosureGroup("About sleep") {
+            DisclosureGroup("About Sleep") {
                 Text("Times, stages and scores are estimates from heart rate and motion, not WHOOP's measurements. Nights without stages count their whole time in bed as asleep. Naps are listed with the nights and never replace the main sleep.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -309,7 +309,7 @@ private func scoreRows(efficiency: Double?, row: DailyScoreRow?, latest: DailySc
     scoreRow("Regularity", latest?.sleepRegularityIndex.map { "\(Int($0.rounded()))" })
     scoreRow("Consistency", latest?.sleepConsistency.map { Format.percent($0) })
     if latest?.stimulantNearSleepOnset == true {
-        LabeledContent("Stimulant", value: "Within 1 h of sleep onset")
+        LabeledContent("Stimulant at Bedtime", value: "Within 1 h")
     }
 }
 

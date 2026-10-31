@@ -22,13 +22,13 @@ struct ServerView: View {
     var body: some View {
         Form {
             Section {
-                TextField("Server address", text: $address)
+                TextField("Server Address", text: $address)
                     .keyboardType(.URL)
                     .textContentType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("server.address")
-                TextField("Pairing code", text: $code)
+                TextField("Pairing Code", text: $code)
                     .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("server.code")
@@ -38,13 +38,13 @@ struct ServerView: View {
 
             Section {
                 Button(action: pasteFromClipboard) {
-                    Label("Paste from clipboard", systemImage: "doc.on.clipboard")
+                    Label("Paste from Clipboard", systemImage: "doc.on.clipboard")
                 }
             }
 
             if let onSkip {
                 Section {
-                    Button("Skip for now", action: onSkip)
+                    Button("Skip for Now", action: onSkip)
                         .accessibilityIdentifier("server.skip")
                 } footer: {
                     Text("Without a server, data stays on this iPhone.")

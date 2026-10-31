@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Shown before the band channel turns on (PLAN.md 6.2, 19 Phase 6). Plain statements: the protocol comes from
 /// community documentation, it carries WHOOP terms risk, WHOOP does not support it, and a firmware update can end it.
-/// The owner accepted this risk on 2026-10-08. Nothing is turned on until "Turn on" is tapped.
+/// The owner accepted this risk on 2026-10-08. Nothing is turned on until "Turn On" is tapped.
 struct BandChannelExplainerView: View {
     let onTurnOn: () -> Void
     let onCancel: () -> Void
@@ -30,7 +30,7 @@ struct BandChannelExplainerView: View {
                 .padding(.vertical, Spacing.s24)
             }
             .safeAreaInset(edge: .bottom) {
-                Button("Turn on", action: onTurnOn)
+                Button("Turn On", action: onTurnOn)
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .frame(maxWidth: .infinity)
@@ -38,7 +38,7 @@ struct BandChannelExplainerView: View {
                     .padding(.vertical, Spacing.s12)
                     .accessibilityIdentifier("bandChannel.turnOn")
             }
-            .navigationTitle("Band channel")
+            .navigationTitle("Band Channel")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

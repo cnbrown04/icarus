@@ -100,11 +100,11 @@ struct MedicationsView: View {
                 } label: {
                     Image(systemName: Symbol.record)
                 }
-                .accessibilityLabel("Add medication")
+                .accessibilityLabel("Add Medication")
                 .accessibilityIdentifier("medications.add")
             }
         }
-        .confirmationDialog("Add medication", isPresented: $showingPresets, titleVisibility: .visible) {
+        .confirmationDialog("Add Medication", isPresented: $showingPresets, titleVisibility: .visible) {
             // Each preset asks which schedule it takes: daily at 08:00 (editable), or as needed (no schedule).
             ForEach(MedicationProfile.Preset.allCases, id: \.self) { preset in
                 Button("\(preset.name), daily at \(MedicationFormat.clock(minuteOfDay: MedicationFormat.defaultDoseMinute))") {
@@ -147,9 +147,9 @@ struct MedicationsView: View {
 
     private var emptyState: some View {
         ContentUnavailableView {
-            Label("No medications", systemImage: Symbol.medications)
+            Label("No Medications", systemImage: Symbol.medications)
         } actions: {
-            Button("Add medication") {
+            Button("Add Medication") {
                 showingPresets = true
             }
             .buttonStyle(.borderedProminent)
@@ -168,13 +168,14 @@ private struct MedicationListRow: View {
                 Text(profile.name)
                 if !profile.active {
                     Text("Inactive")
-                        .font(.caption)
-                        .foregroundStyle(Palette.neutral)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
             Text(detail)
-                .font(.caption)
-                .foregroundStyle(Palette.neutral)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)

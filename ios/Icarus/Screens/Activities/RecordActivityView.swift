@@ -38,7 +38,7 @@ struct RecordActivityView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle(isRecording ? "Recording" : "Record workout")
+        .navigationTitle(isRecording ? "Recording" : "Record Workout")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if !isRecording {
@@ -55,7 +55,7 @@ struct RecordActivityView: View {
             } else {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
-                        Button("Discard workout", role: .destructive) {
+                        Button("Discard Workout", role: .destructive) {
                             confirmDiscard = true
                         }
                     } label: {
@@ -72,7 +72,7 @@ struct RecordActivityView: View {
             }
         }
         .confirmationDialog("Discard this workout?", isPresented: $confirmDiscard, titleVisibility: .visible) {
-            Button("Discard workout", role: .destructive) {
+            Button("Discard Workout", role: .destructive) {
                 discard()
             }
         }
@@ -113,7 +113,7 @@ struct RecordActivityView: View {
             }
         }
         Section {
-            LabeledContent("Heart rate") {
+            LabeledContent("Heart Rate") {
                 LiveBPMText(liveState: liveState)
             }
             LabeledContent("Strain") {
