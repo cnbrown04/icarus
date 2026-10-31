@@ -19,6 +19,8 @@ struct SettingsView: View {
     @AppStorage(RetentionPolicy.minuteDaysKey) private var minuteDaysStored = Int(RetentionPolicy.minuteDaysDefault)
     /// Strain Coach: buzz the band once a day when day strain reaches the target (`TargetBuzzController`).
     @AppStorage(TargetBuzzController.enabledKey) private var buzzOnTarget = false
+    /// Applied at the app root (`IcarusApp`). Dark is the default.
+    @AppStorage("appearance") private var appearance: AppAppearance = .dark
 
     /// Five taps on the version row opens the hidden Debug screen (PLAN.md §14 row 18).
     private static let debugTapCount = 5
@@ -98,6 +100,19 @@ struct SettingsView: View {
             }
 
             Section {
+                Picker("Appearance", selection: $appearance) {
+                    ForEach(AppAppearance.allCases) { option in
+                        Text(option.label).tag(option)
+                    }
+                }
+                .accessibilityIdentifier("settings.appearance")
+            } header: {
+                Text("Appearance")
+            } footer: {
+                Text("Dark is the default. System follows the iPhone setting.")
+            }
+
+            Section {
                 Toggle(isOn: $buzzOnTarget) {
                     settingsLabel("Buzz at strain target", symbol: "waveform", tint: Palette.strain)
                 }
@@ -106,6 +121,17 @@ struct SettingsView: View {
                 Text("Coaching")
             } footer: {
                 Text("The band buzzes once a day, when day strain first reaches the Strain Coach target.")
+            }
+
+            Section {
+                NavigationLink {
+                    MedicationsView(environment: environment)
+                } label: {
+                    settingsLabel("Medications", symbol: "pills.fill", tint: Palette.sleep)
+                }
+                .accessibilityIdentifier("settings.medications")
+            } footer: {
+                Text("Stimulant windows are estimated from your profiles and logged doses. They shade the heart rate and stress charts.")
             }
 
             Section("Band") {

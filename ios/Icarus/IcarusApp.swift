@@ -5,6 +5,7 @@ struct IcarusApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var environment: AppEnvironment
     @State private var liveState: LiveState
+    @AppStorage("appearance") private var appearance: AppAppearance = .dark
     private let config: LaunchConfig
 
     init() {
@@ -26,6 +27,7 @@ struct IcarusApp: App {
         WindowGroup {
             RootView(environment: environment, liveState: liveState, config: config)
                 .tint(Palette.heartRate)
+                .preferredColorScheme(appearance.colorScheme)
                 .task {
                     environment.startIngestion()
                     liveState.start()
