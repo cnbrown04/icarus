@@ -1,0 +1,286 @@
+import Foundation
+import GRDB
+import Metrics
+import Store
+
+/// The ranges a metric page offers. Intraday metrics add the day view (D), so they default to it; daily metrics
+/// start at the week (W).
+enum MetricRange: String, CaseIterable, Identifiable, Sendable {
+    case day
+    case week
+    case month
+    case sixMonths
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .day: "D"
+        case .week: "W"
+        case .month: "M"
+        case .sixMonths: "6M"
+        }
+    }
+
+    /// Local days covered, ending today. The day range covers one day.
+    var days: Int {
+        switch self {
+        case .day: 1
+        case .week: 7
+        case .month: 30
+        case .sixMonths: 182
+        }
+    }
+
+    static func options(for kind: MetricKind) -> [MetricRange] {
+        kind.hasIntraday ? allCases : [.week, .month, .sixMonths]
+    }
+
+    static func defaultRange(for kind: MetricKind) -> MetricRange {
+        kind.hasIntraday ? .day : .week
+    }
+}
+
+/// One daily bar or point: a local day's value, and its heart-rate range where the metric has one.
+struct MetricDayRow: Identifiable, Sendable, Equatable {
+    /// Epoch ms of local noon, which is unique per day and places the mark mid-day.
+    let id: Int64
+    let date: Date
+    let value: Double?
+    let low: Double?
+    let high: Double?
+}
+
+/// Calories split for today: the active part and the total, from `Dashboard.calories`.
+struct CaloriesSplit: Sendable, Equatable {
+    let active: Double?
+    let total: Double?
+}
+
+/// Everything a metric page shows for one range, read in one store pass through `MetricSeries`.
+struct MetricDetailData: Sendable {
+    let kind: MetricKind
+    let range: MetricRange
+    let timeZone: TimeZone
+    let nowMs: Int64
+    /// Local midnight today and the next midnight, the span the day view charts.
+    let dayStartMs: Int64
+    let dayEndMs: Int64
+    /// Intraday values for today, oldest first. Empty for daily ranges.
+    let points: [MetricPoint]
+    /// One row per local day, oldest first. Empty for the day range.
+    let rows: [MetricDayRow]
+    /// The period's value: the mean, or the total for sums. Nil when the range has no values.
+    let value: Double?
+    let minimum: Double?
+    let maximum: Double?
+    /// The same measure over the previous equal period (yesterday for the day range). Nil when it has no values.
+    let previousValue: Double?
+    /// Caption under the header value, e.g. "Average · Oct 24–30" or "Latest · 21:42".
+    let caption: String
+    /// Minutes in each heart-rate zone over the range. Heart rate only.
+    let zones: [ZoneMinutes]
+    /// Stimulant-active windows that overlap today. Shown on the day view of heart rate and stress only.
+    let medication: [MedicationWindow]
+    /// Stress calibration progress. Stress only.
+    let calibration: StressCalibrationProgress?
+    /// Today's calories split. Calories day view only.
+    let calories: CaloriesSplit?
+    /// Today's recovery contributors and the 30-night reference. Recovery only.
+    let snapshot: HealthSnapshot?
+
+    var isEmpty: Bool {
+        value == nil && points.isEmpty && rows.allSatisfy { $0.value == nil }
+    }
+
+    func nearestPoint(to date: Date) -> MetricPoint? {
+        points.min { lhs, rhs in
+            abs(Date(epochMs: lhs.tsMs).timeIntervalSince(date)) < abs(Date(epochMs: rhs.tsMs).timeIntervalSince(date))
+        }
+    }
+
+    func nearestRow(to date: Date) -> MetricDayRow? {
+        rows.min { lhs, rhs in
+            abs(lhs.date.timeIntervalSince(date)) < abs(rhs.date.timeIntervalSince(date))
+        }
+    }
+}
+
+/// Reads a metric page's data. Every value comes from `MetricSeries` (or the existing score and stress readers
+/// that feed the same number), so a value is the same on every screen that shows it.
+enum MetricDetailModel {
+    static func load(_ db: Database, nowMs: Int64, kind: MetricKind, range: MetricRange) throws -> MetricDetailData {
+        let context = try Dashboard.Context.load(db, nowMs: nowMs)
+        let zone = context.timeZone
+        let today = context.today
+        let dayStartMs = LocalTime.localTime(today, hour: 0, in: zone)
+        let dayEndMs = LocalTime.localTime(LocalTime.adding(days: 1, to: today), hour: 0, in: zone)
+
+        var points: [MetricPoint] = []
+        var rows: [MetricDayRow] = []
+        var value: Double?
+        var minimum: Double?
+        var maximum: Double?
+        var previousValue: Double?
+        var caption: String
+
+        if range == .day {
+            points = try db.metricIntraday(kind, day: today, in: zone)
+            let values = points.map(\.value)
+            value = aggregate(values, kind)
+            minimum = values.min()
+            maximum = values.max()
+            let yesterday = LocalTime.adding(days: -1, to: today)
+            previousValue = aggregate(try db.metricIntraday(kind, day: yesterday, in: zone).map(\.value), kind)
+            if kind.aggregation == .sum {
+                caption = "Total · today"
+            } else if let last = points.last {
+                caption = "Latest · \(Format.clock(last.tsMs, in: zone))"
+            } else {
+                caption = "Latest · today"
+            }
+        } else {
+            let first = LocalTime.adding(days: -(range.days - 1), to: today)
+            let days = try db.metricDays(kind, from: first, through: today, in: zone)
+            let ranges = kind == .heartRate
+                ? try db.heartRateRange(from: first, through: today, in: zone)
+                : []
+            rows = days.map { entry in
+                let bounds = ranges.first { $0.day == entry.day }
+                return MetricDayRow(
+                    id: LocalTime.localTime(entry.day, hour: 12, in: zone),
+                    date: Date(epochMs: LocalTime.localTime(entry.day, hour: 12, in: zone)),
+                    value: entry.value,
+                    low: bounds?.min,
+                    high: bounds?.max
+                )
+            }
+            let present = days.compactMap(\.value)
+            value = aggregate(present, kind)
+            if kind == .heartRate {
+                minimum = ranges.map(\.min).min()
+                maximum = ranges.map(\.max).max()
+            } else {
+                minimum = present.min()
+                maximum = present.max()
+            }
+            let previousFirst = LocalTime.adding(days: -range.days, to: first)
+            let previousLast = LocalTime.adding(days: -1, to: first)
+            let previous = try db.metricDays(kind, from: previousFirst, through: previousLast, in: zone)
+            previousValue = aggregate(previous.compactMap(\.value), kind)
+            let label = MetricFormat.rangeLabel(first, today, in: zone)
+            caption = "\(kind.aggregation == .sum ? "Total" : "Average") · \(label)"
+        }
+
+        var zones: [ZoneMinutes] = []
+        if kind == .heartRate, let restingHR = context.restingHR, let maxHR = context.maxHR {
+            let fromMs = range == .day ? dayStartMs : LocalTime.localTime(
+                LocalTime.adding(days: -(range.days - 1), to: today),
+                hour: 0,
+                in: zone
+            )
+            let minutes = try db.minuteMetricRows(from: fromMs, to: dayEndMs)
+            zones = HeartRateSeries.zoneMinutes(minutes, restingHR: restingHR, maxHR: maxHR)
+        }
+
+        var medication: [MedicationWindow] = []
+        if range == .day, kind == .heartRate || kind == .stress {
+            medication = try db.medicationWindows(from: today, to: today, in: zone)
+                .clipped(toMs: dayStartMs, dayEndMs)
+        }
+
+        var calibration: StressCalibrationProgress?
+        if kind == .stress {
+            calibration = try Dashboard.stressCalibration(db, nowMs: nowMs, context: context)
+        }
+
+        var calories: CaloriesSplit?
+        if kind == .calories, range == .day {
+            let snapshot = try Dashboard.calories(db, nowMs: nowMs)
+            calories = CaloriesSplit(active: snapshot.active, total: snapshot.total)
+        }
+
+        var snapshot: HealthSnapshot?
+        if kind == .recovery {
+            snapshot = try HealthSnapshot.load(db, nowMs: nowMs, day: nil, seriesDays: 30)
+        }
+
+        return MetricDetailData(
+            kind: kind,
+            range: range,
+            timeZone: zone,
+            nowMs: nowMs,
+            dayStartMs: dayStartMs,
+            dayEndMs: dayEndMs,
+            points: points,
+            rows: rows,
+            value: value,
+            minimum: minimum,
+            maximum: maximum,
+            previousValue: previousValue,
+            caption: caption,
+            zones: zones,
+            medication: medication,
+            calibration: calibration,
+            calories: calories,
+            snapshot: snapshot
+        )
+    }
+
+    /// The period value: a mean for averaged metrics, a total for sums. Nil when there are no values.
+    static func aggregate(_ values: [Double], _ kind: MetricKind) -> Double? {
+        guard !values.isEmpty else { return nil }
+        let total = values.reduce(0, +)
+        switch kind.aggregation {
+        case .sum: return total
+        case .average: return total / Double(values.count)
+        }
+    }
+}
+
+/// Display text for metric values and ranges. Numbers are locale-aware, and the unit follows after a regular space.
+enum MetricFormat {
+    /// A value with the metric's decimal places, no unit.
+    static func number(_ value: Double, _ kind: MetricKind) -> String {
+        if kind == .sleep {
+            return Format.duration(Int64(value))
+        }
+        return value.formatted(.number.precision(.fractionLength(kind.fractionDigits)))
+    }
+
+    /// A value with its unit, e.g. "65 bpm". Metrics without a unit show the number alone.
+    static func withUnit(_ value: Double, _ kind: MetricKind) -> String {
+        let text = number(value, kind)
+        guard let unit = kind.unit else { return text }
+        return "\(text) \(unit)"
+    }
+
+    /// A signed change, e.g. "+3 bpm" or "−2 bpm".
+    static func change(_ value: Double, _ kind: MetricKind) -> String {
+        let text = number(abs(value), kind)
+        let sign = value > 0 ? "+" : (value < 0 ? "−" : "")
+        guard let unit = kind.unit else { return "\(sign)\(text)" }
+        return "\(sign)\(text) \(unit)"
+    }
+
+    /// "Oct 24–30" within one month, or "Oct 24–Nov 2" across months.
+    static func rangeLabel(_ first: LocalDay, _ last: LocalDay, in zone: TimeZone) -> String {
+        let start = shortDate(first, in: zone)
+        if first == last { return start }
+        let sameMonth = first.year == last.year && first.month == last.month
+        let end = sameMonth ? "\(last.day)" : shortDate(last, in: zone)
+        return "\(start)–\(end)"
+    }
+
+    /// "Oct 24" for a local day.
+    static func shortDate(_ day: LocalDay, in zone: TimeZone) -> String {
+        shortDate(Date(epochMs: LocalTime.localTime(day, hour: 12, in: zone)), in: zone)
+    }
+
+    static func shortDate(_ date: Date, in zone: TimeZone) -> String {
+        let formatter = DateFormatter()
+        formatter.timeZone = zone
+        formatter.setLocalizedDateFormatFromTemplate("MMMd")
+        return formatter.string(from: date)
+    }
+}
