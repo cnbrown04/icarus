@@ -205,7 +205,12 @@ extension Database {
 
     /// Removes one override by its row id. Other doses on the same day are kept.
     public func deleteDoseOverride(id: String) throws {
+        let row = try MedicationOverrideRow.fetchOne(self, sql: "SELECT * FROM medication_dose_override WHERE id = ?",
+                                                     arguments: [id])
         try execute(sql: "DELETE FROM medication_dose_override WHERE id = ?", arguments: [id])
+        if let day = row.flatMap({ MedicationOverrideRow.day($0.localDay) }) {
+            try markStressStale(override: day)
+        }
     }
 
     /// Every override for `day` with its row id, in the order they were logged. Lists the doses of an as-needed

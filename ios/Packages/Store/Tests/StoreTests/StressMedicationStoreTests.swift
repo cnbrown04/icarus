@@ -75,6 +75,28 @@ struct StressMedicationStoreTests {
         #expect(try staleRowCount(database) > 0)
     }
 
+    /// Removing one logged dose changes the same days adding it did, so it marks them stale too.
+    @Test func deleteDoseOverrideMarksItsDayStale() async throws {
+        let database = try seededDatabase()
+        try storeMinuteSamples(into: database, endingAt: testNowMs, minutes: 30, bpm: 60)
+        let worker = MetricsWorker(database: database)
+        _ = try await worker.recompute(nowMs: testNowMs)
+        let adderall = MedicationProfile.Preset.amphetamineIR.profile(id: "adderall", scheduleMinutesOfDay: [])
+        let overrideDay = LocalTime.adding(days: -1, to: LocalTime.localDay(containing: testNowMs, in: chicago))
+        let id = try await database.writer.write { db -> String in
+            try db.saveMedication(adderall, nowMs: testNowMs)
+            return try db.addDoseOverride(
+                DoseOverride(medicationID: "adderall", day: overrideDay, kind: .taken(atMs: testNowMs - 3_600_000)),
+                nowMs: testNowMs
+            )
+        }
+        _ = try await worker.recomputeStaleRows(nowMs: testNowMs)
+        #expect(try staleRowCount(database) == 0)
+
+        try await database.writer.write { try $0.deleteDoseOverride(id: id) }
+        #expect(try staleRowCount(database) == 30)
+    }
+
     @Test func stimulantActiveJustBeforeSleepIsFlagged() throws {
         let database = try AppDatabase.inMemory()
         // Immediate-release dose at 22:45 with a 30 min onset: the stimulant starts 23:15, before the 23:30 sleep.
