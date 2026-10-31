@@ -369,9 +369,9 @@ struct TierBControllerTests {
         let setClocks = h.band.commands.filter { $0.cmd == 10 }
         #expect(setClocks.count == 4, "both forms, once per connection")
         let secs = littleEndian(UInt32(ManualClock.origin.timeIntervalSince1970))
-        #expect(setClocks[0].payload == secs + [0, 0, 0, 0], "the 8-byte form first")
+        #expect(setClocks[0].payload == secs + [0, 0, 0, 0] + [0], "the 8-byte form first, plus one zero of command padding")
         #expect(setClocks[1].payload == secs + [0, 0, 0, 0, 0], "then the legacy 9-byte form")
-        #expect(setClocks[2].payload == secs + [0, 0, 0, 0])
+        #expect(setClocks[2].payload == secs + [0, 0, 0, 0] + [0])
         #expect(setClocks[3].payload == secs + [0, 0, 0, 0, 0])
         let opcodes = h.band.opcodes
         if let first = opcodes.firstIndex(of: 10) {
@@ -673,9 +673,11 @@ struct TierBControllerTests {
         await endRunningDrain(h)
         let cmd22Baseline = h.band.opcodes.filter { $0 == 22 }.count
         let kicks = AtomicCounter()
+        let range = RewindableRing(ring)
         h.band.setMultiResponder { request, _ in
             switch request.cmd {
-            case 34: return [reply(to: request, payload: ring)]
+            case 33: range.apply(request); return []
+            case 34: return [reply(to: request, payload: range.reply)]
             case 22: return respondToKick(kicks.increment())
             case 3: return [reply(to: request, payload: [])]
             default: return []
@@ -695,9 +697,11 @@ struct TierBControllerTests {
         let rangeReadsBefore = h.band.opcodes.filter { $0 == 34 }.count
 
         let complete = Frame(type: PacketType.metadata.rawValue, seq: 24, cmd: 3, payload: [])
+        let range = RewindableRing(ringPayload(write: 100, read: 0))
         h.band.setMultiResponder { request, _ in
             switch request.cmd {
-            case 34: return [reply(to: request, payload: ringPayload(write: 100, read: 0))]
+            case 33: range.apply(request); return []
+            case 34: return [reply(to: request, payload: range.reply)]
             case 22: return [complete]
             case 3: return [reply(to: request, payload: [])]
             default: return []
@@ -712,8 +716,8 @@ struct TierBControllerTests {
         await endRunningDrain(h)
         await task.value
 
-        #expect(h.band.opcodes.filter { $0 == 34 }.count == rangeReadsBefore + 1,
-                "the range read runs after the connect drain")
+        #expect(h.band.opcodes.filter { $0 == 34 }.count == rangeReadsBefore + 3,
+                "the range read runs after the connect drain, then once per pass to confirm each rewind")
         #expect(await h.controller.fullHistorySummary?.contains("finished") == true)
     }
 
@@ -746,13 +750,14 @@ struct TierBControllerTests {
         await task.value
 
         #expect(h.band.opcodes.filter { $0 == 33 }.count == 2, "pass 1 rewinds past the head, pass 2 to 0")
-        #expect(h.band.commands.filter { $0.cmd == 33 }.map(\.payload) == [littleEndian(220), littleEndian(0)])
+        #expect(h.band.commands.filter { $0.cmd == 33 }.map(\.payload) == [littleEndian(220) + [0], littleEndian(0) + [0]], "u32 + one zero of command padding")
         #expect(h.band.opcodes.filter { $0 == 22 }.count == cmd22Baseline + 3, "the restore stopped after the second pass's empty drain")
         #expect(historicalEvents(h.events.all) == [[record1, record2]], "the batch flushed exactly once")
         let lines = BandLog.capturedLines(2000)
         #expect(lines.contains { $0.contains("rewinding read cursor 40→220") })
         #expect(lines.contains { $0.contains("full-history restore finished: 3 drain(s), 2 record(s), oldest ") && $0.contains("(1.0 h)") })
-        #expect(await h.controller.ringState == RingState(write: 100, read: 40, capacity: 131_072))
+        // The last read-back (after pass 2's rewind to 0) is the ring state the controller keeps.
+        #expect(await h.controller.ringState == RingState(write: 100, read: 0, capacity: 131_072))
     }
 
     /// HISTORY_COMPLETE is the strap's "the whole store is drained" marker for the pass it ends. The
@@ -789,7 +794,7 @@ struct TierBControllerTests {
         await h.controller.receive(complete)
         await task.value
 
-        #expect(h.band.commands.filter { $0.cmd == 33 }.map(\.payload) == [littleEndian(0)], "U == pass 1's start → no pass 1 write")
+        #expect(h.band.commands.filter { $0.cmd == 33 }.map(\.payload) == [littleEndian(0) + [0]], "U == pass 1's start → no pass 1 write")
         #expect(h.band.opcodes.filter { $0 == 22 }.count == cmd22Baseline + 2)
         #expect(BandLog.capturedLines(2000).contains { $0.contains("full-history restore finished: 2 drain(s), 1 record(s), oldest ") })
     }

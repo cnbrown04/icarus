@@ -36,10 +36,10 @@ struct DebugView: View {
             recomputeSection
 
             Section {
-                Button(isProbingReadPointer ? "Probing…" : "Probe read-pointer encoding") {
+                Button(isProbingReadPointer ? "Probing…" : "Probe read pointer") {
                     isProbingReadPointer = true
                     Task {
-                        readPointerProbeResult = await liveState.probeReadPointerEncoding()
+                        readPointerProbeResult = await liveState.probeReadPointer()
                         isProbingReadPointer = false
                     }
                 }
@@ -53,7 +53,7 @@ struct DebugView: View {
             } header: {
                 Text("Band history")
             } footer: {
-                Text("Tries each SET_READ_POINTER payload form, rewinding the band's cursor about 10 minutes, and reports which one the band honours. Re-read records are deduplicated.")
+                Text("Rewinds the band's read cursor about 10 minutes, reads it back, and runs one drain to show where it really starts. Re-read records are deduplicated.")
             }
 
             Section {

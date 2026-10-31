@@ -271,10 +271,36 @@ func ringPayload(write: UInt32, read: UInt32, capacity: UInt32 = 131_072) -> [UI
         return UInt8(capture[start ..< capture.index(start, offsetBy: 2)], radix: 16)!
     }
     payload.removeFirst(7)
+    // The read cursor (`DataRange.readCursor`, raw offset 14) — the word SET_READ_POINTER writes. The fake keeps one
+    // cursor, so it mirrors U.
+    payload.replaceSubrange(7 ..< 11, with: littleEndian(read))
     payload.replaceSubrange(11 ..< 15, with: littleEndian(write))
     payload.replaceSubrange(15 ..< 19, with: littleEndian(read))
     payload.replaceSubrange(23 ..< 27, with: littleEndian(capacity))
     return payload
+}
+
+/// A GET_DATA_RANGE reply that a SET_READ_POINTER (cmd 33) write moves, like the real strap: the
+/// write's first four payload bytes become both the read cursor (`DataRange.readCursor`) and U, so a
+/// restore's read-back check sees its rewind land.
+final class RewindableRing: @unchecked Sendable {
+    private let lock = NSLock()
+    private var payload: [UInt8]
+
+    init(_ payload: [UInt8]) {
+        self.payload = payload
+    }
+
+    var reply: [UInt8] { lock.withLock { payload } }
+
+    func apply(_ request: Frame) {
+        guard request.cmd == 33, request.payload.count >= 4 else { return }
+        let cursor = Array(request.payload.prefix(4))
+        lock.withLock {
+            payload.replaceSubrange(7 ..< 11, with: cursor)
+            payload.replaceSubrange(15 ..< 19, with: cursor)
+        }
+    }
 }
 
 /// A scripted strap whose flash is a ring of `capacity` record slots, for the full-history restore.

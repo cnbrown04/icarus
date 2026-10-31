@@ -385,13 +385,13 @@ public actor TierBController {
 
     /// Runaway guard for `drainFullHistory`: the most back-to-back drains one restore may kick,
     /// shared by both passes. Each drain is already bounded by the ~60 s run cap, so the cap only
-    /// stops a pathological loop (a strap that keeps trickling one record per drain forever). The
-    /// 2026-10-28 log drained 107k records in 20 drains, so one full ring plus empty and slack
-    /// drains fits in 64.
-    public static let maxFullHistoryDrains = 64
-    /// How far past the write pointer the restore starts (slots). The strap overwrites its oldest
-    /// slot about once a second, so starting at W itself would race the overwrite; the margin skips
-    /// the oldest couple of minutes instead.
+    /// stops a pathological loop. A full ring is 131072 pages × ~9 records ≈ 1.2 M records (13.6 days,
+    /// 2026-10-30 finding); drains keep ~5–7k records each, so a whole ring needs ~200–240 drains
+    /// (~3–4 h connected).
+    public static let maxFullHistoryDrains = 320
+    /// How far past the write pointer the restore starts (pages). The strap fills a page about every
+    /// 9 s, overwriting the oldest one, so starting at W itself would race the overwrite; the margin skips
+    /// the oldest ~18 minutes, and the restore reads ~10 pages/s, far outrunning the writer.
     public static let restoreMarginSlots = 120
 
     /// Positions the strap's persistent read cursor (SET_READ_POINTER, cmd 33). OpenStrap §4.3:
@@ -409,46 +409,43 @@ public actor TierBController {
     }
 
     /// Pages the read-pointer probe rewinds by: ~9 records a page, so about 10 minutes of history,
-    /// which the next drain re-reads and the store dedupes.
+    /// which the probe's drain re-reads and the store dedupes.
     public static let probeRewindPages = 64
 
-    /// Hardware probe for SET_READ_POINTER's payload. Two restores on 2026-10-23 and 2026-10-28/30
-    /// drained exactly the U→W backlog GET_DATA_RANGE reported, never the rewound span, so the bare-u32
-    /// form was ignored. This tries each `BandCommand.ReadPointerEncoding` in turn, aiming the cursor
-    /// `probeRewindPages` behind its current read pointer U, and re-reads GET_DATA_RANGE after each
-    /// write. The first encoding whose read-back U equals the target wins. Every step is logged;
-    /// the returned line is for the Debug screen. Never runs during a drain.
-    public func probeReadPointerEncoding() async -> String {
+    /// The strap's cursor words from one GET_DATA_RANGE: the ring (W, U, T) and the read cursor.
+    private func readCursorState() async throws -> (ring: RingState, cursor: Int)? {
+        let raw = FrameCodec.reencode(try await send(BandCommand.getDataRange()))
+        guard let ring = DataRange.ringState(from: raw, cmdOff: 6),
+              let cursor = DataRange.readCursor(from: raw, cmdOff: 6) else { return nil }
+        ringState = ring
+        return (ring, cursor)
+    }
+
+    /// Hardware check of SET_READ_POINTER now that commands are padded (`FrameCodec.encodeCommand`): aims
+    /// the read cursor `probeRewindPages` behind U, reads the cursor words back, then runs ONE drain and
+    /// reports where it really started (its oldest record). Every step is logged as `read-pointer probe`.
+    /// The returned line is for the Debug screen. Never runs during a drain.
+    public func probeReadPointer() async -> String {
         guard enabled, state == .ready, linkOpen else { return "probe skipped: the channel is not ready" }
         if case .draining = offload.phase { return "probe skipped: a drain is running, try again in a minute" }
-        func readRing() async throws -> (RingState, UInt32)? {
-            let raw = FrameCodec.reencode(try await send(BandCommand.getDataRange()))
-            guard let ring = DataRange.ringState(from: raw, cmdOff: 6),
-                  let epoch = DataRange.ringEpoch(from: raw, cmdOff: 6) else { return nil }
-            return (ring, epoch)
-        }
         do {
-            guard let (start, epoch) = try await readRing() else { return "probe aborted: ring state unreadable" }
-            guard start.read >= Self.probeRewindPages else { return "probe skipped: read pointer too close to 0" }
-            let target = start.read - Self.probeRewindPages
-            BandLog.tierB(.info, "read-pointer probe: W=\(start.write) U=\(start.read) T=\(start.capacity) epoch=\(epoch), target U=\(target)")
-            for encoding in BandCommand.ReadPointerEncoding.allCases {
-                let command = BandCommand.setReadPointer(page: UInt32(target), epoch: epoch,
-                                                         capacity: UInt32(start.capacity), encoding: encoding)
-                try await writeConfirmedWithoutReply(command)
-                try? await clock.sleep(seconds: 0.5)
-                guard let (after, afterEpoch) = try await readRing() else {
-                    BandLog.tierB(.info, "read-pointer probe \(encoding.rawValue): ring unreadable after the write")
-                    continue
-                }
-                BandLog.tierB(.info, "read-pointer probe \(encoding.rawValue) payload=\(hex(command.payload)): U \(start.read)→\(after.read), epoch \(afterEpoch)")
-                if after.read == target {
-                    let line = "probe: \(encoding.rawValue) moved the read pointer \(start.read)→\(after.read)"
-                    BandLog.tierB(.info, "read-pointer probe WINNER: \(encoding.rawValue)")
-                    return line
-                }
-            }
-            return "probe: no encoding moved the read pointer (U stayed \(start.read)); see the band log"
+            guard let before = try await readCursorState() else { return "probe aborted: ring state unreadable" }
+            guard before.ring.read >= Self.probeRewindPages else { return "probe skipped: U too close to 0" }
+            let target = before.ring.read - Self.probeRewindPages
+            BandLog.tierB(.info, "read-pointer probe: before cursor=\(before.cursor) W=\(before.ring.write) U=\(before.ring.read), target \(target)")
+            // No settle delay: the strap handles commands in order, so the GET_DATA_RANGE below is answered
+            // after the cmd-33 write (2026-10-30 log: the cmd-33 response precedes the next range reply).
+            try await rewindReadPointer(to: UInt32(target))
+            guard let after = try await readCursorState() else { return "probe aborted: ring state unreadable after the write" }
+            BandLog.tierB(.info, "read-pointer probe: after cursor=\(after.cursor) W=\(after.ring.write) U=\(after.ring.read)")
+            restoreSpan = RecordSpan()
+            guard await runDrain(.manual) else { return "probe: cursor \(before.cursor)→\(after.cursor); the drain could not start" }
+            await waitForDrainEnd()
+            let kept = drainKeptRecords
+            let span = restoreSpan.rangeText ?? "no records"
+            let line = "probe: cursor \(before.cursor)→\(after.cursor) (target \(target)), U \(before.ring.read)→\(after.ring.read); drain kept \(kept): \(span)"
+            BandLog.tierB(.info, "read-pointer probe result: \(line)")
+            return line
         } catch {
             return "probe aborted: \(String(describing: error))"
         }
@@ -468,7 +465,7 @@ public actor TierBController {
     ///    from the ring start.
     ///
     /// Both passes share `maxFullHistoryDrains`. Each drain's ~60 s run cap slices the work, so even
-    /// a full ~36 h ring (131072 pages) drains in bounded slices. Never throws: every failure is
+    /// a full ~13.6-day ring (131072 pages) drains in bounded slices. Never throws: every failure is
     /// logged and leaves the normal drain machinery intact.
     public func drainFullHistory() async {
         guard enabled, state == .ready, linkOpen else {
@@ -541,14 +538,29 @@ public actor TierBController {
         }
     }
 
-    /// Positions the read cursor for one restore pass. Skips the write when the cursor is known to
-    /// be at `target` already. Returns false when the write failed; the caller then ends the restore.
+    /// Positions the read cursor for one restore pass, then READS IT BACK: until 2026-10-30 every restore's
+    /// rewind was silently discarded (unpadded frame) and the restore reported success anyway. Returns false
+    /// — and the restore ends with a summary saying so — when the write failed or the strap's read cursor
+    /// did not land on `target`. Skips the write when the cursor is known to be at `target` already.
     private func seekForRestore(_ target: Int, from current: Int?) async -> Bool {
         if let current, current == target { return true }
         let message = current.map { "rewinding read cursor \($0)→\(target)" } ?? "rewinding read cursor to \(target)"
         BandLog.tierB(.info, "\(message)")
         do {
+            // No settle delay: the strap handles commands in order, so the GET_DATA_RANGE below is answered
+            // after the cmd-33 write (2026-10-30 log: the cmd-33 response precedes the next range reply).
             try await rewindReadPointer(to: UInt32(target))
+            guard let after = try await readCursorState() else {
+                fullHistorySummary = "restore aborted: could not read the cursor back"
+                BandLog.tierB(.error, "full-history restore aborted: GET_DATA_RANGE unreadable after the rewind")
+                return false
+            }
+            guard after.cursor == target || after.ring.read == target else {
+                fullHistorySummary = "restore aborted: the band ignored the rewind (cursor \(after.cursor), wanted \(target))"
+                BandLog.tierB(.error, "full-history restore aborted: read cursor \(after.cursor) / U \(after.ring.read) after rewinding to \(target)")
+                return false
+            }
+            BandLog.tierB(.info, "read cursor confirmed at \(after.cursor) (U \(after.ring.read))")
             return true
         } catch {
             fullHistorySummary = "restore aborted: the read-cursor rewind failed"

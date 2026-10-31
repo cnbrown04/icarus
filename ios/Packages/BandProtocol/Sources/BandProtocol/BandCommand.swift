@@ -121,41 +121,6 @@ public struct BandCommand: Sendable, Equatable {
         BandCommand(.setReadPointer, payload: littleEndian(offset))
     }
 
-    /// SET_READ_POINTER candidate encodings for `TierBController.probeReadPointerEncoding`.
-    ///
-    /// Hardware finding 2026-10-30: the bare-u32 form above was IGNORED by the strap (two restores drained
-    /// exactly the U→W backlog GET_DATA_RANGE reported, never the rewound span). The strap's own cursor
-    /// tokens are 8 bytes: every HISTORICAL_DATA_RESULT the strap accepts carries `[page u32][epoch u32]`
-    /// (`34 E8 01 00 01 00 00 00` = page 124980, epoch 1), and GET_DATA_RANGE carries the same epoch word.
-    /// These forms are [Unverified] guesses for the probe to settle; the restore uses only what a probe
-    /// confirmed by reading the cursor back.
-    public enum ReadPointerEncoding: String, Sendable, CaseIterable {
-        /// `[page u32]` — OpenStrap's documented form (ignored on fw 41.17.x, kept as the control).
-        case pageU32
-        /// `[page u32][epoch u32]` — the ack token's layout.
-        case pageEpoch
-        /// `[0x01][page u32][epoch u32]` — the full HISTORICAL_DATA_RESULT payload shape.
-        case statusPageEpoch
-        /// `[epoch × capacity + page]` as u64 — an absolute page index.
-        case absoluteU64
-    }
-
-    public static func setReadPointer(page: UInt32, epoch: UInt32, capacity: UInt32,
-                                      encoding: ReadPointerEncoding) -> BandCommand {
-        switch encoding {
-        case .pageU32:
-            return setReadPointer(offset: page)
-        case .pageEpoch:
-            return BandCommand(.setReadPointer, payload: littleEndian(page) + littleEndian(epoch))
-        case .statusPageEpoch:
-            return BandCommand(.setReadPointer, payload: [0x01] + littleEndian(page) + littleEndian(epoch))
-        case .absoluteU64:
-            let absolute = UInt64(epoch) * UInt64(capacity) + UInt64(page)
-            return BandCommand(.setReadPointer, payload: littleEndian(UInt32(absolute & 0xFFFF_FFFF))
-                + littleEndian(UInt32(absolute >> 32)))
-        }
-    }
-
     // MARK: Heart rate
 
     /// TOGGLE_REALTIME_HR (cmd 3). PLAN.md 5.3.4 gives no payload. The golden frames `health_monitor_on`

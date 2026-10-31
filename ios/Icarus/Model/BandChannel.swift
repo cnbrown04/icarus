@@ -40,7 +40,7 @@ protocol RealtimeRawFloodTransport: BandTransport {
 protocol FullHistoryDrainTransport: BandTransport {
     func drainFullHistory() async
     func fullHistorySummary() async -> String?
-    func probeReadPointerEncoding() async -> String
+    func probeReadPointer() async -> String
 }
 
 /// A transport that writes each drained history batch through a durable sink before acking it
