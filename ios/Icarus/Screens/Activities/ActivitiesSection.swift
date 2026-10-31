@@ -15,9 +15,7 @@ struct ActivitiesSection: View {
             if let snapshot, !snapshot.activities.isEmpty {
                 VStack(alignment: .leading, spacing: Spacing.s12) {
                     ForEach(snapshot.activities, id: \.id) { row in
-                        NavigationLink {
-                            ActivityDetailView(environment: environment, activityID: row.id)
-                        } label: {
+                        NavigationLink(value: AppRoute.workout(id: row.id)) {
                             ActivityRowView(row: row, timeZone: snapshot.timeZone)
                         }
                         .buttonStyle(.plain)

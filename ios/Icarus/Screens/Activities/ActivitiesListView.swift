@@ -2,8 +2,17 @@ import Metrics
 import Store
 import SwiftUI
 
-/// Every activity over the last 30 local days, grouped by day. Auto-detected and recorded rows share the list.
-/// Entry view for the Activities stream (`environment`, `liveState`).
+/// Keys for a workout in progress. The start time is kept in `@AppStorage`, so a backgrounded or relaunched app
+/// comes back to the running workout instead of losing it.
+enum ActivityRecording {
+    /// Epoch seconds of the start, 0 when nothing is recording.
+    static let startKey = "activity.recording.start"
+    /// The `ActivityKind` raw value picked for the workout.
+    static let kindKey = "activity.recording.kind"
+}
+
+/// Every workout over the last 30 local days, grouped by day. Auto-detected and recorded rows share the list.
+/// Rows link by `AppRoute`. Entry view for the workouts list (`environment`, `liveState`).
 struct ActivitiesListView: View {
     let environment: AppEnvironment
     let liveState: LiveState
@@ -21,7 +30,6 @@ struct ActivitiesListView: View {
                     } label: {
                         HStack {
                             Text("Recording")
-                                .font(.headline)
                             Spacer(minLength: Spacing.s8)
                             Text("Resume")
                                 .foregroundStyle(.secondary)
@@ -29,12 +37,17 @@ struct ActivitiesListView: View {
                     }
                 }
             }
+            if list?.days.isEmpty == true, recordingStart == 0 {
+                Section {
+                    EmptyStateRow(text: "No workouts in the last 30 days", actionTitle: "Record") {
+                        isRecording = true
+                    }
+                }
+            }
             ForEach(list?.days ?? []) { day in
                 Section(day.title) {
                     ForEach(day.activities, id: \.id) { row in
-                        NavigationLink {
-                            ActivityDetailView(environment: environment, activityID: row.id)
-                        } label: {
+                        NavigationLink(value: AppRoute.workout(id: row.id)) {
                             ActivityRowView(row: row, timeZone: list?.timeZone ?? .current)
                         }
                     }
@@ -42,30 +55,16 @@ struct ActivitiesListView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .overlay {
-            if list?.days.isEmpty == true, recordingStart == 0 {
-                VStack(spacing: Spacing.s12) {
-                    Text("No activities")
-                        .font(.headline)
-                    Text("Activities detected from heart rate appear here, or record one now.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                    Button("Record activity") {
-                        isRecording = true
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .padding(Spacing.s24)
-            }
-        }
-        .navigationTitle("Activities")
+        .navigationTitle("Workouts")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Record") {
+                Button {
                     isRecording = true
+                } label: {
+                    Image(systemName: Symbol.record)
                 }
+                .accessibilityLabel("Record activity")
             }
         }
         .sheet(isPresented: $isRecording) {
@@ -86,41 +85,32 @@ struct ActivitiesListView: View {
     }
 }
 
-/// One activity as a row: name or kind, start time and duration, then its strain on the 0-21 axis.
+/// One workout as a row: its kind glyph, name, then start time and duration, with its strain on the right.
 struct ActivityRowView: View {
     let row: ActivityRow
     let timeZone: TimeZone
 
-    private var durationSeconds: Int64 {
-        (row.endMs - row.startMs) / 1000
-    }
-
     private var detail: String {
         let when = Format.clock(row.startMs, in: timeZone)
-        let length = Format.duration(durationSeconds)
-        return row.isAuto ? "\(when) · \(length) · Detected" : "\(when) · \(length)"
+        let length = Format.duration((row.endMs - row.startMs) / 1000)
+        return "\(when) · \(length)"
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Spacing.s12) {
+        HStack(alignment: .center, spacing: Spacing.s12) {
+            Image(systemName: row.activityKind.symbol)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(MetricCategory.activity.color)
             VStack(alignment: .leading, spacing: Spacing.s4) {
                 Text(row.displayName)
-                    .font(.headline)
                 Text(detail)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: Spacing.s8)
-            HStack(alignment: .firstTextBaseline, spacing: Spacing.s4) {
-                Text(ActivitiesModel.strainText(row.strain))
-                    .font(.metricValue)
-                    .monospacedDigit()
-                if row.strain != nil {
-                    Text("/ 21")
-                        .font(.metricUnit)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            Text(ActivitiesModel.strainText(row.strain))
+                .font(.figure)
+                .monospacedDigit()
         }
         .accessibilityElement(children: .combine)
     }

@@ -2,17 +2,8 @@ import Metrics
 import Store
 import SwiftUI
 
-/// Keys for a workout in progress. The start time is kept in `@AppStorage`, so a backgrounded or relaunched app
-/// comes back to the running workout instead of losing it.
-enum ActivityRecording {
-    /// Epoch seconds of the start, 0 when nothing is recording.
-    static let startKey = "activity.recording.start"
-    /// The `ActivityKind` raw value picked for the workout.
-    static let kindKey = "activity.recording.kind"
-}
-
-/// Pick a kind, start, and stop to save a `manual` activity. While recording: elapsed time, live heart rate from the band,
-/// and a running strain and kcal estimate from the closed minutes. Entry view for the Activities stream
+/// Pick a kind, start, and stop to save a `manual` workout. While recording: elapsed time, live heart rate from the
+/// band, and a running strain and calorie estimate from the closed minutes. Entry view for recording
 /// (`environment`, `liveState`).
 struct RecordActivityView: View {
     let environment: AppEnvironment
@@ -39,15 +30,15 @@ struct RecordActivityView: View {
     }
 
     var body: some View {
-        ScrollView {
+        List {
             if isRecording {
                 runningContent
             } else {
                 setupContent
             }
         }
-        .dashboardBackground()
-        .navigationTitle(isRecording ? "Recording" : "Record activity")
+        .listStyle(.insetGrouped)
+        .navigationTitle(isRecording ? "Recording" : "Record workout")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if !isRecording {
@@ -100,53 +91,45 @@ struct RecordActivityView: View {
     }
 
     private var setupContent: some View {
-        VStack(spacing: Spacing.s24) {
-            DashboardCard(title: "Kind", symbol: "figure.run", tint: Palette.strain) {
-                Picker("Kind", selection: kindBinding) {
-                    ForEach(ActivityKind.allCases, id: \.self) { option in
-                        Text(option.label).tag(option)
-                    }
+        Section {
+            Picker("Kind", selection: kindBinding) {
+                ForEach(ActivityKind.allCases, id: \.self) { option in
+                    Text(option.label).tag(option)
                 }
-                .pickerStyle(.menu)
             }
-            Text("Starts when you tap Start. The band keeps recording while the app is closed.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .pagePadding()
-        .padding(.vertical, Spacing.s8)
     }
 
+    @ViewBuilder
     private var runningContent: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let elapsed = Int(context.date.timeIntervalSince1970 - startedAt)
-            VStack(spacing: Spacing.s24) {
-                DashboardCard(title: kind.label, symbol: "timer", tint: Palette.strain) {
-                    Text(ActivitiesModel.elapsedText(seconds: elapsed))
-                        .font(.heroValue)
-                        .monospacedDigit()
-                    Text("Elapsed")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                HStack(spacing: Spacing.s12) {
-                    StatTile(title: "Heart rate", value: liveState.latestBPM.map { Format.bpm($0) } ?? "--")
-                    StatTile(title: "Strain", value: estimate?.strain.map { "\(ActivitiesModel.strainText($0)) / 21" } ?? "--")
-                }
-                StatTile(title: "Calories", value: estimate?.kcal.map { Format.kcal($0) } ?? "--")
-                Text("Strain and calories are estimated from closed minutes, so they trail by about a minute.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if let errorText {
-                    Text(errorText)
-                        .font(.subheadline)
-                        .foregroundStyle(Palette.error)
-                }
+        Section {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let elapsed = Int(context.date.timeIntervalSince1970 - startedAt)
+                Text(ActivitiesModel.elapsedText(seconds: elapsed))
+                    .font(.figureLarge)
+                    .monospacedDigit()
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, Spacing.s4)
             }
-            .pagePadding()
-            .padding(.vertical, Spacing.s8)
+        }
+        Section {
+            LabeledContent("Heart rate") {
+                LiveBPMText(liveState: liveState)
+            }
+            LabeledContent("Strain") {
+                Text(ActivitiesModel.strainText(estimate?.strain))
+                    .monospacedDigit()
+            }
+            LabeledContent("Calories") {
+                Text(ActivitiesModel.kcalText(estimate?.kcal))
+                    .monospacedDigit()
+            }
+        }
+        if let errorText {
+            Section {
+                Text(errorText)
+                    .foregroundStyle(Palette.error)
+            }
         }
     }
 

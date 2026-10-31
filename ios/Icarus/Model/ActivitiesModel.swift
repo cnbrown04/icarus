@@ -124,17 +124,34 @@ enum ActivitiesModel {
         let total = max(0, seconds)
         let hours = total / 3600
         let minutes = (total % 3600) / 60
-        let secs = total % 60
+        let secs = two(total % 60)
         if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, secs)
+            return "\(hours.formatted()):\(two(minutes)):\(secs)"
         }
-        return String(format: "%d:%02d", minutes, secs)
+        return "\(minutes.formatted()):\(secs)"
     }
 
-    /// Strain on the 0-21 axis, one decimal.
+    /// Strain on the 0-21 axis, one decimal, as a bare number. A missing value is a dash.
     static func strainText(_ value: Double?) -> String {
-        guard let value else { return "--" }
-        return String(format: "%.1f", value)
+        guard let value else { return "—" }
+        return value.formatted(.number.precision(.fractionLength(1)))
+    }
+
+    /// Kilocalories as a whole number with its unit, e.g. "320 kcal". A missing value is a dash.
+    static func kcalText(_ value: Double?) -> String {
+        guard let value else { return "—" }
+        return "\(Int(value.rounded()).formatted()) kcal"
+    }
+
+    /// A heart rate as a whole number with its unit, e.g. "128 bpm". A missing value is a dash.
+    static func bpmText(_ value: Double?) -> String {
+        guard let value else { return "—" }
+        return "\(Int(value.rounded()).formatted()) bpm"
+    }
+
+    /// Two digits, zero-padded, for clock fields.
+    private static func two(_ value: Int) -> String {
+        value.formatted(.number.precision(.integerLength(2)))
     }
 }
 
@@ -150,6 +167,20 @@ extension ActivityKind {
         case .yoga: "Yoga"
         case .sport: "Sport"
         case .other: "Other"
+        }
+    }
+
+    /// The glyph for a workout row, in the Activity category colour. One symbol per kind.
+    var symbol: String {
+        switch self {
+        case .run: "figure.run"
+        case .walk: "figure.walk"
+        case .cycle: "figure.outdoor.cycle"
+        case .strength: "figure.strengthtraining.traditional"
+        case .hiit: "figure.highintensity.intervaltraining"
+        case .yoga: "figure.yoga"
+        case .sport: "sportscourt"
+        case .other: "figure.mixed.cardio"
         }
     }
 }
