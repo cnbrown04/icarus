@@ -133,6 +133,30 @@ public enum Strain {
         return score(series, restingHR: restingHR, maxHR: maxHR, method: method, sex: sex)
     }
 
+    /// Activity strain from heart-rate samples, on the same method as `score`, without the day gates.
+    /// A 15-minute run has 15 minute aggregates, which the day gate (20 sparse samples) would refuse.
+    /// Returns nil only when `maxHR <= restingHR`. Use `whoopStrain(fromEffort:)` for the 0-21 display.
+    public static func scoreActivity(_ samples: [HeartRateSample],
+                                     restingHR: Double,
+                                     maxHR: Double,
+                                     method: Method = .banister,
+                                     sex: FormulaSex = .male) -> Score? {
+        let series = samples
+            .filter { $0.contact != .notDetected }
+            .map { (tsMs: $0.tsMs, bpm: Double($0.bpm)) }
+        return score(series, restingHR: restingHR, maxHR: maxHR, method: method, sex: sex, gated: false)
+    }
+
+    /// Activity strain from per-minute aggregates. The ungated twin of `score(minutes:)`, see `scoreActivity(_:)`.
+    public static func scoreActivity(minutes: [MinuteAggregate],
+                                     restingHR: Double,
+                                     maxHR: Double,
+                                     method: Method = .banister,
+                                     sex: FormulaSex = .male) -> Score? {
+        let series = minutes.map { (tsMs: $0.minuteMs, bpm: $0.hrAvg) }
+        return score(series, restingHR: restingHR, maxHR: maxHR, method: method, sex: sex, gated: false)
+    }
+
     /// TRIMP to 0-100 on a log axis: 100 x ln(TRIMP + 1) / ln(D), two decimals. NOOP `trimpToStrain`.
     /// TRIMP <= 0, or D <= 1, returns 0. The result is clamped to 0...100. NOOP does not clamp here, but
     /// that only matters with more than 24 h of data.
@@ -176,12 +200,16 @@ public enum Strain {
                               restingHR: Double,
                               maxHR: Double,
                               method: Method,
-                              sex: FormulaSex) -> Score? {
+                              sex: FormulaSex,
+                              gated: Bool = true) -> Score? {
         // The reserve must be positive. NOOP refuses the day when maxHR <= restingHR.
         guard maxHR > restingHR else { return nil }
 
         let sorted = series.sorted { ($0.tsMs, $0.bpm) < ($1.tsMs, $1.bpm) }
-        guard hasEnoughData(sorted) else { return nil }
+        // Activities skip the day gate: a short bout is still a measured span (`scoreActivity`).
+        if gated {
+            guard hasEnoughData(sorted) else { return nil }
+        }
 
         let durations = durationsMinutes(sorted.map { $0.tsMs })
         let reserve = maxHR - restingHR
