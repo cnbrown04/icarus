@@ -30,6 +30,9 @@ enum Schema {
         migrator.registerMigration("v9") { db in
             try db.execute(sql: v9)
         }
+        migrator.registerMigration("v10") { db in
+            try db.execute(sql: v10)
+        }
     }
 
     /// Migration v1, copied from PLAN.md 10.2. Times are epoch ms UTC.
@@ -187,5 +190,32 @@ enum Schema {
       zone_minutes TEXT NOT NULL DEFAULT '[]', algo_version INTEGER NOT NULL,
       updated_at INTEGER NOT NULL, deleted_at INTEGER);
     CREATE INDEX activity_start ON activity(start_ms);
+    """
+    /// Migration v10, the journal (morning check-in) and its seeded questions. Additive and local-only (no server
+    /// sync). Migration v9 (activities) sits between v8 and v10;
+    /// nothing here depends on it.
+    ///
+    /// `journal_question` holds the questions the check-in asks: `kind` is `yesno` (value 1 yes, 0 no) or `count`
+    /// (value is a non-negative count). Built-ins are seeded with `built_in = 1` and cannot be deleted, only
+    /// disabled. `journal_entry` holds one answer per (`local_day`, question). A missing row means unanswered.
+    /// `local_day` is 'YYYY-MM-DD'.
+    static let v10 = """
+    CREATE TABLE journal_question (id TEXT PRIMARY KEY, label TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('yesno', 'count')), built_in INTEGER NOT NULL DEFAULT 0,
+      enabled INTEGER NOT NULL DEFAULT 1, sort INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+    INSERT INTO journal_question (id, label, kind, built_in, enabled, sort, updated_at) VALUES
+      ('caffeine_after_2pm', 'Caffeine after 2 pm', 'yesno', 1, 1, 0, 0),
+      ('alcohol', 'Alcohol', 'yesno', 1, 1, 1, 0),
+      ('late_meal', 'Late meal (within 2 h of bed)', 'yesno', 1, 1, 2, 0),
+      ('screens_in_bed', 'Screens in bed', 'yesno', 1, 1, 3, 0),
+      ('hydrated', 'Hydrated', 'yesno', 1, 1, 4, 0),
+      ('read_before_bed', 'Read before bed', 'yesno', 1, 1, 5, 0),
+      ('sexual_activity', 'Sexual activity', 'yesno', 1, 1, 6, 0),
+      ('felt_sick', 'Felt sick', 'yesno', 1, 1, 7, 0),
+      ('high_stress_day', 'High stress day', 'yesno', 1, 1, 8, 0),
+      ('nap', 'Nap', 'yesno', 1, 1, 9, 0);
+    CREATE TABLE journal_entry (local_day TEXT NOT NULL, question_id TEXT NOT NULL REFERENCES journal_question(id),
+      value INTEGER NOT NULL CHECK (value >= 0), updated_at INTEGER NOT NULL,
+      PRIMARY KEY (local_day, question_id));
     """
 }
