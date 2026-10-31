@@ -202,10 +202,10 @@ enum MedicationFormat {
         return date.formatted(date: .omitted, time: .shortened)
     }
 
-    /// "Daily 9:00", "Mon, Wed 9:00, 17:00", or "As needed" for an empty schedule.
+    /// "Every day 9:00", "Weekdays 9:00", "Mon, Wed 9:00, 17:00", or "As needed" for an empty schedule.
     static func schedule(times: [Int], weekdays: Set<Int>) -> String {
         guard !times.isEmpty else { return "As needed" }
-        let days = weekdays.isEmpty ? "Daily" : weekdays.sorted().map { Weekdays.shortName($0) }.joined(separator: ", ")
+        let days = weekdays.isEmpty ? "Every day" : Weekdays.text(weekdays)
         let clocks = times.map { clock(minuteOfDay: $0) }.joined(separator: ", ")
         return "\(days) \(clocks)"
     }

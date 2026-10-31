@@ -41,10 +41,7 @@ struct AlarmItem: Identifiable, Equatable, Sendable {
         guard let schedule else { return "" }
         switch schedule.weekdays {
         case []: return "Once"
-        case [1, 2, 3, 4, 5]: return "Weekdays"
-        case [6, 7]: return "Weekends"
-        case [1, 2, 3, 4, 5, 6, 7]: return "Every day"
-        default: return schedule.weekdays.map(Weekdays.shortName).joined(separator: ", ")
+        default: return Weekdays.text(Set(schedule.weekdays))
         }
     }
 
@@ -83,6 +80,16 @@ extension BuiltInRhythm {
 
 /// Weekday names for ISO numbers (1 = Monday ... 7 = Sunday). Localized through Calendar.
 enum Weekdays {
+    /// "Weekdays", "Weekends", "Every day", or the short day names in week order (ISO 1 = Monday).
+    static func text(_ days: Set<Int>) -> String {
+        switch days {
+        case [1, 2, 3, 4, 5]: "Weekdays"
+        case [6, 7]: "Weekends"
+        case [1, 2, 3, 4, 5, 6, 7]: "Every day"
+        default: days.sorted().map(shortName).joined(separator: ", ")
+        }
+    }
+
     static func shortName(_ iso: Int) -> String {
         Calendar.current.shortStandaloneWeekdaySymbols[iso % 7]
     }
