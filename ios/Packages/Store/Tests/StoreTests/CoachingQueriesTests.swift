@@ -172,4 +172,18 @@ struct CoachingQueriesTests {
         #expect(yesterday.sleepPerformance == 100)
         #expect(days.thisWeek.dropLast().allSatisfy { $0.hoursSlept == nil })
     }
+
+    /// Weekly HRV and resting HR are the main sleep's values, the same numbers Recovery and Vitals show.
+    @Test func weeklyHeartValuesComeFromTheMainSleep() throws {
+        let database = try seededDatabase()
+        let yesterday = LocalTime.adding(days: -1, to: today)
+        try insertNight(endingOn: yesterday, into: database)
+        try database.writer.write { db in
+            try db.execute(sql: "UPDATE sleep_session SET rmssd_ms = 42, resting_hr = 61")
+        }
+        let days = try database.writer.read { try $0.weeklyDays(nowMs: testNowMs, in: chicago) }
+        let last = try #require(days.thisWeek.last)
+        #expect(last.hrv == 42)
+        #expect(last.restingHR == 61)
+    }
 }

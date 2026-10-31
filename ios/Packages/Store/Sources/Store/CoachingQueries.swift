@@ -120,9 +120,8 @@ extension Database {
         let today = LocalTime.localDay(containing: nowMs, in: timeZone)
         let thisWeek = (1...7).reversed().map { LocalTime.adding(days: -$0, to: today) }
         let previousWeek = (8...14).reversed().map { LocalTime.adding(days: -$0, to: today) }
-        let summaries = Dictionary(
-            uniqueKeysWithValues: try daySummaries(thisWeek + previousWeek, in: timeZone).map { ($0.day, $0) }
-        )
+        // HRV and resting HR from each day's main sleep: the values Recovery, Vitals and the metric pages show.
+        let mainSleeps = try mainSleepByDay(from: previousWeek[0], through: thisWeek[thisWeek.count - 1], in: timeZone)
         func days(_ list: [LocalDay]) throws -> [WeeklyAssessment.Day] {
             try list.map { day in
                 let scores = try dailyScores(day: day, in: timeZone)
@@ -131,8 +130,8 @@ extension Database {
                     sleepPerformance: scores.sleep?.performancePct,
                     hoursSlept: scores.sleep.map { $0.asleepSec / 3600 },
                     strain: scores.strain?.whoopScale,
-                    hrv: summaries[day]?.rmssdNight,
-                    restingHR: summaries[day]?.restingHR
+                    hrv: mainSleeps[day]?.rmssdMs,
+                    restingHR: mainSleeps[day]?.restingHr
                 )
             }
         }
