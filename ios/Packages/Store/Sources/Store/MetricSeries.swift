@@ -158,8 +158,8 @@ extension Database {
         case .stress:
             return try Row.fetchAll(self, sql: """
             SELECT minute_ms, stress FROM minute_metric
-            WHERE minute_ms >= ? AND minute_ms < ? AND stress_state = ? AND stress IS NOT NULL ORDER BY minute_ms
-            """, arguments: [from, to, StressState.value.rawValue]).map {
+            WHERE minute_ms >= ? AND minute_ms < ? AND stress_state IN (?, ?) AND stress IS NOT NULL ORDER BY minute_ms
+            """, arguments: [from, to, StressState.value.rawValue, StressState.hrOnly.rawValue]).map {
                 MetricPoint(tsMs: $0["minute_ms"], value: Double($0["stress"] as Int64))
             }
         case .calories:
@@ -310,13 +310,17 @@ extension Database {
         return MetricReading(value: value, atMs: session.endMs, state: nil)
     }
 
+    /// Both scored states carry a stress number: `value` (heart rate and HRV) and `hr_only` (heart rate alone, when the
+    /// beat-to-beat signal is too thin — most of the day on this band). Reading only `value` hid every hr_only minute.
+    private static let scoredStressStates: Set<String> = [StressState.value.rawValue, StressState.hrOnly.rawValue]
+
     private func latestStressReading(nowMs: Int64) throws -> MetricReading {
         let scored = try Row.fetchOne(self, sql: """
-        SELECT minute_ms, stress FROM minute_metric
-        WHERE stress_state = ? AND stress IS NOT NULL AND minute_ms BETWEEN ? AND ? ORDER BY minute_ms DESC LIMIT 1
-        """, arguments: [StressState.value.rawValue, nowMs - Self.recentWindowMs, nowMs])
+        SELECT minute_ms, stress, stress_state FROM minute_metric
+        WHERE stress_state IN (?, ?) AND stress IS NOT NULL AND minute_ms BETWEEN ? AND ? ORDER BY minute_ms DESC LIMIT 1
+        """, arguments: [StressState.value.rawValue, StressState.hrOnly.rawValue, nowMs - Self.recentWindowMs, nowMs])
         if let scored {
-            return MetricReading(value: Double(scored["stress"] as Int64), atMs: scored["minute_ms"], state: StressState.value.rawValue)
+            return MetricReading(value: Double(scored["stress"] as Int64), atMs: scored["minute_ms"], state: scored["stress_state"])
         }
         let latest = try Row.fetchOne(self, sql: """
         SELECT minute_ms, stress_state FROM minute_metric WHERE minute_ms <= ? ORDER BY minute_ms DESC LIMIT 1
@@ -326,7 +330,7 @@ extension Database {
         return MetricReading(
             value: nil,
             atMs: latest["minute_ms"],
-            state: state == StressState.value.rawValue ? "stale" : state
+            state: Self.scoredStressStates.contains(state) ? "stale" : state
         )
     }
 

@@ -190,6 +190,21 @@ struct MetricSeriesTests {
         #expect(reading.state == "value")
     }
 
+    /// Heart-rate-only minutes carry a stress score too (most of the day on this band): they are the latest reading
+    /// and they are on the intraday chart. On 2026-10-31 Summary read "Not enough data" over a run of hr_only scores.
+    @Test func heartRateOnlyMinutesAreScoredStress() throws {
+        let database = try seededDatabase()
+        let now = localMs(day, 12)
+        var hrOnly = minuteRow(now - 2 * LocalTime.msPerMinute, stress: 13)
+        hrOnly.stressState = StressState.hrOnly.rawValue
+        try minute(database, hrOnly)
+        let reading = try database.writer.read { try $0.metricLatest(.stress, nowMs: now, in: chicago) }
+        #expect(reading.value == 13)
+        #expect(reading.state == "hr_only")
+        let points = try database.writer.read { try $0.metricIntraday(.stress, day: day, in: chicago) }
+        #expect(points.map(\.value) == [13])
+    }
+
     @Test func stressFallsBackToTheLatestMinuteState() throws {
         let database = try seededDatabase()
         let now = localMs(day, 12)
