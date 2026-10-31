@@ -104,6 +104,15 @@ public struct OffloadStateMachine {
         self.clock = clock
     }
 
+    /// Starts the quiet clock now, before the first frame. For drains someone is watching (a full sync): a strap
+    /// with nothing pending answers SEND_HISTORICAL_DATA and then sends no history at all (2026-10-31 log), and a
+    /// drain waiting for a first frame would sit out the whole run cap in silence. Routine drains keep the
+    /// first-frame start. No-op unless draining.
+    public mutating func armQuietDeadline() {
+        guard phase == .draining else { return }
+        quietDeadline = clock.now().addingTimeInterval(Self.quietTimeout)
+    }
+
     /// Handles one event and returns the effects to perform, in order.
     public mutating func handle(_ event: Event) -> [Effect] {
         switch event {

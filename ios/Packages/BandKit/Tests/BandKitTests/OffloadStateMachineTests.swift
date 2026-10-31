@@ -115,6 +115,15 @@ struct OffloadStateMachineTests {
 
     // MARK: Run cap (NOOP's ~60 s offload cap)
 
+    @Test func armQuietDeadlineStartsTheQuietClockBeforeAnyFrame() {
+        var (machine, clock) = makeMachine()
+        machine.armQuietDeadline()
+        #expect(machine.quietDeadline == nil, "no-op while idle")
+        machine.handle(.sendHistoricalStarted)
+        machine.armQuietDeadline()
+        #expect(machine.quietDeadline == clock.now().addingTimeInterval(OffloadStateMachine.quietTimeout))
+    }
+
     @Test func startParksTheRunCapDeadline() {
         var (machine, clock) = makeMachine()
         machine.handle(.sendHistoricalStarted)

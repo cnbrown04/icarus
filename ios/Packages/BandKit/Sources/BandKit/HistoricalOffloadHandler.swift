@@ -26,6 +26,11 @@ public struct HistoricalOffloadHandler {
     public var recordCount: Int { stateMachine.recordCount }
 
     /// Starts a drain: returns the SEND_HISTORICAL_DATA write to perform.
+    /// Starts the quiet clock before the first frame (`OffloadStateMachine.armQuietDeadline`).
+    public mutating func armQuietDeadline() {
+        stateMachine.armQuietDeadline()
+    }
+
     public mutating func start() -> [OffloadStateMachine.Effect] {
         stateMachine.handle(.sendHistoricalStarted)
     }
