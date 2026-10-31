@@ -169,7 +169,7 @@ APNs `.p8` key + signing capability), TestFlight (no ASC secrets), Apple Watch, 
 
 ## Current status (as of 2026-10-30)
 
-- All packages green (2026-10-30): BandProtocol 117, BandKit 172, Metrics 336, Store 197, SyncKit 59,
+- All packages green (2026-10-31): BandProtocol 120, BandKit 168, Metrics 342, Store 217, SyncKit 59,
   AlarmKitBridge 27. App + test targets build for device (no iPhone simulator installed on this Mac).
 - **Navigation (2026-10-31, Apple Health–style; plan `~/.claude/plans/humming-watching-raven.md`)**: tabs
   **Summary · Sleep · Strain · Browse**; ONE profile button (`ProfileSheet`: profile, band, medications,
