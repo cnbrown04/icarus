@@ -1,25 +1,7 @@
-import Charts
 import Metrics
 import SwiftUI
 
-/// Stress as one bar per bucket, coloured by band (IOS_UI_SPEC, Charts). Pair with `StressLegend`.
-struct StressBarChart: View {
-    let buckets: [StressBucket]
-
-    var body: some View {
-        Chart(buckets) { bucket in
-            BarMark(x: .value("Time", bucket.start), y: .value("Stress", bucket.average))
-                .foregroundStyle(Palette.stress(bucket.band))
-        }
-        .chartYScale(domain: 0...100)
-        .chartYAxis {
-            AxisMarks(position: .leading)
-        }
-        .accessibilityLabel("Stress, 15-minute averages")
-    }
-}
-
-/// Dots for the three stress bands.
+/// Dots for the three stress bands. Still used by the stress screen until Wave C retires it.
 struct StressLegend: View {
     private let bands: [StressBand] = [.low, .moderate, .high]
 
