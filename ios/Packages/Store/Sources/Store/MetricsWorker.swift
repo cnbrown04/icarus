@@ -123,47 +123,45 @@ public actor MetricsWorker {
             closedThrough
         )
         guard upper > lower else { return Result(changedRows: 0, ran: false) }
-        let cache = baseline
-        let (result, newBaseline) = try await database.writer.write { db -> (Result, BaselineCache?) in
-            guard let profileRow = try db.profile() else {
-                return (Result(changedRows: 0, ran: false), nil)
-            }
-            let zone = profileRow.timeZone
-            // Clamp a corrupt or absurdly wide range to at most `maxBackfillDays` local days,
-            // keeping the days that END at the newest sample: an old drained window is still
-            // fully covered, while a garbage 1970…2100 span cannot loop forever.
-            let endDay = LocalTime.localDay(containing: upper - 1, in: zone)
-            let oldestDay = LocalTime.adding(days: -(Self.maxBackfillDays - 1), to: endDay)
-            var cursor = max(lower, LocalTime.localTime(oldestDay, hour: 0, in: zone))
-            var total = 0
-            var ran = false
-            var cache = cache
-            while cursor < upper {
-                let day = LocalTime.localDay(containing: cursor, in: zone)
-                let nextDayStart = LocalTime.localTime(LocalTime.adding(days: 1, to: day), hour: 0, in: zone)
-                let chunkEnd = min(upper, nextDayStart)
-                let lookback = (chunkEnd - cursor) / LocalTime.msPerMinute
-                guard lookback > 0 else { break }
-                // `run` rounds `nowMs` down to a minute, so a minute-aligned `chunkEnd` makes the
-                // chunk exactly `[cursor, chunkEnd)`. Day attribution comes from `chunkEnd`'s day;
-                // a chunk ending at midnight is the previous day's tail, which is all its rows.
-                let (chunk, newCache) = try Self.run(db, nowMs: chunkEnd, lookbackMinutes: lookback, cache: cache)
-                total += chunk.changedRows
-                ran = ran || chunk.ran
-                if let newCache {
-                    cache = newCache
-                }
-                cursor = chunkEnd
-            }
-            return (Result(changedRows: total, ran: ran), cache)
+        guard let zone = try await database.writer.read({ db in try db.profile()?.timeZone }) else {
+            return Result(changedRows: 0, ran: false)
         }
-        if result.ran {
+        // Clamp a corrupt or absurdly wide range to at most `maxBackfillDays` local days,
+        // keeping the days that END at the newest sample: an old drained window is still
+        // fully covered, while a garbage 1970…2100 span cannot loop forever.
+        let endDay = LocalTime.localDay(containing: upper - 1, in: zone)
+        let oldestDay = LocalTime.adding(days: -(Self.maxBackfillDays - 1), to: endDay)
+        var cursor = max(lower, LocalTime.localTime(oldestDay, hour: 0, in: zone))
+        var total = 0
+        var ran = false
+        // One write transaction PER DAY, not one for the whole range. A 60-day stale-row rebuild
+        // took ~25 s on a Mac against real data; held as one transaction it would block the drain's
+        // persist-then-ack writes (and live ingest flushes) for that long. Chunks are idempotent
+        // upserts, so other writers interleaving between days is harmless.
+        while cursor < upper {
+            let day = LocalTime.localDay(containing: cursor, in: zone)
+            let nextDayStart = LocalTime.localTime(LocalTime.adding(days: 1, to: day), hour: 0, in: zone)
+            let chunkEnd = min(upper, nextDayStart)
+            let lookback = (chunkEnd - cursor) / LocalTime.msPerMinute
+            guard lookback > 0 else { break }
+            // `run` rounds `nowMs` down to a minute, so a minute-aligned `chunkEnd` makes the
+            // chunk exactly `[cursor, chunkEnd)`. Day attribution comes from `chunkEnd`'s day;
+            // a chunk ending at midnight is the previous day's tail, which is all its rows.
+            let cache = baseline
+            let (chunk, newCache) = try await database.writer.write { db in
+                try Self.run(db, nowMs: chunkEnd, lookbackMinutes: lookback, cache: cache)
+            }
+            total += chunk.changedRows
+            ran = ran || chunk.ran
+            if let newCache {
+                baseline = newCache
+            }
+            cursor = chunkEnd
+        }
+        if ran {
             hasRunOnce = true
         }
-        if let newBaseline {
-            baseline = newBaseline
-        }
-        return result
+        return Result(changedRows: total, ran: ran)
     }
 
     /// Recomputes the minute rows an older algorithm wrote (`AlgoVersion.storedValue`, PLAN.md 8.5), from the
