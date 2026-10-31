@@ -166,6 +166,24 @@ public actor MetricsWorker {
         return result
     }
 
+    /// Recomputes the minute rows an older algorithm wrote (`AlgoVersion.storedValue`, PLAN.md 8.5), from the
+    /// oldest such row to now. The app calls it once at launch, so a stress change reaches the stored history.
+    /// Only rows inside the backfill window are checked, so a stale row older than `maxBackfillDays` is left
+    /// alone instead of being rebuilt on every launch.
+    public func recomputeStaleRows(nowMs: Int64) async throws -> Result {
+        let current = AlgoVersion.current.storedValue
+        let windowStart = nowMs - Int64(Self.maxBackfillDays) * 24 * 60 * LocalTime.msPerMinute
+        let oldestStale = try await database.writer.read { db in
+            try Int64.fetchOne(
+                db,
+                sql: "SELECT MIN(minute_ms) FROM minute_metric WHERE algo_version < ? AND minute_ms >= ?",
+                arguments: [current, windowStart]
+            )
+        }
+        guard let oldestStale else { return Result(changedRows: 0, ran: false) }
+        return try await recomputeBackfill(fromMs: oldestStale, toMs: nowMs, nowMs: nowMs)
+    }
+
     private static func run(
         _ db: Database,
         nowMs: Int64,

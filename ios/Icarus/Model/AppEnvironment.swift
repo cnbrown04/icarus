@@ -132,6 +132,16 @@ final class AppEnvironment {
         ingestionStarted = true
         let ingestor = ingestor
         let inputs = inputs
+        // Minute rows from an older algorithm version are rebuilt once per launch (PLAN.md 8.5).
+        let metrics = metrics
+        let nowMs = clock.nowMs
+        Task.detached(priority: .utility) {
+            do {
+                _ = try await metrics.recomputeStaleRows(nowMs: nowMs)
+            } catch {
+                BandLog.tierB(.error, "app: stale metric recompute failed: \(String(describing: error))")
+            }
+        }
         Task { await ingestor.run(inputs) }
         let continuation = inputContinuation
         Task {

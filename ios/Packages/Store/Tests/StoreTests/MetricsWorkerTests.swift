@@ -146,4 +146,63 @@ struct MetricsWorkerTests {
         let day = NightWindow.latestCompleted(nowMs: evening, in: chicago)
         #expect(day == LocalDay(year: 2026, month: 10, day: 7))
     }
+
+    /// The stress lookback reads whole local days: from 00:00 of the first lookback day up to the scored
+    /// day's 00:00. Minutes before or on the scored day are not read.
+    @Test func stressLookbackLoadsWholeLookbackDays() async throws {
+        let database = try seededDatabase()
+        let day = LocalDay(year: 2026, month: 10, day: 8)
+        let first = LocalTime.adding(days: -14, to: day)
+        func at(_ d: LocalDay, _ hour: Int) -> Int64 { LocalTime.localTime(d, hour: hour, in: chicago) }
+        let included = [at(first, 0), at(LocalTime.adding(days: -1, to: day), 23)]
+        let excluded = [at(day, 0), at(LocalTime.adding(days: -15, to: day), 12)]
+        try await database.writer.write { db in
+            for minute in included + excluded {
+                _ = try db.upsertMinuteMetrics(calculatedMinutes(from: minute, count: 1, bpm: 60), computedAtMs: 1)
+            }
+        }
+        let starts = try await database.writer.read { db in
+            try db.stressLookback(for: day, in: chicago).windows.map(\.startMs)
+        }
+        #expect(starts.contains(included[0]))
+        #expect(starts.contains(included[1]))
+        #expect(!starts.contains(excluded[0]))
+        #expect(!starts.contains(excluded[1]))
+    }
+
+    /// Rows written by an older stress algorithm are rebuilt once. The rebuild stamps the current version,
+    /// and a second pass finds nothing stale (PLAN.md 8.5).
+    @Test func staleAlgorithmRowsAreRecomputedOnce() async throws {
+        let database = try seededDatabase()
+        let end = testNowMs - 60 * LocalTime.msPerMinute
+        let start = end - 5 * LocalTime.msPerMinute
+        try storeOneMinuteSamples(into: database, endingAt: end, minutes: 5, bpm: 60)
+        let worker = MetricsWorker(database: database)
+        _ = try await worker.recomputeBackfill(fromMs: start, toMs: end - 1, nowMs: testNowMs)
+
+        // Simulate rows stored by stress algorithm 1.
+        try await database.writer.write { db in
+            try db.execute(sql: "UPDATE minute_metric SET algo_version = 1")
+        }
+        let current = AlgoVersion.current.storedValue
+        let stale = try await database.writer.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM minute_metric WHERE algo_version < ?", arguments: [current])
+        }
+        #expect(stale == 5)
+
+        let first = try await worker.recomputeStaleRows(nowMs: testNowMs)
+        #expect(first.ran)
+        #expect(first.changedRows >= 5)
+        let staleAfter = try await database.writer.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM minute_metric WHERE algo_version < ?", arguments: [current])
+        }
+        #expect(staleAfter == 0)
+        let versions = try await database.writer.read { db in
+            try Int.fetchAll(db, sql: "SELECT DISTINCT algo_version FROM minute_metric WHERE minute_ms >= ? AND minute_ms < ?", arguments: [start, end])
+        }
+        #expect(versions == [current])
+
+        let second = try await worker.recomputeStaleRows(nowMs: testNowMs)
+        #expect(second == MetricsWorker.Result(changedRows: 0, ran: false))
+    }
 }
