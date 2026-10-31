@@ -132,9 +132,14 @@ final class MedicationsModel {
     @ObservationIgnored private let database: AppDatabase
     @ObservationIgnored private let clock: AppClock
 
-    init(database: AppDatabase, clock: AppClock) {
+    /// Called after every successful write: medication edits change past stress (`Database.markStressStale`), so the
+    /// stale minutes are rebuilt now rather than at the next launch.
+    @ObservationIgnored private let recomputeStale: () -> Void
+
+    init(database: AppDatabase, clock: AppClock, recomputeStale: @escaping () -> Void = {}) {
         self.database = database
         self.clock = clock
+        self.recomputeStale = recomputeStale
     }
 
     /// Today on the profile's zone.
@@ -172,6 +177,7 @@ final class MedicationsModel {
             try await database.writer.write { db in
                 try db.saveMedication(profile, nowMs: nowMs)
             }
+            recomputeStale()
             await load()
         } catch {
             errorMessage = "Could not save \(profile.name). Try again."
@@ -184,6 +190,7 @@ final class MedicationsModel {
             try await database.writer.write { db in
                 try db.deleteMedication(id: id, nowMs: nowMs)
             }
+            recomputeStale()
             await load()
         } catch {
             errorMessage = "Could not delete the medication. Try again."
@@ -198,6 +205,7 @@ final class MedicationsModel {
                 try db.removeDoseOverrides(medicationID: medicationID, day: day)
                 try db.addDoseOverride(DoseOverride(medicationID: medicationID, day: day, kind: .skipped), nowMs: nowMs)
             }
+            recomputeStale()
             await load()
         } catch {
             errorMessage = "Could not save that skip. Try again."
@@ -215,6 +223,7 @@ final class MedicationsModel {
                 try db.addDoseOverride(DoseOverride(medicationID: medicationID, day: day, kind: .taken(atMs: atMs)),
                                        nowMs: nowMs)
             }
+            recomputeStale()
             await load()
         } catch {
             errorMessage = "Could not save that dose. Try again."
@@ -227,6 +236,7 @@ final class MedicationsModel {
             try await database.writer.write { db in
                 try db.deleteDoseOverride(id: entryID)
             }
+            recomputeStale()
             await load()
         } catch {
             errorMessage = "Could not remove that dose. Try again."

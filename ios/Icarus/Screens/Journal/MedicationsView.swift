@@ -44,7 +44,8 @@ struct MedicationsView: View {
 
     init(environment: AppEnvironment) {
         self.environment = environment
-        _model = State(initialValue: MedicationsModel(database: environment.database, clock: environment.clock))
+        _model = State(initialValue: MedicationsModel(database: environment.database, clock: environment.clock,
+                                                           recomputeStale: environment.recomputeStaleMetrics))
     }
 
     private func startNew(_ preset: MedicationProfile.Preset, schedule: [Int]) {

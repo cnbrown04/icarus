@@ -126,13 +126,9 @@ final class AppEnvironment {
         ingestsLiveData ? inputContinuation : nil
     }
 
-    /// Starts the ingest loop and the 5-second flush tick. Safe to call more than once.
-    func startIngestion() {
-        guard ingestsLiveData, !ingestionStarted else { return }
-        ingestionStarted = true
-        let ingestor = ingestor
-        let inputs = inputs
-        // Minute rows from an older algorithm version are rebuilt once per launch (PLAN.md 8.5).
+    /// Rebuilds minute rows marked stale, in the background: rows from an older algorithm version, and the days a
+    /// medication or dose edit invalidated (`Database.markStressStale`). Safe to call repeatedly.
+    func recomputeStaleMetrics() {
         let metrics = metrics
         let nowMs = clock.nowMs
         Task.detached(priority: .utility) {
@@ -142,6 +138,16 @@ final class AppEnvironment {
                 BandLog.tierB(.error, "app: stale metric recompute failed: \(String(describing: error))")
             }
         }
+    }
+
+    /// Starts the ingest loop and the 5-second flush tick. Safe to call more than once.
+    func startIngestion() {
+        guard ingestsLiveData, !ingestionStarted else { return }
+        ingestionStarted = true
+        let ingestor = ingestor
+        let inputs = inputs
+        // Minute rows from an older algorithm version are rebuilt once per launch (PLAN.md 8.5).
+        recomputeStaleMetrics()
         Task { await ingestor.run(inputs) }
         let continuation = inputContinuation
         Task {
