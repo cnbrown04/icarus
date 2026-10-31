@@ -15,6 +15,8 @@ struct DrainProgressState: Equatable {
     var totalThisSession = 0
     /// The strap's reported ring backlog, when a GET_DATA_RANGE reply has been decoded.
     var pagesBehind: Int?
+    /// A full sync's share done (0...1), for the determinate progress bar. Nil for routine drains.
+    var fraction: Double?
     /// Why the last drain stopped abnormally, in words. Nil after a clean catch-up/completion.
     var lastStopReasonText: String?
     /// When the last drain ended.
@@ -383,6 +385,7 @@ final class LiveState {
         drainProgress.recordsThisDrain = progress.recordsThisDrain
         drainProgress.totalThisSession = progress.totalThisSession
         drainProgress.pagesBehind = progress.pagesBehind
+        drainProgress.fraction = progress.fraction
         if progress.isDraining {
             // A new drain starts: the previous end's reason no longer describes the state.
             drainProgress.lastStopReasonText = nil

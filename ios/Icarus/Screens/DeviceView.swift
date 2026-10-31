@@ -16,6 +16,8 @@ struct DeviceView: View {
     @State private var showsRestore = false
     /// The last restore's one-line result, read once the restore returns.
     @State private var restoreSummary: String?
+    /// True from the tap until the sync returns, so the row reacts before the band's first reply.
+    @State private var isSyncing = false
 
     private var bandName: String {
         liveState.bandName ?? "Paired Band"
@@ -119,7 +121,7 @@ struct DeviceView: View {
                 Button("Sync All Pending Band Data…") {
                     showsRestore = true
                 }
-                .disabled(liveState.tierBState != .ready || liveState.drainProgress.isDraining)
+                .disabled(liveState.tierBState != .ready || liveState.drainProgress.isDraining || isSyncing)
                 .accessibilityIdentifier("device.drainFullHistory")
                 // Every drain — the connect drain, the 15-minute cadence and the manual restore —
                 // drives the same live state, so the row updates in place instead of appearing
@@ -127,13 +129,19 @@ struct DeviceView: View {
                 // One status row: the title on top and its detail on a left-aligned line below, so long progress
                 // text never wraps into a ragged right-aligned block. A finished manual sync's summary replaces
                 // the routine "Synced" line rather than sitting in a second row.
-                if liveState.drainProgress.isDraining {
-                    historyRow("Syncing", detail: liveState.drainProgressText, systemImage: "arrow.triangle.2.circlepath",
-                               inProgress: true)
-                        .accessibilityIdentifier("device.drainProgress")
+                if isSyncing || liveState.drainProgress.isDraining {
+                    // Shown from the tap itself, before the band has answered, so a sync is never silent.
+                    historyRow(
+                        "Syncing",
+                        detail: liveState.drainProgress.isDraining ? liveState.drainProgressText : "Checking the band…",
+                        systemImage: "arrow.triangle.2.circlepath",
+                        progress: liveState.drainProgress.isDraining ? liveState.drainProgress.fraction : nil,
+                        inProgress: true
+                    )
+                    .accessibilityIdentifier("device.drainProgress")
                 } else if let detail = restoreSummary ?? (liveState.drainProgress.lastEndedAt != nil
                     ? liveState.drainProgressText : nil) {
-                    historyRow("Last Sync", detail: detail, systemImage: "checkmark.circle", inProgress: false)
+                    historyRow("Last Sync", detail: detail, systemImage: "checkmark.circle", progress: nil, inProgress: false)
                         .accessibilityIdentifier("device.drainProgress")
                 }
             } header: {
@@ -216,14 +224,32 @@ struct DeviceView: View {
     }
 
     /// A history status row: the title with its symbol, and the detail on its own secondary line beneath.
-    private func historyRow(_ title: String, detail: String, systemImage: String, inProgress: Bool) -> some View {
-        VStack(alignment: .leading, spacing: Spacing.s4) {
+    /// With a `progress` fraction it shows a determinate bar (a full sync knows its backlog in pages); without one,
+    /// a spinner while `inProgress`.
+    private func historyRow(
+        _ title: String,
+        detail: String,
+        systemImage: String,
+        progress: Double?,
+        inProgress: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.s8) {
             HStack(spacing: Spacing.s8) {
                 Label(title, systemImage: systemImage)
                 if inProgress {
                     Spacer(minLength: Spacing.s8)
-                    ProgressView()
+                    if let progress {
+                        Text(Format.percent(progress))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ProgressView()
+                    }
                 }
+            }
+            if let progress {
+                ProgressView(value: progress)
+                    .stateAnimation(progress)
             }
             Text(detail)
                 .font(.footnote)
@@ -236,10 +262,24 @@ struct DeviceView: View {
     /// `liveState.drainProgress`, so the manual path, the connect drain and the periodic cadence
     /// all render the same live feedback and nothing is duplicated in local view state.
     private func startRestore() {
+        isSyncing = true
+        restoreSummary = nil
         Task {
             await liveState.drainFullHistory()
-            restoreSummary = await liveState.fullHistorySummary()
+            restoreSummary = await liveState.fullHistorySummary().map(Self.syncSummaryText)
+            isSyncing = false
         }
+    }
+
+    /// The controller's summary as a sentence for the row: "synced: 3 drain(s), 1,204 record(s), oldest …" →
+    /// "Synced 1,204 records · oldest …"; other outcomes are capitalized as they are.
+    private static func syncSummaryText(_ summary: String) -> String {
+        guard summary.hasPrefix("synced: ") else { return summary.prefix(1).uppercased() + summary.dropFirst() }
+        let parts = summary.dropFirst("synced: ".count).components(separatedBy: ", ")
+        let records = parts.first { $0.hasSuffix("record(s)") }?
+            .replacingOccurrences(of: " record(s)", with: "") ?? "0"
+        let span = parts.first { $0.hasPrefix("oldest") }
+        return ["Synced \(records) records", span].compactMap { $0 }.joined(separator: " · ")
     }
 
     /// Off switches the channel at once. On only opens the explainer, and the switch moves when "Turn On" is tapped.
