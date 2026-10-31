@@ -183,21 +183,18 @@ final class LiveState {
         DataAge.isPaused(since: lastDataAt, now: clock.now)
     }
 
-    /// One line for the History section, e.g. "Syncing with band… 3,214 records" while a drain
-    /// runs, then "Synced — 12,680 records" (plus an abnormal stop reason). Empty before the
+    /// One line for the History section, counting the current (or last) drain's records so the running line and
+    /// the finished line agree: "1,204 records so far" while a drain runs, then "Synced 1,204 records" (plus an
+    /// abnormal stop reason). The backlog itself shows as the row's progress bar, not as text. Empty before the
     /// first drain of the launch.
     var drainProgressText: String {
-        let count = drainProgress.totalThisSession
+        let count = drainProgress.recordsThisDrain
         let records = "\(count.formatted()) record\(count == 1 ? "" : "s")"
         if drainProgress.isDraining {
-            var text = "Syncing with band… \(records)"
-            if let pages = drainProgress.pagesBehind, pages > 0 {
-                text += " · \(pages.formatted()) pages behind"
-            }
-            return text
+            return "\(records) so far"
         }
         guard drainProgress.lastEndedAt != nil else { return "" }
-        var text = "Synced — \(records)"
+        var text = "Synced \(records)"
         if let reason = drainProgress.lastStopReasonText {
             text += " · \(reason)"
         }
