@@ -61,16 +61,16 @@ enum Format {
     /// Seconds with one decimal and a regular space before the unit, for rhythm lengths (PLAN.md 15.1).
     static func seconds(_ value: Double) -> String {
         let tenths = (value * 10).rounded() / 10
-        let text = tenths.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(tenths))" : String(format: "%.1f", tenths)
+        let text = tenths.formatted(.number.precision(.fractionLength(0...1)))
         return "\(text) s"
     }
 
-    /// Percent with a regular space before the sign, as the zone labels use.
+    /// Percent with no space before the sign ("47%"), as Apple Health writes it.
     static func percent(_ value: Int) -> String {
-        "\(value) %"
+        "\(value)%"
     }
 
-    /// A fraction (0...1) as a percent with a regular space before the sign.
+    /// A fraction (0...1) as a percent ("47%").
     static func percent(_ fraction: Double) -> String {
         percent(Int((fraction * 100).rounded()))
     }

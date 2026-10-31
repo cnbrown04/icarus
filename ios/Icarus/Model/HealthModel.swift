@@ -126,8 +126,8 @@ extension HealthMonitor.Vital {
         switch self {
         case .restingHR: Format.bpm(value)
         case .hrv: Format.ms(value)
-        case .respiratoryRate: String(format: "%.1f br/min", value)
-        case .skinTemp: String(format: "%+.1f", value)
+        case .respiratoryRate: "\(value.formatted(.number.precision(.fractionLength(1)))) br/min"
+        case .skinTemp: value.formatted(.number.precision(.fractionLength(1)).sign(strategy: .always()))
         }
     }
 }
