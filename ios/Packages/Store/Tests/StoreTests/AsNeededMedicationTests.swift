@@ -49,28 +49,4 @@ struct AsNeededMedicationTests {
         #expect(windows.first?.medicationID == "adderall-ir")
     }
 
-    @Test func tookBehaviourIsYesOnlyOnLoggedDays() throws {
-        let database = try seededDatabase()
-        try database.writer.write { db in
-            // Morning of each day Sep 30 - Oct 13 carries a sleep with HRV 40 ms.
-            for index in 1...13 {
-                let end = LocalTime.localTime(LocalDay(year: 2026, month: 10, day: index), hour: 7, in: chicago)
-                try db.execute(sql: """
-                INSERT INTO sleep_session (band_id, start_ms, end_ms, duration_s, rmssd_ms, contact_fraction, quality,
-                  record_count, algo_version, computed_at, is_nap)
-                SELECT id, ?, ?, 25200, 40, 1.0, 'good', 1, 1, 0, 0 FROM band
-                """, arguments: [end - 7 * 3_600_000, end])
-            }
-            try db.saveMedication(asNeeded(), nowMs: 1)
-            try db.addDoseOverride(DoseOverride(medicationID: "adderall-ir", day: oct2, kind: .taken(atMs: dose(oct2))), nowMs: 2)
-            try db.addDoseOverride(DoseOverride(medicationID: "adderall-ir", day: oct5, kind: .taken(atMs: dose(oct5))), nowMs: 3)
-        }
-        let insights = try database.writer.read { try $0.journalInsights(through: oct20, in: chicago) }
-        let took = try #require(insights.first {
-            $0.behaviourID == "medication:adderall-ir" && $0.effect.metric == .hrv
-        })
-        #expect(took.effect.with.days == 2)
-        // Sep 30 and Oct 1, 3, 4, 6-12: every other window day with a morning after it.
-        #expect(took.effect.without.days == 11)
-    }
 }

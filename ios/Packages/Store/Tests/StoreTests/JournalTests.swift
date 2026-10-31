@@ -196,7 +196,6 @@ struct JournalStoreTests {
         }
         let alcohol = try #require(insights.first { $0.behaviourID == "alcohol" && $0.effect.metric == .hrv })
         #expect(alcohol.label == "Alcohol")
-        #expect(alcohol.isMedication == false)
         // Odd days (yes) 1, 3, ..., 11 map to mornings 2, 4, ..., 12 with HRV 30. Even days map to 50.
         #expect(alcohol.effect.with.days == 6)
         #expect(alcohol.effect.without.days == 6)
@@ -206,7 +205,7 @@ struct JournalStoreTests {
         #expect(alcohol.effect.isConfident)
     }
 
-    @Test func insightsIncludeStimulantDaysFromScheduleAndOverrides() throws {
+    @Test func insightsNeverIncludeMedications() throws {
         let database = try seededDatabase()
         try seedAlcoholAndSleep(database)
         try database.writer.write { db in
@@ -219,17 +218,8 @@ struct JournalStoreTests {
         let insights = try database.writer.read {
             try $0.journalInsights(through: oct20, in: chicago)
         }
-        let medication = try #require(insights.first {
-            $0.behaviourID == "medication:adderall" && $0.effect.metric == .hrv
-        })
-        #expect(medication.label == "Adderall (IR)")
-        #expect(medication.isMedication)
-        // Scheduled every day, so Sep 30 and Oct 1-12 are taken, except Oct 4 (skipped). Sep 30 has no alcohol
-        // answer but its morning (Oct 1) carries the stray HRV 999, so it sits on the "with" side here.
-        #expect(medication.effect.with.days == 12)
-        #expect(medication.effect.without.days == 1)
-        #expect(medication.effect.isConfident == false)
-        #expect(medication.effect.moreDaysNeeded == 4)
+        let questionIDs = try database.writer.read { Set(try $0.journalQuestions().map(\.id)) }
+        #expect(insights.allSatisfy { questionIDs.contains($0.behaviourID) })
     }
 
     @Test func questionsWithoutAnswersProduceNoEffectsWithData() throws {

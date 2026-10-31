@@ -26,13 +26,11 @@ public struct JournalAnswer: Sendable, Equatable {
     public var value: Int
 }
 
-/// One behaviour's comparison for one metric, labelled for the UI. Medication behaviours carry the profile name
-/// and `isMedication`, and their ids start with `JournalBehaviour.medicationPrefix`.
+/// One behaviour's comparison for one metric, labelled for the UI. Behaviours are check-in questions only.
 public struct JournalInsight: Sendable, Equatable, Identifiable {
     public var id: String { "\(behaviourID)|\(effect.metric.rawValue)" }
     public var behaviourID: String
     public var label: String
-    public var isMedication: Bool
     public var effect: JournalInsights.Effect
 }
 
@@ -45,11 +43,6 @@ public enum JournalError: Error, Equatable {
     case builtInQuestion
     /// The question id does not exist.
     case unknownQuestion
-}
-
-/// Behaviour ids used by `journalInsights`.
-public enum JournalBehaviour {
-    public static let medicationPrefix = "medication:"
 }
 
 /// `journal_question` (v10) as a GRDB record. `kind` holds the raw value.
@@ -181,45 +174,23 @@ extension Database {
 
     // MARK: Insights
 
-    /// Comparisons over the `journalWindowDays` local days ending on `through`, for every question and for each
-    /// stimulant medication.
+    /// Comparisons over the `journalWindowDays` local days ending on `through`, for every check-in question.
     ///
-    /// Day D's answers (and "took <medication>" for day D, from `MedicationEffect.doses` with the schedule or
-    /// overrides) are paired with the outcomes of the morning of D + 1: recovery and sleep performance from
+    /// Day D's answers are paired with the outcomes of the morning of D + 1: recovery and sleep performance from
     /// `dailyScores(day: D + 1)`, and HRV from the main sleep that ended on D + 1. A day with no outcome, or
     /// with no answer, is left out of that behaviour. The result is correlation, not causation (see
-    /// `JournalInsights`).
+    /// `JournalInsights`). Medications are not behaviours here: they are a calculation setting, not a daily input.
     public func journalInsights(through last: LocalDay, in timeZone: TimeZone) throws -> [JournalInsight] {
         let first = LocalTime.adding(days: -(Self.journalWindowDays - 1), to: last)
         let questions = try journalQuestions()
-        let profiles = try medications().filter { $0.active && $0.medClass == .stimulant }
-        let doses = MedicationEffect.doses(
-            profiles: profiles,
-            overrides: try doseOverrides(from: first, to: last),
-            from: first,
-            to: last,
-            in: timeZone
-        )
 
         var behaviours: [LocalDay: [String: Bool]] = [:]
         for answer in try answers(from: first, to: last) {
             behaviours[answer.day, default: [:]][answer.questionID] = answer.value > 0
         }
-        // A medication is "taken" on a day that has a dose. Every other day in the window is a "no".
-        let takenKeys = Set(doses.map { dose in
-            "\(dose.medicationID)|\(JournalDayText.text(LocalTime.localDay(containing: dose.takenAtMs, in: timeZone)))"
-        })
-        var day = first
-        while JournalDayText.text(day) <= JournalDayText.text(last) {
-            for profile in profiles {
-                behaviours[day, default: [:]][JournalBehaviour.medicationPrefix + profile.id] =
-                    takenKeys.contains("\(profile.id)|\(JournalDayText.text(day))")
-            }
-            day = LocalTime.adding(days: 1, to: day)
-        }
 
         var days: [JournalInsights.Day] = []
-        day = first
+        var day = first
         while JournalDayText.text(day) <= JournalDayText.text(last) {
             let outcome = try morningOutcome(of: LocalTime.adding(days: 1, to: day), in: timeZone)
             days.append(JournalInsights.Day(behaviours: behaviours[day] ?? [:], outcome: outcome))
@@ -227,15 +198,9 @@ extension Database {
         }
 
         let questionLabels = Dictionary(questions.map { ($0.id, $0.label) }, uniquingKeysWith: { kept, _ in kept })
-        let profileNames = Dictionary(profiles.map { ($0.id, $0.name) }, uniquingKeysWith: { kept, _ in kept })
         return JournalInsights.effects(for: days).compactMap { effect in
-            if effect.behaviour.hasPrefix(JournalBehaviour.medicationPrefix) {
-                let id = String(effect.behaviour.dropFirst(JournalBehaviour.medicationPrefix.count))
-                guard let name = profileNames[id] else { return nil }
-                return JournalInsight(behaviourID: effect.behaviour, label: name, isMedication: true, effect: effect)
-            }
             guard let label = questionLabels[effect.behaviour] else { return nil }
-            return JournalInsight(behaviourID: effect.behaviour, label: label, isMedication: false, effect: effect)
+            return JournalInsight(behaviourID: effect.behaviour, label: label, effect: effect)
         }
     }
 
