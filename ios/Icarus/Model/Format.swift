@@ -121,12 +121,12 @@ enum Format {
 
     static func zoneLabel(_ zone: HeartRateZone) -> String {
         switch zone {
-        case .below: "Below 50 %"
-        case .zone1: "50-60 %"
-        case .zone2: "60-70 %"
-        case .zone3: "70-80 %"
-        case .zone4: "80-90 %"
-        case .zone5: "90 % and above"
+        case .below: "Below 50%"
+        case .zone1: "50–60%"
+        case .zone2: "60–70%"
+        case .zone3: "70–80%"
+        case .zone4: "80–90%"
+        case .zone5: "90%+"
         }
     }
 }
