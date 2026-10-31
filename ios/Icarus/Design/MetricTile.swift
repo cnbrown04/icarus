@@ -27,25 +27,3 @@ struct DeltaChip: View {
             .background(Color(uiColor: .tertiarySystemFill), in: Capsule())
     }
 }
-
-/// A label and a value in a small card, for the stats row on detail screens.
-struct StatTile: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.s4) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.metricValue)
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Spacing.s16)
-        .cardBackground()
-    }
-}

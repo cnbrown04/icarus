@@ -1,5 +1,13 @@
 import SwiftUI
 
+/// Corner radii, the only ones the app uses.
+enum Radius {
+    /// Cards, tiles and sheets.
+    static let card: CGFloat = 16
+    /// Controls and small chips.
+    static let control: CGFloat = 10
+}
+
 extension View {
     /// Horizontal page padding, identical on every screen (PLAN.md §15.2 rule 11).
     func pagePadding() -> some View {
