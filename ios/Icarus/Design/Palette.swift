@@ -11,6 +11,9 @@ enum Palette {
     static let hrv = Color.indigo
     static let sleep = Color.teal
     static let strain = Color.blue
+    /// Stimulant-active windows shaded behind chart data (`MedicationWindowsOverlay`). Neutral on purpose: a
+    /// medication window marks a time, not a state, so it must not read as a good or bad colour.
+    static let medication = Color.secondary
 
     /// Recovery bands use the familiar red / yellow / green.
     static func recovery(_ band: Recovery.Band) -> Color {
