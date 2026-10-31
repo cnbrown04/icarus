@@ -125,8 +125,10 @@ enum HistoryPipeline {
     }
 
     /// Re-derives every band's whole stored span when the stored sessions came from an older
-    /// `SleepDeriver.algoVersion` (or none exist yet). Version 1 sessions were whole worn days, not
-    /// sleep, so they are deleted outright rather than left for the range rule to find.
+    /// `SleepDeriver.algoVersion` (or none exist yet). The re-derive replaces nights in place, in one
+    /// transaction, so history never reads empty while it runs (deleting first left the Sleep tab and the
+    /// charts blank for a minute after an update). Only version 1 sessions, which were whole worn days
+    /// rather than sleep, are deleted outright first.
     static func rederiveAllIfStale(in database: AppDatabase, nowMs: Int64) async {
         do {
             let span = try await database.writer.write { db -> (Int64, Int64)? in
@@ -139,9 +141,12 @@ enum HistoryPipeline {
                       let lo = try Int64.fetchOne(db, sql: "SELECT MIN(ts_ms) FROM historical_record"),
                       let hi = try Int64.fetchOne(db, sql: "SELECT MAX(ts_ms) FROM historical_record")
                 else { return nil }
-                try db.execute(sql: "DELETE FROM sleep_stage_segment")
-                try db.execute(sql: "DELETE FROM night_reading")
-                try db.execute(sql: "DELETE FROM sleep_session")
+                let wholeDays = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sleep_session WHERE algo_version < 2") ?? 0
+                if wholeDays > 0 {
+                    try db.execute(sql: "DELETE FROM sleep_stage_segment")
+                    try db.execute(sql: "DELETE FROM night_reading")
+                    try db.execute(sql: "DELETE FROM sleep_session")
+                }
                 BandLog.tierB(.info, "app: \(stale) sleep session(s) from an older algorithm; re-deriving all history")
                 return (lo, hi)
             }
