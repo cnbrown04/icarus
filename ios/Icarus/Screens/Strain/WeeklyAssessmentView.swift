@@ -16,12 +16,13 @@ struct WeeklyAssessmentView: View {
                         HStack(spacing: Spacing.s12) {
                             Text(rowTitle(row.metric))
                                 .lineLimit(1)
-                                .layoutPriority(1)
                             Spacer(minLength: Spacing.s8)
                             Text(valueText(row.thisWeek, row.metric))
                                 .monospacedDigit()
+                                .fixedSize()
                             Text(deltaText(row))
                                 .monospacedDigit()
+                                .fixedSize()
                                 .foregroundStyle(deltaColor(row))
                                 .frame(minWidth: Spacing.s48, alignment: .trailing)
                         }
@@ -76,8 +77,8 @@ struct WeeklyAssessmentView: View {
         case .sleepPerformance: "Sleep Performance"
         case .hoursSlept: "Hours Slept"
         case .strain: "Strain"
-        case .hrv: "HRV"
-        case .restingHR: "Resting HR"
+        case .hrv: "Heart Rate Variability"
+        case .restingHR: "Resting Heart Rate"
         }
     }
 
