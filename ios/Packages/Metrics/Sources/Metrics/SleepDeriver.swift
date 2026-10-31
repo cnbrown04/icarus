@@ -97,6 +97,8 @@ public struct SleepSession: Sendable, Equatable {
     public let recordCount: Int
     /// True for a daytime nap; false for the night's main sleep. Last night is the newest main sleep.
     public let isNap: Bool
+    /// The window readings the nightly vitals summarise (`SleepDeriver.NightReadings`).
+    public let readings: SleepDeriver.NightReadings
 }
 
 /// Nightly sleep sessions from the strap's historical records (PLAN.md 8.1).
@@ -108,12 +110,13 @@ public struct SleepSession: Sendable, Equatable {
 /// This is a clearly-labelled proxy derived from published methods, not a WHOOP sleep score
 /// (PLAN.md §79 "we compute our own clearly labelled metrics").
 public enum SleepDeriver {
-    /// Algorithm version stored with every derived row (PLAN.md 8.5). 4 = session respiratory rate from the
+    /// Algorithm version stored with every derived row (PLAN.md 8.5). 5 = the window readings behind each nightly
+    /// vital are stored with the session (same values); 4 = session respiratory rate from the
     /// on-wrist R-R (RSA); 3 = session RHR is the lowest gated
     /// 5-minute bin and RMSSD is the mean of per-window RMSSD, plus the nap flag; 2 = `SleepDetector`
     /// windows with the older median RHR and whole-session RMSSD; 1 was "any contiguous worn run touching
     /// 21:00–06:00", which made whole days into nights.
-    public static let algoVersion = 4
+    public static let algoVersion = 5
 
     /// Context a derivation must read on each side of the span it rewrites: the longest window
     /// (`SleepDetector.maxSleepSeconds`) plus the detector's day of HR baseline context.
@@ -155,10 +158,20 @@ public enum SleepDeriver {
         let onWrist = sorted.filter(\.isOnWrist)
         let contactFraction = Double(onWrist.count) / Double(sorted.count)
 
+        // Each nightly vital is a summary of its window readings, which are kept with the session so a chart can
+        // show them: resting HR the lowest 5-minute bin, RMSSD the mean of 5-minute windows, respiratory rate the
+        // median of 30-minute windows.
         let inputs = vitalInputs(onWrist)
-        let restingHeartRate = SleepDetector.sessionRestingHR(inputs.heartRate, startUnix: startUnix, endUnix: endUnix)
-        let rmssd = HRV.windowedRMSSD(inputs.beats, startUnix: startUnix)
-        let rrSamples = inputs.rrSamples
+        let restingBins = SleepDetector.sessionRestingBins(inputs.heartRate, startUnix: startUnix, endUnix: endUnix)
+        let rmssdWindows = HRV.rmssdWindows(inputs.beats, startUnix: startUnix)
+        let respiratoryWindows = RespiratoryRate.nightWindows(inputs.rrSamples)
+        let restingHeartRate = restingBins.map(\.bpm).min()
+        let rmssd = rmssdWindows.isEmpty ? nil : rmssdWindows.map(\.ms).reduce(0, +) / Double(rmssdWindows.count)
+        let readings = NightReadings(
+            restingHR: restingBins.map { Reading(unixSeconds: $0.start, value: $0.bpm) },
+            hrv: rmssdWindows.map { Reading(unixSeconds: $0.startUnix, value: $0.ms) },
+            respiratoryRate: (respiratoryWindows?.estimates ?? []).map { Reading(unixSeconds: $0.startMs / 1000, value: $0.brpm) }
+        )
 
         return SleepSession(
             startUnix: startUnix,
@@ -168,11 +181,12 @@ public enum SleepDeriver {
             rmssdMs: rmssd,
             respRateRawMedian: Statistics.median(onWrist.compactMap(\.respRateRaw)),
             skinTempRawMedian: Statistics.median(onWrist.compactMap(\.skinTempRaw)),
-            respiratoryRateBrpm: RespiratoryRate.nightEstimate(rrSamples)?.brpm,
+            respiratoryRateBrpm: respiratoryWindows.flatMap { RespiratoryRate.nightEstimate($0) }?.brpm,
             contactFraction: contactFraction,
             quality: quality(contactFraction: contactFraction),
             recordCount: sorted.count,
-            isNap: isNap
+            isNap: isNap,
+            readings: readings
         )
     }
 
@@ -189,10 +203,27 @@ public enum SleepDeriver {
 
     /// A nightly vital and the readings it summarises: resting HR is the lowest 5-minute heart rate, RMSSD the mean
     /// of 5-minute RMSSD, respiratory rate the median of 30-minute estimates (when enough windows have one).
-    public enum NightVital: Sendable {
-        case restingHR
-        case hrv
-        case respiratoryRate
+    public enum NightVital: String, Sendable, CaseIterable {
+        case restingHR = "resting_hr"
+        case hrv = "rmssd"
+        case respiratoryRate = "resp_rate"
+    }
+
+    /// One night's window readings per vital, in time order.
+    public struct NightReadings: Sendable, Equatable {
+        public let restingHR: [Reading]
+        public let hrv: [Reading]
+        public let respiratoryRate: [Reading]
+
+        public static let empty = NightReadings(restingHR: [], hrv: [], respiratoryRate: [])
+
+        public subscript(vital: NightVital) -> [Reading] {
+            switch vital {
+            case .restingHR: restingHR
+            case .hrv: hrv
+            case .respiratoryRate: respiratoryRate
+            }
+        }
     }
 
     /// The window readings behind `summarize`'s value for `vital`, in time order, for the same records and window

@@ -160,6 +160,15 @@ public enum RespiratoryRate {
         minCoverage: Double = minNightCoverage
     ) -> NightEstimate? {
         guard let windows = nightWindows(beats, windowSec: windowSec) else { return nil }
+        return nightEstimate(windows, minCoverage: minCoverage)
+    }
+
+    /// `nightEstimate` from windows `nightWindows` already produced, so a caller that keeps the windows does not
+    /// compute the spectra twice.
+    public static func nightEstimate(
+        _ windows: (estimates: [(startMs: Int64, brpm: Double)], total: Int),
+        minCoverage: Double = minNightCoverage
+    ) -> NightEstimate? {
         let estimates = windows.estimates.map(\.brpm)
         let total = windows.total
         guard !estimates.isEmpty,

@@ -94,6 +94,9 @@ struct SleepDeriverTests {
         let mean = rmssd.reduce(0, +) / Double(rmssd.count)
         #expect(abs(mean - (session.rmssdMs ?? -1)) < 1e-9)
         #expect(hrv.map(\.unixSeconds) == hrv.map(\.unixSeconds).sorted())
+        // The session keeps the same readings it summarised.
+        #expect(session.readings.restingHR == resting)
+        #expect(session.readings.hrv == hrv)
     }
 
     @Test func rmssdIsTheMeanOfPerWindowRMSSD() throws {
