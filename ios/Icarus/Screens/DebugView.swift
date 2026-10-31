@@ -49,6 +49,39 @@ struct DebugView: View {
                 Text("Exports the last 10 min of heart-rate frames. Device names and serials are left out.")
             }
 
+            Section {
+                if liveState.consoleLog.lines.isEmpty {
+                    Text("No console lines yet")
+                }
+                // Newest first. The ring holds at most `BandConsoleLog.capacity` lines.
+                ForEach(liveState.consoleLog.lines.reversed()) { line in
+                    VStack(alignment: .leading, spacing: Spacing.s4) {
+                        Text(line.at, style: .time)
+                            .foregroundStyle(.secondary)
+                        Text(line.text)
+                            .lineLimit(2)
+                    }
+                    .font(.system(.caption, design: .monospaced))
+                }
+            } header: {
+                Text("Band console")
+            } footer: {
+                Text("The strap's own firmware log, last \(BandConsoleLog.capacity) lines. The text layout is not yet verified on hardware.")
+            }
+
+            Section {
+                if liveState.unknownEvents.sorted.isEmpty {
+                    Text("None since launch")
+                }
+                ForEach(liveState.unknownEvents.sorted, id: \.id) { entry in
+                    LabeledContent("Event \(entry.id)", value: "\(entry.count)")
+                }
+            } header: {
+                Text("Unknown band events")
+            } footer: {
+                Text("EVENT ids the app does not name yet, counted since launch. Name them from captures.")
+            }
+
             Section("Latest frames") {
                 if frames.isEmpty {
                     Text("No frames yet")

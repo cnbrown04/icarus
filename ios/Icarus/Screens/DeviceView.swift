@@ -63,7 +63,7 @@ struct DeviceView: View {
                 }
                 if let battery = liveState.batteryPercent {
                     LabeledContent {
-                        Text(Format.percent(battery))
+                        Text(batteryText(battery))
                             .monospacedDigit()
                     } label: {
                         Label("Battery", systemImage: Format.batterySymbol(battery))
@@ -81,6 +81,13 @@ struct DeviceView: View {
                         lastDataText
                     } label: {
                         Label("Last data", systemImage: "clock")
+                    }
+                }
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    LabeledContent {
+                        linkText
+                    } label: {
+                        Label("Link", systemImage: "link")
                     }
                 }
                 // Identity the band reported in its bandInfo event (PLAN.md §14 row 15).
@@ -315,6 +322,28 @@ struct DeviceView: View {
 
     private var signalText: String {
         liveState.connectedRSSI.map { "\($0) dBm" } ?? "--"
+    }
+
+    /// Percent, with "Charging" after it while the strap reports charging (whoop-parity §3.7).
+    private func batteryText(_ percent: Int) -> String {
+        liveState.isCharging == true ? "\(Format.percent(percent)) · Charging" : Format.percent(percent)
+    }
+
+    /// The last LINK_VALID keep-alive that the link confirmed. Failures in a row replace the time (whoop-parity §3.8).
+    @ViewBuilder
+    private var linkText: some View {
+        if liveState.linkKeepAliveFailures > 0 {
+            Text("\(liveState.linkKeepAliveFailures) failed")
+                .foregroundStyle(Palette.error)
+        } else if let at = liveState.linkKeepAliveAt {
+            if let stale = DataAge.staleText(since: at, now: liveState.now) {
+                Text(stale)
+            } else {
+                Text(at, style: .time)
+            }
+        } else {
+            Text("None")
+        }
     }
 
     @ViewBuilder

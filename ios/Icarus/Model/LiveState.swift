@@ -45,6 +45,16 @@ final class LiveState {
     private(set) var lastBandEventAt: Date?
     /// Best-effort identity strings decoded from the last GET_HELLO reply (PLAN.md 5.3.4).
     private(set) var bandInfo: BandInfo?
+    /// Charging state from the strap's charging events (7 on, 8 off). Nil until one arrives this launch.
+    private(set) var isCharging: Bool?
+    /// When the LINK_VALID keep-alive was last confirmed on the current link, and how many have failed in a row
+    /// (whoop-parity §3.8). The time is nil before the first success on a connection.
+    private(set) var linkKeepAliveAt: Date?
+    private(set) var linkKeepAliveFailures = 0
+    /// The strap's console (type 50) lines, bounded to `BandConsoleLog.capacity` (whoop-parity §3.5).
+    private(set) var consoleLog = BandConsoleLog()
+    /// EVENT ids the parser does not name, counted since launch (whoop-parity §3.11).
+    private(set) var unknownEvents = UnknownEventTally()
     /// Live history-offload progress, for the Device screen's History section and any other view
     /// that wants to show a band sync without polling.
     private(set) var drainProgress = DrainProgressState()
@@ -344,7 +354,19 @@ final class LiveState {
         case let .bandEvent(kind):
             lastBandEvent = kind
             lastBandEventAt = clock.now
+            if case let .unknown(id) = kind {
+                unknownEvents.record(id)
+            }
             onBandEvent?(kind)
+        case let .charging(charging):
+            isCharging = charging
+        case let .linkKeepAlive(sentAt, failures):
+            linkKeepAliveAt = sentAt
+            linkKeepAliveFailures = failures
+        case let .consoleLines(lines, at):
+            for line in lines {
+                consoleLog.append(line, at: at)
+            }
         case let .bandInfo(info):
             bandInfo = info
         case let .historical(records):
