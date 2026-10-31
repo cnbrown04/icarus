@@ -176,6 +176,7 @@ extension Database {
         """)
         var written = 0
         for session in sessions {
+            try replaceNightReadings(session.readings, bandID: bandID, sessionStartMs: session.startUnix * 1000)
             statement.setUncheckedArguments([
                 bandID,
                 session.startUnix * 1000,
@@ -197,6 +198,21 @@ extension Database {
             written += changesCount
         }
         return written
+    }
+
+    /// Replaces one session's stored window readings with `readings`.
+    func replaceNightReadings(_ readings: SleepDeriver.NightReadings, bandID: String, sessionStartMs: Int64) throws {
+        try execute(sql: "DELETE FROM night_reading WHERE band_id = ? AND session_start_ms = ?",
+                    arguments: [bandID, sessionStartMs])
+        let statement = try makeStatement(sql: """
+        INSERT OR REPLACE INTO night_reading (band_id, session_start_ms, vital, ts_ms, value) VALUES (?, ?, ?, ?, ?)
+        """)
+        for vital in SleepDeriver.NightVital.allCases {
+            for reading in readings[vital] {
+                statement.setUncheckedArguments([bandID, sessionStartMs, vital.rawValue, reading.unixSeconds * 1000, reading.value])
+                try statement.execute()
+            }
+        }
     }
 
     /// Re-derives the sleep sessions that start in `[fromMs, toMs)`.
@@ -251,6 +267,10 @@ extension Database {
         for startMs in stale {
             try execute(
                 sql: "DELETE FROM sleep_stage_segment WHERE band_id = ? AND session_start_ms = ?",
+                arguments: [bandID, startMs]
+            )
+            try execute(
+                sql: "DELETE FROM night_reading WHERE band_id = ? AND session_start_ms = ?",
                 arguments: [bandID, startMs]
             )
             try execute(

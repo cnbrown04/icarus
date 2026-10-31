@@ -41,6 +41,9 @@ enum Schema {
         migrator.registerMigration("v12") { db in
             try db.purgeRecordsBeforeBandHistory()
         }
+        migrator.registerMigration("v13") { db in
+            try db.execute(sql: v13)
+        }
     }
 
     /// Migration v1, copied from PLAN.md 10.2. Times are epoch ms UTC.
@@ -233,6 +236,16 @@ enum Schema {
     /// `hr_avg`, `hr_min` and `hr_max` are the mean, lowest and highest of the day's minute averages (`minute_metric.hr_avg`).
     /// `recovery_calibrating` is 1 while the baseline is too thin to score. `asleep_sec`, `sleep_need_sec` and
     /// `sleep_debt_sec` are whole seconds. `strain` is WHOOP's 0 to 21 scale.
+    /// Migration v13, nightly readings. Additive: `night_reading` holds the window readings each nightly vital of
+    /// a sleep session summarises (`SleepDeriver.NightReadings`): `vital` is `resting_hr` (5-minute heart rate),
+    /// `rmssd` (5-minute RMSSD) or `resp_rate` (30-minute breaths/min); `ts_ms` is the window's start. Rows are
+    /// written and deleted with their session (`band_id`, `session_start_ms` = `sleep_session.start_ms`).
+    /// Sessions derived before `SleepDeriver.algoVersion` 5 have none until the launch re-derive rebuilds them.
+    static let v13 = """
+    CREATE TABLE night_reading (band_id TEXT NOT NULL, session_start_ms INTEGER NOT NULL, vital TEXT NOT NULL,
+      ts_ms INTEGER NOT NULL, value REAL NOT NULL,
+      PRIMARY KEY (band_id, session_start_ms, vital, ts_ms)) WITHOUT ROWID;
+    """
     static let v11 = """
     CREATE TABLE daily_score (local_day TEXT PRIMARY KEY, recovery REAL, recovery_calibrating INTEGER,
       strain REAL, sleep_performance REAL, asleep_sec INTEGER, sleep_need_sec INTEGER, sleep_debt_sec INTEGER,

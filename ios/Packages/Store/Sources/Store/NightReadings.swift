@@ -73,20 +73,46 @@ extension Database {
     /// The window readings behind `night`'s value for `kind`, oldest first: 5-minute heart rate for resting HR,
     /// 5-minute RMSSD for HRV, 30-minute respiratory rate. Empty for any other metric.
     ///
-    /// Cost: reads every band record of the night (about 39,000 for ten hours). Only the four columns the readings
-    /// use are read, through a cursor, and R-R lists are parsed by hand: decoding whole rows and their JSON took
-    /// seconds per night.
+    /// Read from `night_reading`, stored when the night was derived. A night derived before readings were stored
+    /// (until the launch re-derive reaches it) is recomputed from its records instead: same values, but it reads
+    /// the whole night (about 39,000 records) and, for respiratory rate, computes its spectra.
     public func nightReadings(_ kind: MetricKind, night: VitalNight) throws -> [MetricPoint] {
-        guard kind.isNightly else { return [] }
-        // The same records the deriver summarised: the window's start through its end, inclusive.
+        guard let vital = Self.nightVital(kind) else { return [] }
+        let stored = try storedReadings(vital, bandID: night.bandID, sessionStartMs: night.startMs)
+        if !stored.isEmpty { return stored }
         let records = try readingRecords(bandID: night.bandID, from: night.startMs, to: night.endMs + 1)
-        let vital: SleepDeriver.NightVital
+        return SleepDeriver.readings(vital, records, startUnix: night.startMs / 1000, endUnix: night.endMs / 1000)
+            .map { MetricPoint(tsMs: $0.unixSeconds * 1000, value: $0.value) }
+    }
+
+    /// Every stored window reading of the main sleeps that ended from `first` through `last` (one per day, the
+    /// `mainSleepByDay` rule), oldest first: what each day's value on the W, M and 6M charts summarises. Nights
+    /// without stored readings yet contribute none.
+    public func vitalReadings(
+        _ kind: MetricKind,
+        from first: LocalDay,
+        through last: LocalDay,
+        in timeZone: TimeZone
+    ) throws -> [MetricPoint] {
+        guard let vital = Self.nightVital(kind) else { return [] }
+        return try mainSleepByDay(from: first, through: last, in: timeZone).values
+            .sorted { $0.startMs < $1.startMs }
+            .flatMap { try storedReadings(vital, bandID: $0.bandID, sessionStartMs: $0.startMs) }
+    }
+
+    private func storedReadings(_ vital: SleepDeriver.NightVital, bandID: String, sessionStartMs: Int64) throws -> [MetricPoint] {
+        try Row.fetchAll(self, sql: """
+            SELECT ts_ms, value FROM night_reading WHERE band_id = ? AND session_start_ms = ? AND vital = ? ORDER BY ts_ms
+            """, arguments: [bandID, sessionStartMs, vital.rawValue]).map { MetricPoint(tsMs: $0[0], value: $0[1]) }
+    }
+
+    static func nightVital(_ kind: MetricKind) -> SleepDeriver.NightVital? {
         switch kind {
-        case .restingHR: vital = .restingHR
-        case .hrv: vital = .hrv
-        default: vital = .respiratoryRate
+        case .restingHR: .restingHR
+        case .hrv: .hrv
+        case .respiratoryRate: .respiratoryRate
+        default: nil
         }
-        return SleepDeriver.readings(vital, records, startUnix: night.startMs / 1000, endUnix: night.endMs / 1000).map { MetricPoint(tsMs: $0.unixSeconds * 1000, value: $0.value) }
     }
 
     /// Time, heart rate, contact and R-R for `[fromMs, toMs)`, ascending: the inputs `SleepDeriver.readings` reads,

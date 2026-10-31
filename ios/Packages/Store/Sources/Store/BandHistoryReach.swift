@@ -31,8 +31,11 @@ extension Database {
             DELETE FROM historical_record WHERE ts_ms < (SELECT created_at - ? FROM band WHERE band.id = historical_record.band_id)
             """, arguments: [reach])
         let records = changesCount
-        for (table, column) in [("hr_sample", "ts_ms"), ("rr_interval", "ts_ms"), ("sleep_session", "end_ms"),
-                                ("sleep_stage_segment", "end_ms")] {
+        var tables = [("hr_sample", "ts_ms"), ("rr_interval", "ts_ms"), ("sleep_session", "end_ms"),
+                      ("sleep_stage_segment", "end_ms")]
+        // `night_reading` arrives in v13, after the v12 run of this cleanup.
+        if try tableExists("night_reading") { tables.append(("night_reading", "ts_ms")) }
+        for (table, column) in tables {
             try execute(sql: """
                 DELETE FROM \(table) WHERE \(column) < (SELECT created_at - ? FROM band WHERE band.id = \(table).band_id)
                 """, arguments: [reach])

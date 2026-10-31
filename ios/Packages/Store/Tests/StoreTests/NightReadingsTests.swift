@@ -61,4 +61,29 @@ struct NightReadingsTests {
         #expect(Database.parseIntervals("[]").isEmpty)
         #expect(Database.parseIntervals("[812.5, 830]") == [812.5, 830])
     }
+
+    /// A derived session stores its readings, and the range read returns them for the day the sleep ended.
+    @Test func storedSessionReadingsComeBackOverARange() throws {
+        let database = try seededDatabase()
+        let band = try #require(database.writer.read { db in try String.fetchOne(db, sql: "SELECT id FROM band") })
+        let end = LocalTime.localTime(day, hour: 7, in: chicago) / 1000
+        let start = end - 30 * 60
+        let records = stride(from: start, through: end, by: 1).map { second in
+            SleepRecord(unixSeconds: second, bpm: 55, rrMs: [second.isMultiple(of: 2) ? 1_000 : 1_040], skinContact: true)
+        }
+        let session = try #require(SleepDeriver.summarize(records, startUnix: start, endUnix: end))
+        #expect(!session.readings.hrv.isEmpty)
+        try database.writer.write { db in
+            try db.insertSleepSessions([session], bandID: band, computedAtMs: testNowMs)
+            // Re-writing the session replaces its readings rather than adding to them.
+            try db.insertSleepSessions([session], bandID: band, computedAtMs: testNowMs)
+        }
+        let hrv = try database.writer.read { try $0.vitalReadings(.hrv, from: day, through: day, in: chicago) }
+        #expect(hrv.map(\.value) == session.readings.hrv.map(\.value))
+        #expect(hrv.map(\.tsMs) == session.readings.hrv.map { $0.unixSeconds * 1000 })
+        let none = try database.writer.read {
+            try $0.vitalReadings(.hrv, from: LocalTime.adding(days: -3, to: day), through: LocalTime.adding(days: -1, to: day), in: chicago)
+        }
+        #expect(none.isEmpty)
+    }
 }

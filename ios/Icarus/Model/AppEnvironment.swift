@@ -413,6 +413,7 @@ final class AppEnvironment {
                 )
                 let junk = db.changesCount
                 try db.execute(sql: "DELETE FROM sleep_stage_segment")
+                try db.execute(sql: "DELETE FROM night_reading")
                 try db.execute(sql: "DELETE FROM sleep_session")
                 let sessions = db.changesCount
                 // Re-derive over each band's whole stored span right away, so correct sessions

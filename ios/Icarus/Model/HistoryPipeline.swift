@@ -140,6 +140,7 @@ enum HistoryPipeline {
                       let hi = try Int64.fetchOne(db, sql: "SELECT MAX(ts_ms) FROM historical_record")
                 else { return nil }
                 try db.execute(sql: "DELETE FROM sleep_stage_segment")
+                try db.execute(sql: "DELETE FROM night_reading")
                 try db.execute(sql: "DELETE FROM sleep_session")
                 BandLog.tierB(.info, "app: \(stale) sleep session(s) from an older algorithm; re-deriving all history")
                 return (lo, hi)
@@ -164,6 +165,7 @@ enum HistoryPipeline {
                 profile.tz = device
                 try db.saveProfile(profile, atMs: nowMs)
                 try db.execute(sql: "DELETE FROM sleep_stage_segment")
+                try db.execute(sql: "DELETE FROM night_reading")
                 try db.execute(sql: "DELETE FROM sleep_session")
             }
         } catch {
