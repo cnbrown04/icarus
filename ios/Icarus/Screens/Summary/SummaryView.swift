@@ -139,20 +139,20 @@ struct SummaryView: View {
         .accessibilityHint("Opens sleep")
     }
 
-    /// Recovery is an empty ring while it calibrates, with the nights count as its caption. Otherwise the ring takes
-    /// the band colour (red, yellow or green), which carries the meaning.
+    /// Recovery shows its score whenever one exists — the same number the Recovery page shows — in the band colour
+    /// (red, yellow or green). A provisional score (4–13 baseline nights) says so in the caption; only a baseline too
+    /// thin to score (under 4 nights) leaves the ring empty.
     private var recoveryRing: some View {
         let readout = RecoveryReadout(outcome: snapshot?.scores.recovery)
-        let calibrating = readout.isCalibrating
         return NavigationLink(value: AppRoute.metric(.recovery)) {
             ScoreDial(
                 title: "Recovery",
-                fraction: calibrating ? 0 : readout.fraction,
-                valueText: calibrating ? "—" : readout.value,
-                unit: readout.hasScore && !calibrating ? "%" : nil,
+                fraction: readout.fraction,
+                valueText: readout.value,
+                unit: readout.hasScore ? "%" : nil,
                 caption: recoveryCaption,
-                tint: calibrating ? Palette.neutral : readout.tint,
-                accessibilityValue: calibrating ? readout.caption : readout.summary
+                tint: readout.hasScore ? readout.tint : Palette.neutral,
+                accessibilityValue: readout.hasScore ? readout.summary : readout.caption
             )
         }
         .buttonStyle(.plain)
@@ -162,9 +162,9 @@ struct SummaryView: View {
         switch snapshot?.scores.recovery {
         case let .scored(score)?:
             let nights = score.hrvBaseline.nValid
-            return nights < Recovery.minNightsTrust ? "\(nights) of \(Recovery.minNightsTrust)" : "From last night"
+            return nights < Recovery.minNightsTrust ? "Calibrating · \(nights) of \(Recovery.minNightsTrust)" : "Last night"
         case let .insufficientBaseline(_, validNights)?:
-            return "\(validNights) of \(Recovery.minNightsTrust)"
+            return "Calibrating · \(validNights) of \(Recovery.minNightsTrust)"
         case nil:
             return "No night yet"
         }

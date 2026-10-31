@@ -18,6 +18,14 @@ struct MetricSpecificSections: View {
             }
         case .recovery:
             if let snapshot = data.snapshot {
+                // Same calibration line as Summary's ring caption, so both screens agree the score is provisional.
+                if case let .scored(score)? = snapshot.scores.recovery, score.hrvBaseline.nValid < Recovery.minNightsTrust {
+                    Section {
+                        Text("Calibrating · \(score.hrvBaseline.nValid) of \(Recovery.minNightsTrust) nights")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Section("Contributors") {
                     ContributorRows(snapshot: snapshot, day: snapshot.day)
                 }
