@@ -25,11 +25,11 @@ extension SleepStage {
     /// order: Swift Charts' y axis rises, so Deep sits at lane 0 and Wake at lane 3.
     static let stackOrder: [SleepStage] = [.deep, .light, .rem, .wake]
 
-    /// Lane and legend label. Apple calls light sleep "Core"; this app says "Light".
+    /// Lane and legend label: "Core", Apple's name for light sleep, the same word the Stages list uses.
     var displayName: String {
         switch self {
         case .wake: "Wake"
-        case .light: "Light"
+        case .light: "Core"
         case .deep: "Deep"
         case .rem: "REM"
         }
