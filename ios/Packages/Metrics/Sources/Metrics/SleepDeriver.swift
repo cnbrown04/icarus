@@ -250,6 +250,23 @@ public enum SleepDeriver {
         }
     }
 
+    /// HRV and respiratory rate across any stretch of time, awake or asleep: the same 5-minute RMSSD and 30-minute
+    /// respiratory windows the nightly values use, counted from `startUnix` (callers align it to a clock boundary
+    /// so windows from separate passes line up). Windows without enough clean beats are absent, which is most of
+    /// an active day: the strap sends far fewer R-R intervals while you move.
+    public static func allDayReadings(
+        _ records: [SleepRecord],
+        startUnix: Int64
+    ) -> (hrv: [Reading], respiratoryRate: [Reading]) {
+        let sorted = records.sorted { $0.unixSeconds < $1.unixSeconds }
+        let inputs = vitalInputs(sorted.filter(\.isOnWrist))
+        let hrv = HRV.rmssdWindows(inputs.beats, startUnix: startUnix)
+            .map { Reading(unixSeconds: $0.startUnix, value: $0.ms) }
+        let respiratory = (RespiratoryRate.nightWindows(inputs.rrSamples, originMs: startUnix * 1000)?.estimates ?? [])
+            .map { Reading(unixSeconds: $0.startMs / 1000, value: $0.brpm) }
+        return (hrv, respiratory)
+    }
+
     /// The on-wrist inputs every nightly vital reads. Off-wrist and invalid readings pollute every aggregate,
     /// so only on-wrist records contribute. `onWrist` must be sorted by time.
     private static func vitalInputs(_ onWrist: [SleepRecord]) -> (

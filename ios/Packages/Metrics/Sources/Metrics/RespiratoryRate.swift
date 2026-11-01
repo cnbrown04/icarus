@@ -180,13 +180,16 @@ public enum RespiratoryRate {
     }
 
     /// The per-window estimates `nightEstimate` takes the median of, in time order, each stamped with its
-    /// window's start (ms), and the number of windows the beats span. Nil without beats.
+    /// window's start (ms), and the number of windows the beats span. Windows count from `originMs`, or from the
+    /// first beat when nil (a night). Nil without beats.
     public static func nightWindows(
         _ beats: [RRSample],
-        windowSec: Double = nightWindowSec
+        windowSec: Double = nightWindowSec,
+        originMs: Int64? = nil
     ) -> (estimates: [(startMs: Int64, brpm: Double)], total: Int)? {
-        let ordered = timeOrdered(beats)
-        guard let origin = ordered.first?.tsMs, windowSec > 0 else { return nil }
+        let ordered = timeOrdered(beats).filter { $0.tsMs >= (originMs ?? Int64.min) }
+        guard let first = ordered.first?.tsMs, windowSec > 0 else { return nil }
+        let origin = originMs ?? first
 
         var windows: [Int: [RRSample]] = [:]
         for beat in ordered {
