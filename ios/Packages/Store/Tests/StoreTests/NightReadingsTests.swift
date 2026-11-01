@@ -86,4 +86,34 @@ struct NightReadingsTests {
         }
         #expect(none.isEmpty)
     }
+
+    /// All-day HRV is computed awake too, and a window that overlaps a main sleep is left to the sleep's readings.
+    @Test func awakeReadingsSkipTheMainSleep() throws {
+        let database = try seededDatabase()
+        let band = try #require(database.writer.read { db in try String.fetchOne(db, sql: "SELECT id FROM band") })
+        let wake = LocalTime.localTime(day, hour: 7, in: chicago)
+        let start = wake - 30 * 60_000
+        let end = wake + 60 * 60_000
+        try database.writer.write { db in
+            for ts in stride(from: start, to: end, by: 1000) {
+                let rr = (ts / 1000).isMultiple(of: 2) ? 1_000 : 1_040
+                try db.execute(sql: "INSERT INTO historical_record (band_id, ts_ms, version, bpm, contact, rr_ms) VALUES (?, ?, 24, 60, 1, ?)",
+                               arguments: [band, ts, "[\(rr)]"])
+            }
+            // Asleep until 07:00, awake after.
+            try db.execute(sql: """
+                INSERT INTO sleep_session (band_id, start_ms, end_ms, duration_s, contact_fraction, quality, record_count,
+                  is_nap, algo_version, computed_at) VALUES (?, ?, ?, 1800, 1, 'good', 1800, 0, ?, ?)
+                """, arguments: [band, start, wake, SleepDeriver.algoVersion, testNowMs])
+            try db.deriveDayReadings(from: start, to: end, bandID: band)
+        }
+        let all = try database.writer.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM day_reading WHERE vital = 'rmssd'") ?? 0
+        }
+        #expect(all == 18)
+        let awake = try database.writer.read { try $0.awakeReadings(.hrv, fromMs: start, toMs: end, in: chicago) }
+        #expect(awake.count == 12)
+        #expect(awake.allSatisfy { $0.tsMs >= wake && abs($0.value - 40) < 1e-9 })
+        #expect(try database.writer.read { try $0.awakeReadings(.restingHR, fromMs: start, toMs: end, in: chicago) }.isEmpty)
+    }
 }

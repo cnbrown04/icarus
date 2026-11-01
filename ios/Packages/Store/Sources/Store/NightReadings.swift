@@ -100,6 +100,54 @@ extension Database {
             .flatMap { try storedReadings(vital, bandID: $0.bandID, sessionStartMs: $0.startMs) }
     }
 
+    /// HRV or respiratory rate readings taken awake in `[fromMs, toMs)`, oldest first: the all-day windows
+    /// (`day_reading`) that do not overlap a main sleep, whose own readings (`vitalReadings`, `nightReadings`) stand
+    /// for that time. Empty for resting HR, which is a sleep measure only.
+    public func awakeReadings(_ kind: MetricKind, fromMs: Int64, toMs: Int64, in timeZone: TimeZone) throws -> [MetricPoint] {
+        guard let vital = Self.nightVital(kind), vital != .restingHR else { return [] }
+        let windowMs = Self.dayWindowMs(vital)
+        let first = LocalTime.localDay(containing: fromMs, in: timeZone)
+        let last = LocalTime.adding(days: 1, to: LocalTime.localDay(containing: toMs, in: timeZone))
+        let sleeps = try mainSleepByDay(from: first, through: last, in: timeZone).values.map { ($0.startMs, $0.endMs) }
+        return try Row.fetchAll(self, sql: """
+            SELECT ts_ms, value FROM day_reading WHERE vital = ? AND ts_ms >= ? AND ts_ms < ? ORDER BY ts_ms
+            """, arguments: [vital.rawValue, fromMs, toMs])
+            .map { MetricPoint(tsMs: $0[0], value: $0[1]) }
+            .filter { point in !sleeps.contains { point.tsMs < $0.1 && point.tsMs + windowMs > $0.0 } }
+    }
+
+    /// Rewrites the all-day HRV and respiratory readings for `[fromMs, toMs)`, widened to whole 30-minute clock
+    /// windows so every window is computed from all of its records. Returns the readings written.
+    ///
+    /// Cost: reads the range's records and computes a respiratory spectrum per 30 minutes with beats, about half a
+    /// second per day in a release build.
+    @discardableResult
+    public func deriveDayReadings(from fromMs: Int64, to toMs: Int64, bandID: String) throws -> Int {
+        let step = Self.dayWindowMs(.respiratoryRate)
+        let start = fromMs - ((fromMs % step) + step) % step
+        let end = toMs + (step - ((toMs % step) + step) % step) % step
+        guard end > start else { return 0 }
+        let records = try readingRecords(bandID: bandID, from: start, to: end)
+        let readings = SleepDeriver.allDayReadings(records, startUnix: start / 1000)
+        try execute(sql: "DELETE FROM day_reading WHERE band_id = ? AND ts_ms >= ? AND ts_ms < ?",
+                    arguments: [bandID, start, end])
+        let statement = try makeStatement(sql: "INSERT OR REPLACE INTO day_reading (band_id, vital, ts_ms, value) VALUES (?, ?, ?, ?)")
+        var written = 0
+        for (vital, list) in [(SleepDeriver.NightVital.hrv, readings.hrv), (.respiratoryRate, readings.respiratoryRate)] {
+            for reading in list {
+                statement.setUncheckedArguments([bandID, vital.rawValue, reading.unixSeconds * 1000, reading.value])
+                try statement.execute()
+                written += 1
+            }
+        }
+        return written
+    }
+
+    /// The window each all-day reading covers: 5 minutes for HRV, 30 for respiratory rate.
+    static func dayWindowMs(_ vital: SleepDeriver.NightVital) -> Int64 {
+        vital == .respiratoryRate ? Int64(RespiratoryRate.nightWindowSec * 1000) : 300_000
+    }
+
     private func storedReadings(_ vital: SleepDeriver.NightVital, bandID: String, sessionStartMs: Int64) throws -> [MetricPoint] {
         try Row.fetchAll(self, sql: """
             SELECT ts_ms, value FROM night_reading WHERE band_id = ? AND session_start_ms = ? AND vital = ? ORDER BY ts_ms

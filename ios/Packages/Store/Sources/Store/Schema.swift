@@ -44,6 +44,9 @@ enum Schema {
         migrator.registerMigration("v13") { db in
             try db.execute(sql: v13)
         }
+        migrator.registerMigration("v14") { db in
+            try db.execute(sql: v14)
+        }
     }
 
     /// Migration v1, copied from PLAN.md 10.2. Times are epoch ms UTC.
@@ -245,6 +248,14 @@ enum Schema {
     CREATE TABLE night_reading (band_id TEXT NOT NULL, session_start_ms INTEGER NOT NULL, vital TEXT NOT NULL,
       ts_ms INTEGER NOT NULL, value REAL NOT NULL,
       PRIMARY KEY (band_id, session_start_ms, vital, ts_ms)) WITHOUT ROWID;
+    """
+    /// Migration v14, all-day readings. Additive: `day_reading` holds HRV (`rmssd`, 5-minute windows) and
+    /// respiratory rate (`resp_rate`, 30-minute windows) across the whole day, awake or asleep, by the same methods
+    /// as `night_reading`, with windows on clock boundaries. `ts_ms` is the window's start. Written for each
+    /// derived range (`Database.deriveDayReadings`); a launch backfill fills history recorded before v14.
+    static let v14 = """
+    CREATE TABLE day_reading (band_id TEXT NOT NULL, vital TEXT NOT NULL, ts_ms INTEGER NOT NULL, value REAL NOT NULL,
+      PRIMARY KEY (band_id, vital, ts_ms)) WITHOUT ROWID;
     """
     static let v11 = """
     CREATE TABLE daily_score (local_day TEXT PRIMARY KEY, recovery REAL, recovery_calibrating INTEGER,
