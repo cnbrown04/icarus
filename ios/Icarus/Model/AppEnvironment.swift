@@ -233,6 +233,7 @@ final class AppEnvironment {
         Task.detached(priority: .utility) {
             await HistoryPipeline.syncProfileTimeZone(in: database, nowMs: clock.nowMs)
             await HistoryPipeline.rederiveAllIfStale(in: database, nowMs: clock.nowMs)
+            await HistoryPipeline.backfillDayReadingsIfNeeded(in: database)
         }
     }
 

@@ -112,6 +112,9 @@ enum HistoryPipeline {
                     computedAtMs: nowMs
                 )
             }
+            // All-day HRV and respiratory readings for the drained range, one day per write so the store is never
+            // held for long (a day's respiratory spectra take about half a second).
+            try await deriveDayReadings(from: fromMs - rederiveLookbackMs, to: toMs + 1, in: database)
             // Day scores from the drained days (plus the lookback, since a night can begin the evening before)
             // THROUGH TODAY: recovery and sleep debt read baselines over the preceding days, so a drain of older
             // history changes later days' scores too. One write transaction per day; a normal drain covers ~1–2 days.
@@ -121,6 +124,47 @@ enum HistoryPipeline {
             #endif
         } catch {
             BandLog.tierB(.error, "app: deriving history \(fromMs)…\(toMs) failed: \(String(describing: error))")
+        }
+    }
+
+    /// Writes the all-day HRV and respiratory readings (`day_reading`) for `[fromMs, toMs)`, a day at a time.
+    static func deriveDayReadings(from fromMs: Int64, to toMs: Int64, in database: AppDatabase) async throws {
+        let dayMs: Int64 = 86_400_000
+        var start = fromMs
+        while start < toMs {
+            let (chunkStart, chunkEnd) = (start, min(start + dayMs, toMs))
+            try await database.writer.write { db in
+                for bandID in try String.fetchAll(db, sql: "SELECT id FROM band") {
+                    try db.deriveDayReadings(from: chunkStart, to: chunkEnd, bandID: bandID)
+                }
+            }
+            start = chunkEnd
+        }
+    }
+
+    /// Fills `day_reading` for history recorded before all-day readings existed (schema v14): once, when the
+    /// table is empty and records exist. Charts show the readings as each day lands.
+    static func backfillDayReadingsIfNeeded(in database: AppDatabase) async {
+        do {
+            let span = try await database.writer.read { db -> (Int64, Int64)? in
+                guard try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM day_reading") == 0,
+                      let lo = try Int64.fetchOne(db, sql: "SELECT MIN(ts_ms) FROM historical_record"),
+                      let hi = try Int64.fetchOne(db, sql: "SELECT MAX(ts_ms) FROM historical_record")
+                else { return nil }
+                return (lo, hi + 1)
+            }
+            guard let (lo, hi) = span else { return }
+            BandLog.tierB(.info, "app: computing all-day HRV and respiratory readings for stored history")
+            // Newest first, so the days a person looks at first fill first.
+            let dayMs: Int64 = 86_400_000
+            var end = hi
+            while end > lo {
+                let start = max(end - dayMs, lo)
+                try await deriveDayReadings(from: start, to: end, in: database)
+                end = start
+            }
+        } catch {
+            BandLog.tierB(.error, "app: all-day readings backfill failed: \(String(describing: error))")
         }
     }
 
