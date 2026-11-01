@@ -53,7 +53,7 @@ struct MetricDetailChart: View {
                 }
             }
             .chartXScale(domain: domain)
-            .chartYScale(domain: ChartDomain.line(data.points.map(\.value)))
+            .chartYScale(domain: ChartDomain.line((data.points + data.dayPoints).map(\.value)))
             .metricChartStyle()
             .chartXSelection(value: $selection)
             .accessibilityLabel("\(data.kind.title), readings last night")
@@ -87,7 +87,7 @@ struct MetricDetailChart: View {
     private var dayDomain: ClosedRange<Double> {
         switch data.kind {
         case .stress: 0...100
-        default: ChartDomain.line(data.points.map(\.value))
+        default: ChartDomain.line((data.points + data.dayPoints).map(\.value))
         }
     }
 
@@ -113,22 +113,38 @@ struct MetricDetailChart: View {
             }
         }
         .chartXScale(domain: Date(epochMs: data.dayStartMs)...Date(epochMs: data.dayEndMs))
-        .chartYScale(domain: ChartDomain.line(data.points.map(\.value)))
+        .chartYScale(domain: ChartDomain.line((data.points + data.dayPoints).map(\.value)))
         .metricChartStyle()
         .chartXSelection(value: $selection)
         .accessibilityLabel("\(data.kind.title), every reading")
     }
 
-    /// The readings as straight lines, one series per night: a gap of more than `nightBreakMs` between readings
-    /// is the day between two sleeps, so the line stops there instead of crossing it.
+    /// The readings as straight lines: sleep readings solid, one series per night (a gap over `nightBreakMs` is
+    /// the day between two sleeps); awake readings lighter, broken wherever a window or more is missing, since the
+    /// strap sends few beat intervals while you move. A run of one awake reading is a dot.
     @ChartContentBuilder private var readingLines: some ChartContent {
-        ForEach(Self.nights(data.points), id: \.first?.tsMs) { night in
+        ForEach(Self.runs(data.points, maxGapMs: Self.nightBreakMs), id: \.first?.tsMs) { night in
             ForEach(night, id: \.tsMs) { point in
                 LineMark(x: .value("Time", Date(epochMs: point.tsMs)), y: .value(data.kind.title, point.value),
-                         series: .value("Night", night.first?.tsMs ?? 0))
+                         series: .value("Night", "night-\(night.first?.tsMs ?? 0)"))
                     .interpolationMethod(.linear)
                     .lineStyle(StrokeStyle(lineWidth: data.range == .sixMonths ? 1 : 1.5))
                     .foregroundStyle(color)
+            }
+        }
+        ForEach(Self.runs(data.dayPoints, maxGapMs: awakeBreakMs), id: \.first?.tsMs) { run in
+            if run.count == 1, let point = run.first {
+                PointMark(x: .value("Time", Date(epochMs: point.tsMs)), y: .value(data.kind.title, point.value))
+                    .foregroundStyle(color.opacity(0.4))
+                    .symbolSize(Spacing.s8)
+            } else {
+                ForEach(run, id: \.tsMs) { point in
+                    LineMark(x: .value("Time", Date(epochMs: point.tsMs)), y: .value(data.kind.title, point.value),
+                             series: .value("Awake", "awake-\(run.first?.tsMs ?? 0)"))
+                        .interpolationMethod(.linear)
+                        .lineStyle(StrokeStyle(lineWidth: 1))
+                        .foregroundStyle(color.opacity(0.4))
+                }
             }
         }
     }
@@ -137,17 +153,22 @@ struct MetricDetailChart: View {
     /// shorter than the day between nights.
     static let nightBreakMs: Int64 = 3 * 3_600_000
 
-    /// `points` (oldest first) split wherever consecutive readings are more than `nightBreakMs` apart.
-    static func nights(_ points: [MetricPoint]) -> [[MetricPoint]] {
-        var nights: [[MetricPoint]] = []
+    /// Awake readings join only across adjacent windows: 5 minutes apart for HRV, 30 for respiratory rate.
+    private var awakeBreakMs: Int64 {
+        data.kind == .respiratoryRate ? 30 * 60_000 : 5 * 60_000
+    }
+
+    /// `points` (oldest first) split wherever consecutive readings are more than `maxGapMs` apart.
+    static func runs(_ points: [MetricPoint], maxGapMs: Int64) -> [[MetricPoint]] {
+        var runs: [[MetricPoint]] = []
         for point in points {
-            if let last = nights.last?.last, point.tsMs - last.tsMs <= nightBreakMs {
-                nights[nights.count - 1].append(point)
+            if let last = runs.last?.last, point.tsMs - last.tsMs <= maxGapMs {
+                runs[runs.count - 1].append(point)
             } else {
-                nights.append([point])
+                runs.append([point])
             }
         }
-        return nights
+        return runs
     }
 
     // MARK: Daily

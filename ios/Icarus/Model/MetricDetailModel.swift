@@ -95,13 +95,16 @@ struct MetricDetailData: Sendable {
     /// True when `points` are every window reading of a nightly vital over W, M or 6M, spanning `dayStartMs` (the
     /// first day's midnight) to `dayEndMs`. `rows` stay the nightly values.
     var showsReadings = false
+    /// HRV or respiratory rate readings taken awake over the chart's span (D and All Readings), oldest first. They
+    /// are drawn lighter: only the sleep readings in `points` set the nightly value.
+    var dayPoints: [MetricPoint] = []
 
     var isEmpty: Bool {
         value == nil && points.isEmpty && rows.allSatisfy { $0.value == nil }
     }
 
     func nearestPoint(to date: Date) -> MetricPoint? {
-        points.min { lhs, rhs in
+        (points + dayPoints).min { lhs, rhs in
             abs(Date(epochMs: lhs.tsMs).timeIntervalSince(date)) < abs(Date(epochMs: rhs.tsMs).timeIntervalSince(date))
         }
     }
@@ -141,6 +144,7 @@ enum MetricDetailModel {
 
         var night: VitalNight?
         var showsReadings = false
+        var dayPoints: [MetricPoint] = []
 
         if range == .day, kind.isNightly {
             // Last night's window readings; the value is the night's own (their floor, mean or median), which is
@@ -151,6 +155,9 @@ enum MetricDetailModel {
                 points = try db.nightReadings(kind, night: night)
                 dayStartMs = night.startMs
                 dayEndMs = night.endMs
+                // HRV and respiratory rate go on through the day: last night, then awake since.
+                dayPoints = try db.awakeReadings(kind, fromMs: night.startMs, toMs: nowMs, in: zone)
+                if let last = dayPoints.last { dayEndMs = max(dayEndMs, last.tsMs) }
             }
             value = night?.value
             minimum = points.map(\.value).min()
@@ -207,6 +214,7 @@ enum MetricDetailModel {
                 points = try db.vitalReadings(kind, from: first, through: today, in: zone)
                 showsReadings = true
                 dayStartMs = LocalTime.localTime(first, hour: 0, in: zone)
+                dayPoints = try db.awakeReadings(kind, fromMs: dayStartMs, toMs: dayEndMs, in: zone)
             }
         }
 
@@ -263,7 +271,8 @@ enum MetricDetailModel {
             calories: calories,
             snapshot: snapshot,
             night: night,
-            showsReadings: showsReadings
+            showsReadings: showsReadings,
+            dayPoints: dayPoints
         )
     }
 

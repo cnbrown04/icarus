@@ -52,6 +52,11 @@ struct MetricDetailView: View {
                     .pickerStyle(.segmented)
                     .accessibilityIdentifier("metric.display")
                 }
+                if let data, !data.dayPoints.isEmpty {
+                    Text("Lighter: awake. Sleep readings set the nightly value.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
                 if !visibleMedication.isEmpty {
                     Text("Shaded: stimulant active")
                         .font(.footnote)
