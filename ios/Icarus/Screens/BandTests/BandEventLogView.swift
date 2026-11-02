@@ -58,7 +58,10 @@ extension StoredBandEvent: @retroactive Hashable {
 private struct EventRow: View {
     let event: StoredBandEvent
 
-    private var kind: BandEventKind? { BandEventKind(storageName: event.kind) }
+    /// By the id in the payload first: rows stored before an id was renamed keep their old `kind` text.
+    private var kind: BandEventKind? {
+        event.id.map { BandEventKind(id: UInt8(clamping: $0)) } ?? BandEventKind(storageName: event.kind)
+    }
 
     private var isUnnamed: Bool {
         if case .unknown? = kind { return true }
