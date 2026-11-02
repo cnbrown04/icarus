@@ -190,7 +190,7 @@ extension Database {
                 session.restingHeartRate,
                 session.rmssdMs,
                 session.respRateRawMedian,
-                session.skinTempRawMedian,
+                session.skinTemperature,
                 session.contactFraction,
                 session.quality.rawValue,
                 session.recordCount,

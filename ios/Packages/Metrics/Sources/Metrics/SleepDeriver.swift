@@ -16,8 +16,14 @@ public struct SleepRecord: Sendable, Equatable {
     public let skinContact: Bool
     /// Respiratory rate raw (no verified raw-to-breaths-per-minute mapping exists). [Unverified]
     public let respRateRaw: Double?
-    /// Skin temperature raw (no verified raw-to-celsius mapping exists). [Unverified]
+    /// The u16 at frame 72, long called skin temperature. It is not: it moves ~11 counts a second (OpenStrap
+    /// `protocol` records.dart; this band). Kept for storage only; nothing reads it as temperature.
     public let skinTempRaw: Double?
+    /// Skin temperature in raw counts: the u16 at frame 76 (`historical_record.led_drive1`). Identified by the Band
+    /// Tests runs (2026-11-01): it cooled 61 counts with the band off for 20 minutes and climbed steadily back once
+    /// worn, fell 47 counts under a cold pack and recovered, and rises after sleep onset on every stored night.
+    /// Relative only: no conversion to degrees is verified.
+    public let skinTemp: Double?
     /// Accelerometer gravity vector in g, or nil for rows written before gravity was stored. Sleep
     /// detection's stillness spine (`SleepDetector`) runs on it.
     public let gravity: Gravity?
@@ -48,6 +54,7 @@ public struct SleepRecord: Sendable, Equatable {
         skinContact: Bool,
         respRateRaw: Double? = nil,
         skinTempRaw: Double? = nil,
+        skinTemp: Double? = nil,
         gravity: Gravity? = nil
     ) {
         self.unixSeconds = unixSeconds
@@ -56,6 +63,7 @@ public struct SleepRecord: Sendable, Equatable {
         self.skinContact = skinContact
         self.respRateRaw = respRateRaw
         self.skinTempRaw = skinTempRaw
+        self.skinTemp = skinTemp
         self.gravity = gravity
     }
 }
@@ -84,8 +92,9 @@ public struct SleepSession: Sendable, Equatable {
     public let rmssdMs: Double?
     /// Median of the raw respiratory-rate bytes. [Unverified] mapping to breaths/minute.
     public let respRateRawMedian: Double?
-    /// Median of the raw skin-temperature bytes. [Unverified] mapping to celsius.
-    public let skinTempRawMedian: Double?
+    /// The night's skin temperature in raw counts (frame 76): the settled mean (`SkinTemperature.nightly`). Nil
+    /// when too much of the night was below skin temperature. Relative only.
+    public let skinTemperature: Double?
     /// Whole-session respiratory rate, breaths/min, estimated from the on-wrist R-R intervals by
     /// `RespiratoryRate.nightEstimate` (RSA). Nil when the R-R coverage or agreement is too weak. This is an
     /// on-device estimate from heart-timing modulation, not a clinical measurement.
@@ -110,13 +119,15 @@ public struct SleepSession: Sendable, Equatable {
 /// This is a clearly-labelled proxy derived from published methods, not a WHOOP sleep score
 /// (PLAN.md §79 "we compute our own clearly labelled metrics").
 public enum SleepDeriver {
-    /// Algorithm version stored with every derived row (PLAN.md 8.5). 5 = the window readings behind each nightly
+    /// Algorithm version stored with every derived row (PLAN.md 8.5). 6 = the session's skin temperature is the
+    /// settled mean of frame 76 (`SkinTemperature.nightly`), replacing the median of frame 72, which is not
+    /// temperature; 5 = the window readings behind each nightly
     /// vital are stored with the session (same values); 4 = session respiratory rate from the
     /// on-wrist R-R (RSA); 3 = session RHR is the lowest gated
     /// 5-minute bin and RMSSD is the mean of per-window RMSSD, plus the nap flag; 2 = `SleepDetector`
     /// windows with the older median RHR and whole-session RMSSD; 1 was "any contiguous worn run touching
     /// 21:00–06:00", which made whole days into nights.
-    public static let algoVersion = 5
+    public static let algoVersion = 6
 
     /// Context a derivation must read on each side of the span it rewrites: the longest window
     /// (`SleepDetector.maxSleepSeconds`) plus the detector's day of HR baseline context.
@@ -180,7 +191,7 @@ public enum SleepDeriver {
             restingHeartRate: restingHeartRate,
             rmssdMs: rmssd,
             respRateRawMedian: Statistics.median(onWrist.compactMap(\.respRateRaw)),
-            skinTempRawMedian: Statistics.median(onWrist.compactMap(\.skinTempRaw)),
+            skinTemperature: SkinTemperature.nightly(onWrist.compactMap(\.skinTemp)),
             respiratoryRateBrpm: respiratoryWindows.flatMap { RespiratoryRate.nightEstimate($0) }?.brpm,
             contactFraction: contactFraction,
             quality: quality(contactFraction: contactFraction),

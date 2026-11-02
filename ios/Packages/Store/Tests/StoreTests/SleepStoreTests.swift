@@ -149,7 +149,8 @@ struct SleepStoreTests {
         #expect(session.qualityValue == .good)
         #expect(session.recordCount == 240)
         #expect(session.respRateRaw == 660)
-        #expect(session.skinTempRaw == 3_900)
+        // Skin temperature is the settled mean of frame 76 (`led_drive1`), not frame 72.
+        #expect(session.skinTemperature == 1_204)
         #expect(session.algoVersion == SleepDeriver.algoVersion)
         #expect(session.computedAt == testNowMs)
     }

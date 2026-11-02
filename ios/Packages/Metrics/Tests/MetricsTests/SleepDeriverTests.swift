@@ -69,7 +69,8 @@ struct SleepDeriverTests {
         #expect(session.quality == .good)
         #expect(session.recordCount == 450)
         #expect(session.respRateRawMedian == 600)
-        #expect(session.skinTempRawMedian == 3_100)
+        // Frame 72 is stored but is not temperature; with no frame-76 samples there is no skin temperature.
+        #expect(session.skinTemperature == nil)
         // Records a minute apart never carry a successive difference, so there is no RMSSD to report.
         #expect(session.rmssdMs == nil)
     }

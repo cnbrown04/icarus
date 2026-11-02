@@ -88,6 +88,7 @@ public struct HistoricalRecordRow: Codable, Equatable, Sendable, FetchableRecord
             skinContact: contact ?? false,
             respRateRaw: respRateRaw.map { Double($0) },
             skinTempRaw: skinTempRaw.map { Double($0) },
+            skinTemp: ledDrive1.map { Double($0) },
             gravity: gravity
         )
     }
@@ -115,8 +116,10 @@ public struct SleepSessionRow: Codable, Equatable, Sendable, FetchableRecord {
     public var respRateRaw: Double?
     /// Respiratory rate in breaths/min, estimated from R-R (v7). Nil when the session had too little R-R.
     public var respRateBrpm: Double?
-    /// Median of the raw skin-temperature bytes ([Unverified] mapping to celsius).
-    public var skinTempRaw: Double?
+    /// The night's skin temperature in raw counts: the settled mean of frame 76 (`SkinTemperature.nightly`) since
+    /// `SleepDeriver.algoVersion` 6. Relative only. Stored in `skin_temp_raw`, which held the median of frame 72
+    /// (not temperature) before.
+    public var skinTemperature: Double?
     /// Fraction of session records with skin contact, 0...1.
     public var contactFraction: Double
     /// Raw `SleepQuality` value.
@@ -137,7 +140,7 @@ public struct SleepSessionRow: Codable, Equatable, Sendable, FetchableRecord {
         case rmssdMs = "rmssd_ms"
         case respRateRaw = "resp_rate_raw"
         case respRateBrpm = "resp_rate_brpm"
-        case skinTempRaw = "skin_temp_raw"
+        case skinTemperature = "skin_temp_raw"
         case contactFraction = "contact_fraction"
         case quality
         case recordCount = "record_count"
