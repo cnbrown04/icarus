@@ -97,3 +97,20 @@ struct BandTestReportTests {
         #expect(BandTestRunner.InProgress.saved == nil)
     }
 }
+
+struct BandTestEventTimingTests {
+    /// Real charging-on payloads from the first run: the band's time is bytes 1–4, and each event arrived twice.
+    @Test func eventsArePlacedByTheBandsTimeAndKeptOnce() {
+        let bandSeconds: Int64 = 0x6AE7_EE42
+        let events = [
+            StoredBandEvent(tsMs: bandSeconds * 1000 + 300, kind: "charging_on", id: 7, hex: "0042eee76a583d0000"),
+            StoredBandEvent(tsMs: bandSeconds * 1000 + 300, kind: "event_21", id: 21, hex: "0042eee76a403c0000"),
+            StoredBandEvent(tsMs: bandSeconds * 1000 + 95_000, kind: "charging_on", id: 7, hex: "0042eee76a583d0000"),
+        ]
+        let distinct = BandTestAnalysis.distinctEvents(events)
+        #expect(distinct.count == 2)
+        #expect(distinct.allSatisfy { $0.tsMs == bandSeconds * 1000 })
+        #expect(BandTestAnalysis.companion(of: 21, in: distinct) == "Charging on")
+        #expect(BandTestAnalysis.companion(of: 7, in: distinct) == nil)
+    }
+}

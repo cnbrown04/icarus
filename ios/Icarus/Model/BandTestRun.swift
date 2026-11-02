@@ -119,6 +119,8 @@ struct BandTestResults: Codable, Sendable, Equatable {
         let payloads: [String]
         /// The one action every occurrence matched, when it happened at least twice and in no other step.
         let proposed: BandTestAction?
+        /// The named event that arrived in the same second as every occurrence of this unnamed one, if any.
+        var companion: String? = nil
     }
 
     /// One record channel judged as temperature. Nil verdict: the run's spans had no records for it.
@@ -158,6 +160,54 @@ enum BandTestAnalysis {
         ("Frame 92", { $0.frame92 }),
     ]
 
+    /// Events placed at the band's own time (payload bytes 1–4, when they read as a time within a day of arrival)
+    /// and kept once per (id, payload): the band delivers each event twice, the copy sometimes minutes later.
+    static func distinctEvents(_ events: [StoredBandEvent]) -> [StoredBandEvent] {
+        var seen: Set<String> = []
+        return events
+            .map { event -> StoredBandEvent in
+                guard let time = bandTimeMs(event) else { return event }
+                return StoredBandEvent(tsMs: time, kind: event.kind, id: event.id, hex: event.hex)
+            }
+            .sorted { $0.tsMs < $1.tsMs }
+            .filter { event in
+                // Only a payload carrying the band's time identifies one event; short ones could be two.
+                guard let hex = event.hex, hex.count >= 10 else { return true }
+                return seen.insert("\(event.id ?? -1)/\(hex)").inserted
+            }
+    }
+
+    /// The unix seconds at payload bytes 1–4, in ms, when within a day of the stored time.
+    static func bandTimeMs(_ event: StoredBandEvent) -> Int64? {
+        guard let hex = event.hex, hex.count >= 10 else { return nil }
+        let bytes = stride(from: 2, to: 10, by: 2).compactMap { offset -> UInt32? in
+            let start = hex.index(hex.startIndex, offsetBy: offset)
+            return UInt32(hex[start..<hex.index(start, offsetBy: 2)], radix: 16)
+        }
+        guard bytes.count == 4 else { return nil }
+        let seconds = Int64(bytes[0] | bytes[1] << 8 | bytes[2] << 16 | bytes[3] << 24)
+        return abs(seconds * 1000 - event.tsMs) <= 86_400_000 ? seconds * 1000 : nil
+    }
+
+    /// For an unnamed id: the named event that shares the second of every one of its occurrences.
+    static func companion(of id: Int, in events: [StoredBandEvent]) -> String? {
+        guard case .unknown = BandEventKind(id: UInt8(clamping: id)) else { return nil }
+        let own = events.filter { $0.id == id }
+        guard !own.isEmpty else { return nil }
+        let named = events.filter { event in
+            guard let other = event.id, other != id else { return false }
+            if case .unknown = BandEventKind(id: UInt8(clamping: other)) { return false }
+            return true
+        }
+        let candidates = own.map { occurrence in
+            Set(named.filter { abs($0.tsMs - occurrence.tsMs) <= 1_000 }.compactMap(\.id))
+        }
+        guard let shared = candidates.dropFirst().reduce(candidates.first, { $0?.intersection($1) }),
+              let match = shared.min()
+        else { return nil }
+        return BandEventKind(id: UInt8(clamping: match)).displayName
+    }
+
     /// The step an event belongs to: the step whose span contains it, else the latest step that ended within
     /// `eventGraceMs` before it. Nil when that step was skipped, or none qualifies.
     static func owningStep(_ tsMs: Int64, marks: [BandTestMark]) -> BandTestMark? {
@@ -171,10 +221,12 @@ enum BandTestAnalysis {
         let done = marks.filter { !$0.skipped }
         func step(of mark: BandTestMark) -> BandTestStep? { BandTestStep(rawValue: mark.step) }
 
-        // Events: the done step each falls in, by id.
+        // Events: each placed by the band's own time and kept once (the band delivers every event twice), then the
+        // done step it falls in, by id.
+        let unique = distinctEvents(events)
         var byID: [Int: [(action: BandTestAction, hex: String)]] = [:]
         var actionsWithEvents: Set<BandTestAction> = []
-        for event in events.sorted(by: { $0.tsMs < $1.tsMs }) {
+        for event in unique {
             guard let mark = owningStep(event.tsMs, marks: marks),
                   let action = step(of: mark)?.action,
                   let id = event.id ?? BandEventKind(storageName: event.kind).map({ Int($0.id) })
@@ -189,7 +241,7 @@ enum BandTestAnalysis {
             let proposed = hits.count >= 2 && distinct.count == 1 && distinct.first != BandTestAction.none
                 ? distinct.first : nil
             return .init(id: id, name: BandEventKind(id: UInt8(clamping: id)).displayName, actions: actions,
-                         payloads: hits.map(\.hex), proposed: proposed)
+                         payloads: hits.map(\.hex), proposed: proposed, companion: companion(of: id, in: unique))
         }
         let silent = done.compactMap { step(of: $0)?.action }
             .filter { $0 != .none && !actionsWithEvents.contains($0) }

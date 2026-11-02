@@ -323,6 +323,11 @@ struct BandTestResultsView: View {
                     Text(finding.actions.map(\.label).joined(separator: ", "))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                    if let companion = finding.companion {
+                        Text("Comes with \(companion.lowercased())")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             ForEach(results.silentActions, id: \.self) { action in
