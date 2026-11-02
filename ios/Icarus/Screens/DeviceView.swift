@@ -6,6 +6,7 @@ import SwiftUI
 /// The band: its name and link state, then signal, battery and the age of the last reading (IOS_UI_SPEC, Screen 15).
 /// The Experimental section holds the band channel (Tier B). Turning it on needs the explainer's "Turn On" first.
 struct DeviceView: View {
+    let environment: AppEnvironment
     let liveState: LiveState
 
     @State private var bandChannelEnabled = BandChannel.isEnabled
@@ -173,6 +174,18 @@ struct DeviceView: View {
                 }
                 .disabled(liveState.tierBState != .ready)
                 .accessibilityIdentifier("device.testBuzz")
+                NavigationLink {
+                    BandEventLogView(environment: environment)
+                } label: {
+                    Label("Event Log", systemImage: "list.bullet.rectangle")
+                }
+                .accessibilityIdentifier("device.eventLog")
+                NavigationLink {
+                    BandTestsView(environment: environment, liveState: liveState)
+                } label: {
+                    Label("Band Tests", systemImage: "checklist")
+                }
+                .accessibilityIdentifier("device.bandTests")
                 Toggle(isOn: $opportunisticPull) {
                     Label("Opportunistic Alarm Pull", systemImage: "bell.badge")
                 }
@@ -330,21 +343,12 @@ struct DeviceView: View {
     private var lastBandEventText: some View {
         if let kind = liveState.lastBandEvent, let at = liveState.lastBandEventAt {
             HStack(spacing: Spacing.s4) {
-                Text(Self.eventName(kind))
+                Text(kind.displayName)
                 Text(at, style: .time)
                     .foregroundStyle(.secondary)
             }
         } else {
             Text("—")
-        }
-    }
-
-    private static func eventName(_ kind: BandEventKind) -> String {
-        switch kind {
-        case .wristOn: "Wrist on"
-        case .wristOff: "Wrist off"
-        case .doubleTap: "Double tap"
-        default: "Other event"
         }
     }
 

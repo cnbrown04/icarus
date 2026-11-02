@@ -1,0 +1,76 @@
+import Foundation
+import Metrics
+import Store
+import Testing
+@testable import Icarus
+
+struct BandTestAnalysisTests {
+    /// A run whose steps follow each other, `seconds` long each (still and the two wear spans 20 minutes).
+    private func marks(skipping skipped: Set<BandTestStep> = []) -> [BandTestMark] {
+        var start: Int64 = 0
+        return BandTestStep.allCases.map { step in
+            let length: Int64 = [.still, .off, .on].contains(step) ? 1_200_000 : 60_000
+            defer { start += length }
+            return BandTestMark(runID: "r", step: step.rawValue, label: step.title, startMs: start,
+                                endMs: start + length, skipped: skipped.contains(step))
+        }
+    }
+
+    private func mark(_ step: BandTestStep, in marks: [BandTestMark]) -> BandTestMark {
+        marks.first { $0.step == step.rawValue }!
+    }
+
+    @Test func anEventSeenInBothChargerStepsIsProposedAsChargingOn() {
+        let run = marks()
+        let events = [BandTestStep.chargerOn, .chargerOnAgain].map { step in
+            StoredBandEvent(tsMs: mark(step, in: run).startMs + 5_000, kind: "event_42", id: 42, hex: "01")
+        }
+        let results = BandTestAnalysis.results(marks: run, events: events, samples: [])
+        let finding = results.events.first { $0.id == 42 }
+        #expect(finding?.proposed == .chargingOn)
+        #expect(finding?.name == "Event 42")
+        #expect(results.silentActions.contains(.doubleTap))
+    }
+
+    @Test func anEventSeenInTwoDifferentActionsIsNotProposed() {
+        let run = marks()
+        let events = [BandTestStep.chargerOn, .doubleTap].map { step in
+            StoredBandEvent(tsMs: mark(step, in: run).startMs + 5_000, kind: "event_42", id: 42, hex: nil)
+        }
+        let results = BandTestAnalysis.results(marks: run, events: events, samples: [])
+        #expect(results.events.first?.proposed == nil)
+    }
+
+    @Test func skippedStepsNeverCount() {
+        let run = marks(skipping: [.chargerOn, .chargerOnAgain])
+        let events = [BandTestStep.chargerOn, .chargerOnAgain].map { step in
+            StoredBandEvent(tsMs: mark(step, in: run).startMs + 5_000, kind: "event_42", id: 42, hex: nil)
+        }
+        let results = BandTestAnalysis.results(marks: run, events: events, samples: [])
+        #expect(results.events.isEmpty)
+        #expect(!results.silentActions.contains(.chargingOn))
+    }
+
+    @Test func aSlowChannelThatMovesOffAndBackPassesAndAFastOneFails() {
+        let run = marks()
+        let off = mark(.off, in: run), on = mark(.on, in: run)
+        let samples = stride(from: Int64(0), to: on.endMs, by: 1_000).map { ts -> BandTestSample in
+            let t = Double(ts) / 1000
+            let slow: Double
+            if ts < off.startMs {
+                slow = 300
+            } else if ts < on.startMs {
+                slow = 300 + 40 * (1 - exp(-(t - Double(off.startMs) / 1000) / 400))
+            } else {
+                slow = 300 + 38 * exp(-(t - Double(on.startMs) / 1000) / 300)
+            }
+            let fast = 600 + 11 * (Int(t) % 2)
+            return BandTestSample(tsMs: ts, frame72: fast, frame76: Int(slow.rounded()))
+        }
+        let results = BandTestAnalysis.results(marks: run, events: [], samples: samples)
+        let byChannel = Dictionary(uniqueKeysWithValues: results.temperature.map { ($0.channel, $0.verdict) })
+        #expect(byChannel["Frame 76"]??.passes == true)
+        #expect(byChannel["Frame 72"]??.passes == false)
+        #expect(byChannel["Frame 92"] == .some(nil))
+    }
+}

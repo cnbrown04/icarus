@@ -73,6 +73,14 @@ final class VerifyScreensTests: XCTestCase {
             settle()
             shot("13-band")
             scrollShot("13b-band-scrolled")
+            for (identifier, name) in [("device.eventLog", "13c-event-log"), ("device.bandTests", "13d-band-tests")] {
+                let row = app.buttons[identifier].firstMatch
+                scrollTo(row)
+                if tapIfExists(row) {
+                    shot(name)
+                    back()
+                }
+            }
             if ProcessInfo.processInfo.environment["ICARUS_VERIFY_SYNC"] == "1" {
                 syncBand()
             }

@@ -88,7 +88,7 @@ struct ProfileSheet: View {
 
                 Section {
                     NavigationLink {
-                        DeviceView(liveState: liveState)
+                        DeviceView(environment: environment, liveState: liveState)
                     } label: {
                         LabeledContent("Band") {
                             Text(liveState.connectionText)
