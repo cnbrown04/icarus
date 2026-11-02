@@ -15,6 +15,11 @@ struct SummaryView: View {
 
     var body: some View {
         List {
+            if liveState.drainProgress.isDraining {
+                Section {
+                    BandSyncRow(liveState: liveState)
+                }
+            }
             if showsActionSection {
                 actionSection
             }
@@ -30,6 +35,8 @@ struct SummaryView: View {
             AppRouteDestination(route: .metric(.recovery), environment: environment, liveState: liveState)
         }
         .refreshable {
+            // Pull the band's banked history first (until caught up), then the server, then redraw.
+            await liveState.drainFullHistory()
             await environment.sync.runNow()
             await reload()
         }

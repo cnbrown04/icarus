@@ -38,6 +38,9 @@ struct RootView: View {
         content
             .onChange(of: scenePhase) { _, phase in
                 environment.scenePhaseChanged(phase)
+                if phase == .active {
+                    Task { await liveState.catchUpOnOpen() }
+                }
             }
             .onOpenURL { url in
                 openPairingLink(url)

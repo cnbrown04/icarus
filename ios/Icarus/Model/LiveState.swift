@@ -292,6 +292,18 @@ final class LiveState {
 
     /// Syncs everything the strap has recorded but not yet sent to the app. A transport without the
     /// capability (fixture, synthetic) logs and does nothing.
+    /// Catches up with the band when the app opens: asks how far behind it is and drains until caught up
+    /// (`drainFullHistory`), at most once a minute. With nothing pending this is one quick command.
+    func catchUpOnOpen() async {
+        guard tierBState == .ready else { return }
+        let now = clock.now
+        if let last = lastOpenCatchUp, now.timeIntervalSince(last) < 60 { return }
+        lastOpenCatchUp = now
+        await drainFullHistory()
+    }
+
+    @ObservationIgnored private var lastOpenCatchUp: Date?
+
     func drainFullHistory() async {
         guard let drain = transport as? any FullHistoryDrainTransport else {
             BandLog.tierB(.info, "app: full-history sync skipped: transport has no drain control")
