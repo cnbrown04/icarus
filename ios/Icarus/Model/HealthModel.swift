@@ -103,8 +103,12 @@ extension HealthMonitor.Vital {
         case .restingHR: "Resting Heart Rate"
         case .hrv: "Heart Rate Variability"
         case .respiratoryRate: "Respiratory Rate"
+        case .skinTemp: "Skin Temperature"
         }
     }
+
+    /// Skin temperature has no verified unit, so it is shown only against the user's own range, never as a number.
+    var isRelative: Bool { self == .skinTemp }
 
     /// Unit shown after a value.
     var unit: String {
@@ -112,6 +116,7 @@ extension HealthMonitor.Vital {
         case .restingHR: "bpm"
         case .hrv: "ms"
         case .respiratoryRate: "br/min"
+        case .skinTemp: ""
         }
     }
 
@@ -120,6 +125,7 @@ extension HealthMonitor.Vital {
         switch self {
         case .restingHR, .hrv: Int(value.rounded()).formatted()
         case .respiratoryRate: value.formatted(.number.precision(.fractionLength(1)))
+        case .skinTemp: value.formatted(.number.precision(.fractionLength(0)))
         }
     }
 

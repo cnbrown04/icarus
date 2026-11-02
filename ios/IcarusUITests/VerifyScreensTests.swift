@@ -43,7 +43,14 @@ final class VerifyScreensTests: XCTestCase {
         for (index, metric) in metrics.enumerated() {
             open(metric, index: index)
         }
-        openRow("Vitals", name: "05-vitals")
+        openRow("Vitals", name: "05-vitals") {
+            let skin = self.app.collectionViews.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Skin Temperature")).firstMatch
+            self.scrollTo(skin)
+            if self.tapIfExists(skin) {
+                self.shot("05b-skin-temperature")
+                self.back()
+            }
+        }
         openRow("Workouts", name: "06-workouts")
         openRow("Check-in", name: "07-journal")
         openRow("Insights", name: "08-insights")
@@ -122,13 +129,15 @@ final class VerifyScreensTests: XCTestCase {
         back()
     }
 
-    private func openRow(_ label: String, name: String) {
+    /// Opens a Browse row, captures it, runs `then` on the page (deeper captures), and returns.
+    private func openRow(_ label: String, name: String, then: () -> Void = {}) {
         let row = app.collectionViews.buttons[label].firstMatch
         scrollTo(row)
         guard row.waitForExistence(timeout: 5) else { return XCTFail("no Browse row \(label)") }
         row.tap()
         settle()
         shot(name)
+        then()
         back()
     }
 

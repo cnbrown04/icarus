@@ -17,7 +17,9 @@ public enum HealthMonitor {
         case hrv
         /// Respiratory rate, breaths/min.
         case respiratoryRate
-        // No skin temperature: the band's raw byte has no verified mapping to degrees, so it is not shown.
+        /// Nightly skin temperature in raw counts (frame 76, `SkinTemperature.nightly`). Relative only: it is
+        /// judged against the user's own range and never shown as degrees.
+        case skinTemp
     }
 
     /// Nights before the day that form the range.
@@ -33,6 +35,9 @@ public enum HealthMonitor {
         case .restingHR: 2
         case .hrv: 5
         case .respiratoryRate: 1
+        // Counts. Nights vary by about ±7 (1.4826·MAD over the first 8 nights); a half-width under 5 would flag
+        // ordinary nights.
+        case .skinTemp: 5
         }
     }
 

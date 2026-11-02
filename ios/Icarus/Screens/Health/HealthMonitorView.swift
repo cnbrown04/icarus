@@ -26,7 +26,8 @@ struct HealthMonitorView: View {
             if snapshot != nil {
                 Section {
                     ForEach(statuses) { status in
-                        VitalRowLink(status: status, nights: snapshot?.vitals.nightsWithValue[status.vital] ?? 0)
+                        VitalRowLink(status: status, nights: snapshot?.vitals.nightsWithValue[status.vital] ?? 0,
+                                     environment: environment)
                     }
                 }
             }
@@ -90,24 +91,34 @@ struct HealthMonitorView: View {
     }
 }
 
-/// The metric page a vital's row opens.
-private func metricKind(for vital: HealthMonitor.Vital) -> MetricKind {
+/// The metric page a vital's row opens. Nil for skin temperature, which has its own page.
+private func metricKind(for vital: HealthMonitor.Vital) -> MetricKind? {
     switch vital {
     case .restingHR: .restingHR
     case .hrv: .hrv
     case .respiratoryRate: .respiratoryRate
+    case .skinTemp: nil
     }
 }
 
 /// One vital row: its name and tonight's value, the range bar, and the state word with the typical range. Each
-/// row opens its metric's page.
+/// row opens its metric's page; skin temperature opens its nightly chart.
 private struct VitalRowLink: View {
     let status: HealthMonitor.Status
     let nights: Int
+    let environment: AppEnvironment
 
     var body: some View {
-        NavigationLink(value: AppRoute.metric(metricKind(for: status.vital))) {
-            VitalRow(status: status, nights: nights)
+        if let kind = metricKind(for: status.vital) {
+            NavigationLink(value: AppRoute.metric(kind)) {
+                VitalRow(status: status, nights: nights)
+            }
+        } else {
+            NavigationLink {
+                SkinTemperatureView(environment: environment)
+            } label: {
+                VitalRow(status: status, nights: nights)
+            }
         }
     }
 }
@@ -120,11 +131,13 @@ private struct VitalRow: View {
     private var vital: HealthMonitor.Vital { status.vital }
 
     private var tonightText: String {
-        status.tonight.map(vital.text) ?? "—"
+        // Skin temperature is raw counts: only its place in the range means anything.
+        if vital.isRelative { return status.tonight == nil ? "—" : "" }
+        return status.tonight.map(vital.text) ?? "—"
     }
 
     private var rangeText: String? {
-        guard let baseline = status.baseline else { return nil }
+        guard let baseline = status.baseline, !vital.isRelative else { return nil }
         return "Typical \(vital.rangeText(baseline.low, baseline.high))"
     }
 

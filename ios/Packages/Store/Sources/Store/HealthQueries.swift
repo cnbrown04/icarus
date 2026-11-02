@@ -121,6 +121,18 @@ extension Database {
         )
     }
 
+    /// Each night's skin temperature (raw counts, `SkinTemperature.nightly`) for the main sleeps that ended from
+    /// `first` through `last`, oldest first. Nights without a value are left out.
+    public func skinTemperatureNights(
+        from first: LocalDay,
+        through last: LocalDay,
+        in timeZone: TimeZone
+    ) throws -> [(day: LocalDay, value: Double)] {
+        try mainSleepByDay(from: first, through: last, in: timeZone)
+            .compactMap { day, row in row.skinTemperature.map { (day, $0) } }
+            .sorted { ($0.day.year, $0.day.month, $0.day.day) < ($1.day.year, $1.day.month, $1.day.day) }
+    }
+
     // MARK: - Helpers
 
     /// Main sleeps (longest non-nap session) keyed by the local day they END on. Same rule as
@@ -146,6 +158,7 @@ extension Database {
         if let value = row.restingHr { values.append((.restingHR, value)) }
         if let value = row.rmssdMs { values.append((.hrv, value)) }
         if let value = row.respRateBrpm { values.append((.respiratoryRate, value)) }
+        if let value = row.skinTemperature { values.append((.skinTemp, value)) }
         return values
     }
 
