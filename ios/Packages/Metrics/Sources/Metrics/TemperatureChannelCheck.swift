@@ -9,6 +9,11 @@ import Foundation
 // wrist, and steadily back once it is worn again. Counts may rise or fall with warmth (a thermistor's ADC can run
 // either way), so only the two directions being OPPOSITE is required, not which way each goes.
 //
+// The band banks no records while it is off the wrist (first Band Tests run, 2026-11-01: none in 20 minutes on a
+// table). So the band-off move is measured across that gap, from the baseline's last minute to the first minute
+// back on, and the band-on span shows the recovery. When a band does record off-wrist, the off span is judged as
+// its own steady move instead.
+//
 // The thresholds are this port's own choice, recorded with each verdict so a user sees what was judged.
 
 public enum TemperatureChannelCheck {
@@ -48,14 +53,18 @@ public enum TemperatureChannelCheck {
         let step = medianStep(all)
         let spread = standardDeviation(baseline.map(\.v)) ?? 0
         let needed = max(minChange, 3 * spread)
-        let offChange = change(off)
+        // Off-wrist records, when the band keeps them, show the move directly; otherwise it is the step across the
+        // gap between the last minute worn and the first minute worn again.
+        let recordsOffWrist = change(off) != nil
+        let offChange = recordsOffWrist ? change(off) : gapChange(before: baseline, after: on)
         let onChange = change(on)
-        let offRho = spearman(off)
+        let offRho = recordsOffWrist ? spearman(off) : nil
         let onRho = spearman(on)
         var passes = false
-        if let step, let offChange, let onChange, let offRho, let onRho {
+        if let step, let offChange, let onChange, let onRho {
             passes = step < maxMedianStep
-                && abs(offRho) >= minOffSteadiness && abs(onRho) >= minOnSteadiness
+                && (!recordsOffWrist || abs(offRho ?? 0) >= minOffSteadiness)
+                && abs(onRho) >= minOnSteadiness
                 && abs(offChange) >= needed && abs(onChange) >= needed
                 && (offChange > 0) != (onChange > 0)
         }
@@ -80,6 +89,16 @@ public enum TemperatureChannelCheck {
         let tail = sorted.filter { $0.t > last - edgeSeconds }.map(\.v)
         guard !head.isEmpty, !tail.isEmpty else { return nil }
         return tail.reduce(0, +) / Double(tail.count) - head.reduce(0, +) / Double(head.count)
+    }
+
+    /// Mean of the first `edgeSeconds` of `after` minus mean of the last `edgeSeconds` of `before`: the move across a
+    /// gap with no samples. Nil when either side has none.
+    static func gapChange(before: [(t: Double, v: Double)], after: [(t: Double, v: Double)]) -> Double? {
+        guard let end = before.map(\.t).max(), let start = after.map(\.t).min() else { return nil }
+        let tail = before.filter { $0.t > end - edgeSeconds }.map(\.v)
+        let head = after.filter { $0.t < start + edgeSeconds }.map(\.v)
+        guard !tail.isEmpty, !head.isEmpty else { return nil }
+        return head.reduce(0, +) / Double(head.count) - tail.reduce(0, +) / Double(tail.count)
     }
 
     /// Spearman rank correlation of value against time. Nil for fewer than 10 samples or a constant value.
