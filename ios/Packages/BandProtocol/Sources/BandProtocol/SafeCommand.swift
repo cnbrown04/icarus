@@ -29,6 +29,11 @@ public enum SafeCommand: UInt8, Sendable, CaseIterable {
     /// (type 0x2B) raw accel/PPG samples at ~1.9 KB/s on `61080005` (PLAN.md 7.2 step 4,
     /// whoop-parity §3.4). Sourced from NOOP [S12]; no Icarus capture shows a cmd-63 frame yet.
     case sendR10R11Realtime = 63
+    /// ENABLE_OPTICAL_DATA (cmd 107, 0x6B). Opens the optical data path into the realtime-raw stream, leaving the
+    /// band's own wrist gating to decide when the LEDs run (OpenStrap research `enable_live_streams`, its default).
+    /// Payload `[0x01 revision, 0x01 on | 0x00 off]`. Its siblings stay denied: TOGGLE_OPTICAL_MODE 108 forces the
+    /// LEDs on, and TOGGLE_PERSISTENT_R21 154 keeps them forced on across reboots (OpenStrap's stuck-LED footgun).
+    case enableOpticalData = 107
     case setAlarmTime = 66
     case getAlarmTime = 67
     case runHapticsPattern = 79

@@ -141,6 +141,12 @@ public struct BandCommand: Sendable, Equatable {
         BandCommand(.sendR10R11Realtime, payload: [on ? 1 : 0])
     }
 
+    /// ENABLE_OPTICAL_DATA (cmd 107): `[0x01, 0x01]` on, `[0x01, 0x00]` off (OpenStrap research, revision byte
+    /// first). Wrist-gated: the LEDs still only run while the band is worn. [Unverified] on Icarus hardware.
+    public static func enableOpticalData(on: Bool) -> BandCommand {
+        BandCommand(.enableOpticalData, payload: [0x01, on ? 1 : 0])
+    }
+
     /// Standard HR broadcast toggle (cmd 14, PLAN.md 5.3.1 and 5.3.4). The payload `[1]` or `[0]`
     /// reproduces the golden frames `hr_broadcast_on_*` and `hr_broadcast_off_*` (S8) byte for byte.
     public static func hrBroadcast(on: Bool) -> BandCommand {

@@ -34,6 +34,8 @@ struct SafeCommandTests {
         // which the app-deleted full-history restore needs.
         // 1 (LINK_VALID) and 98 (GET_EXTENDED_BATTERY_INFO) are whoop-parity §3.8 and §3.7 additions.
         // 20 (ABORT_HISTORICAL_TRANSMITS) is OpenStrap's non-destructive "cancel sync", used around a rewind.
-        #expect(raw == [1, 3, 10, 11, 14, 20, 22, 23, 26, 33, 34, 35, 63, 66, 67, 79, 80, 98, 122])
+        // 107 (ENABLE_OPTICAL_DATA) opens the wrist-gated optical stream for the Band Tests SpO2 steps; its forced
+        // and persistent siblings 108 and 154 stay denied (OpenStrap's stuck-LED footgun).
+        #expect(raw == [1, 3, 10, 11, 14, 20, 22, 23, 26, 33, 34, 35, 63, 66, 67, 79, 80, 98, 107, 122])
     }
 }
