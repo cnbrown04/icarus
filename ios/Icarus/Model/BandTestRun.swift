@@ -83,6 +83,16 @@ enum BandTestStep: Int, CaseIterable, Codable, Sendable {
         }
     }
 
+    /// The notification when this step's time is up, naming what comes next.
+    var doneNotice: String {
+        switch self {
+        case .still: "Time to take the band off and leave it on a table."
+        case .off: "20 minutes are up. Put the band back on."
+        case .on: "20 minutes are up. Open Icarus for the last few steps."
+        default: "Open Icarus for the next step."
+        }
+    }
+
     var action: BandTestAction {
         switch self {
         case .still: .none
@@ -228,11 +238,23 @@ enum BandTestAnalysis {
     }
 }
 
-/// The shared report: the run's marks and its results, nothing else.
+/// The shared report: the run's marks, its results, and each temperature candidate's per-minute mean (so a verdict
+/// can be checked by eye). No heart rate or other health data.
 struct BandTestReport: Codable, Sendable {
+    /// One minute of the run: minutes since the first step began, and each candidate channel's mean.
+    struct ChannelMinute: Codable, Sendable, Equatable {
+        let minute: Int
+        let frame72: Double?
+        let frame74: Double?
+        let frame76: Double?
+        let frame78: Double?
+        let frame92: Double?
+    }
+
     let runID: String
     let marks: [BandTestMark]
     let results: BandTestResults
+    let channelMinutes: [ChannelMinute]
 
     /// The report as a JSON file in the temporary directory, for `ShareLink`.
     func file() throws -> URL {
@@ -245,6 +267,21 @@ struct BandTestReport: Codable, Sendable {
 }
 
 extension BandTestAnalysis {
+    /// Each candidate channel's mean per minute since `startMs`, oldest first.
+    static func channelMinutes(_ samples: [BandTestSample], from startMs: Int64) -> [BandTestReport.ChannelMinute] {
+        let byMinute = Dictionary(grouping: samples) { Int(($0.tsMs - startMs) / 60_000) }
+        func mean(_ minute: [BandTestSample], _ value: (BandTestSample) -> Int?) -> Double? {
+            let values = minute.compactMap(value)
+            return values.isEmpty ? nil : Double(values.reduce(0, +)) / Double(values.count)
+        }
+        return byMinute.keys.sorted().map { minute in
+            let rows = byMinute[minute] ?? []
+            return .init(minute: minute, frame72: mean(rows) { $0.frame72 }, frame74: mean(rows) { $0.frame74 },
+                         frame76: mean(rows) { $0.frame76 }, frame78: mean(rows) { $0.frame78 },
+                         frame92: mean(rows) { $0.frame92 })
+        }
+    }
+
     /// Loads a run's marks, the events and records inside it, and works out its results.
     static func load(runID: String, from database: AppDatabase) async throws -> BandTestReport? {
         try await database.writer.read { db in
@@ -254,7 +291,8 @@ extension BandTestAnalysis {
             let events = try db.bandEvents(fromMs: start, toMs: end + eventGraceMs + 1, limit: 2_000)
             let samples = try db.bandTestSamples(fromMs: start, toMs: end)
             return BandTestReport(runID: runID, marks: marks,
-                                  results: results(marks: marks, events: events, samples: samples))
+                                  results: results(marks: marks, events: events, samples: samples),
+                                  channelMinutes: channelMinutes(samples, from: start))
         }
     }
 }

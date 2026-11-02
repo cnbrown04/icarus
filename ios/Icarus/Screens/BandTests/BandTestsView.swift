@@ -3,6 +3,7 @@ import BandKit
 import Metrics
 import Store
 import SwiftUI
+import UserNotifications
 
 /// Band Tests: start a guided run, and every past run's results. A run takes about 50 minutes and needs the band
 /// connected on the band channel, since its events and records are what it measures.
@@ -12,11 +13,20 @@ struct BandTestsView: View {
 
     @State private var runs: [[BandTestMark]] = []
     @State private var runner: BandTestRunner?
+    /// A run the app was closed in the middle of, offered for resuming.
+    @State private var unfinished = BandTestRunner.InProgress.saved
 
     var body: some View {
         List {
             Section {
-                Button("Start a Run") {
+                if let unfinished {
+                    Button("Resume Run") {
+                        runner = BandTestRunner(environment: environment, liveState: liveState, resuming: unfinished)
+                    }
+                    .accessibilityIdentifier("bandTests.resume")
+                }
+                Button(unfinished == nil ? "Start a Run" : "Start a New Run") {
+                    BandTestRunner.InProgress.clear()
                     runner = BandTestRunner(environment: environment, liveState: liveState)
                 }
                 .disabled(liveState.tierBState != .ready)
@@ -45,9 +55,10 @@ struct BandTestsView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("Band Tests")
         .navigationBarTitleDisplayMode(.inline)
-        .fullScreenCover(item: $runner) { runner in
+        .fullScreenCover(item: $runner, onDismiss: { unfinished = BandTestRunner.InProgress.saved }) { runner in
             NavigationStack {
                 BandTestRunView(runner: runner, environment: environment) {
+                    runner.stop()
                     self.runner = nil
                 }
             }
@@ -73,16 +84,75 @@ final class BandTestRunner: Identifiable {
         case finished
     }
 
-    let id = UUID().uuidString
-    private(set) var phase: Phase = .step(.still)
-    private(set) var stepStartedAt = Date()
+    /// The step under way, saved at each step's start so a run survives the app being closed during the long
+    /// band-off and band-on steps. Cleared when the run ends or is stopped.
+    struct InProgress: Codable, Equatable {
+        let runID: String
+        let step: Int
+        let startedAt: Date
+
+        private static let key = "bandTests.inProgress"
+
+        static var saved: InProgress? {
+            UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(InProgress.self, from: $0) }
+        }
+
+        func save() {
+            UserDefaults.standard.set(try? JSONEncoder().encode(self), forKey: Self.key)
+        }
+
+        static func clear() {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+
+    /// Steps at least this long post a notification when their time is up: the user is away from the phone.
+    private static let notifyAfterSeconds = 180
+    private static let notificationID = "bandTests.stepDone"
+
+    let id: String
+    private(set) var phase: Phase
+    private(set) var stepStartedAt: Date
 
     @ObservationIgnored private let environment: AppEnvironment
     @ObservationIgnored private let liveState: LiveState
 
-    init(environment: AppEnvironment, liveState: LiveState) {
+    init(environment: AppEnvironment, liveState: LiveState, resuming saved: InProgress? = nil) {
         self.environment = environment
         self.liveState = liveState
+        if let saved, let step = BandTestStep(rawValue: saved.step) {
+            id = saved.runID
+            phase = .step(step)
+            stepStartedAt = saved.startedAt
+        } else {
+            id = UUID().uuidString
+            phase = .step(.still)
+            stepStartedAt = Date()
+            begin(.still)
+        }
+    }
+
+    /// Saves the step as under way and schedules its notification.
+    private func begin(_ step: BandTestStep) {
+        InProgress(runID: id, step: step.rawValue, startedAt: stepStartedAt).save()
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [Self.notificationID])
+        guard step.minimumSeconds >= Self.notifyAfterSeconds else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Band Tests"
+        content.body = step.doneNotice
+        content.sound = .default
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(step.minimumSeconds), repeats: false)
+        Task {
+            _ = try? await center.requestAuthorization(options: [.alert, .sound])
+            try? await center.add(UNNotificationRequest(identifier: Self.notificationID, content: content, trigger: trigger))
+        }
+    }
+
+    /// Ends the run without finishing it: the steps already done stay stored, nothing is resumed.
+    func stop() {
+        InProgress.clear()
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [Self.notificationID])
     }
 
     var drainFraction: Double? { liveState.drainProgress.fraction }
@@ -109,10 +179,12 @@ final class BandTestRunner: Identifiable {
         if let next = BandTestStep(rawValue: step.rawValue + 1) {
             phase = .step(next)
             stepStartedAt = Date()
+            begin(next)
             if next == .buzz, let double = try? RhythmSpec.builtIn(.double).rhythm() {
                 Task { await liveState.runRhythm(double) }
             }
         } else {
+            stop()
             phase = .syncing
             if liveState.tierBState == .ready {
                 await liveState.drainFullHistory()

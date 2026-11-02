@@ -74,3 +74,26 @@ struct BandTestAnalysisTests {
         #expect(byChannel["Frame 92"] == .some(nil))
     }
 }
+
+struct BandTestReportTests {
+    @Test func channelMinutesAverageEachMinuteFromTheRunStart() {
+        let samples = [
+            BandTestSample(tsMs: 1_000, frame76: 300),
+            BandTestSample(tsMs: 30_000, frame76: 302),
+            BandTestSample(tsMs: 61_000, frame76: 310, frame92: 7),
+        ]
+        let minutes = BandTestAnalysis.channelMinutes(samples, from: 0)
+        #expect(minutes.map(\.minute) == [0, 1])
+        #expect(minutes[0].frame76 == 301)
+        #expect(minutes[0].frame92 == nil)
+        #expect(minutes[1].frame92 == 7)
+    }
+
+    @Test func anInProgressRunRoundTrips() {
+        let saved = BandTestRunner.InProgress(runID: "r", step: 2, startedAt: Date(timeIntervalSince1970: 100))
+        saved.save()
+        #expect(BandTestRunner.InProgress.saved == saved)
+        BandTestRunner.InProgress.clear()
+        #expect(BandTestRunner.InProgress.saved == nil)
+    }
+}
