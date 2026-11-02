@@ -266,6 +266,26 @@ final class LiveState {
         }
     }
 
+    /// Turns the optical stream on or off (Band Tests SpO2 steps). True when the band accepted the commands.
+    @discardableResult
+    func setOpticalStream(_ enabled: Bool) async -> Bool {
+        guard let flood = transport as? any RealtimeRawFloodTransport else {
+            BandLog.tierB(.info, "app: optical stream skipped: transport has no stream control")
+            return false
+        }
+        do {
+            try await flood.setOpticalStream(enabled: enabled)
+            return true
+        } catch {
+            BandLog.tierB(.error, "app: optical stream \(enabled ? "on" : "off") failed: \(String(describing: error))")
+            return false
+        }
+    }
+
+    /// Hands every decoded frame the controller only surfaces (the realtime-raw stream, R21 optical records
+    /// included) to Band Tests while one of its optical steps runs. Nil otherwise, so the stream costs nothing.
+    @ObservationIgnored var rawFrameSink: ((Frame, Date) -> Void)?
+
     /// Sets whether future handshakes disable the raw flood, applying the change to the current
     /// link immediately (lifting the policy re-enables the stream now; imposing it disables now).
     func setHandshakeRealtimeRawFloodDisabled(_ disabled: Bool) async {
@@ -340,6 +360,7 @@ final class LiveState {
             // Decoded frames the controller only surfaces, the 0x2B flood included. The ring is
             // tiny and nothing formats hex here, so the flood stays cheap (PLAN.md 7.2 debugging).
             frameLog.append(frame: frame, at: at)
+            rawFrameSink?(frame, at)
         case let .hr(measurement, receivedAt):
             latestBPM = measurement.bpm
             lastDataAt = receivedAt

@@ -1,3 +1,4 @@
+import BandProtocol
 import Foundation
 import Metrics
 import Store
@@ -5,168 +6,92 @@ import Testing
 @testable import Icarus
 
 struct BandTestAnalysisTests {
-    /// A run whose steps follow each other, `seconds` long each (still and the two wear spans 20 minutes).
-    private func marks(skipping skipped: Set<BandTestStep> = []) -> [BandTestMark] {
+    /// The run's steps back to back, each its minimum length, with the given readings.
+    private func marks(readings: [BandTestStep: Double] = [:], skipping skipped: Set<BandTestStep> = []) -> [BandTestMark] {
         var start: Int64 = 0
-        return BandTestSuite.wearAndCharging.steps.map { step in
-            let length: Int64 = [.still, .off, .on].contains(step) ? 1_200_000 : 60_000
+        return BandTestStep.allCases.map { step in
+            let length = Int64(step.minimumSeconds) * 1000
             defer { start += length }
-            return BandTestMark(runID: "r", step: step.rawValue, label: step.title, startMs: start,
-                                endMs: start + length, skipped: skipped.contains(step))
+            return BandTestMark(runID: "r", step: step.rawValue, label: step.title, startMs: start, endMs: start + length,
+                                skipped: skipped.contains(step), reading: readings[step])
         }
     }
 
-    private func mark(_ step: BandTestStep, in marks: [BandTestMark]) -> BandTestMark {
+    private func span(_ step: BandTestStep, in marks: [BandTestMark]) -> BandTestMark {
         marks.first { $0.step == step.rawValue }!
     }
 
-    @Test func anEventSeenInBothChargerStepsIsProposedAsChargingOn() {
-        let run = marks()
-        let events = [BandTestStep.chargerOn, .chargerOnAgain].map { step in
-            StoredBandEvent(tsMs: mark(step, in: run).startMs + 5_000, kind: "event_42", id: 42, hex: "01")
+    @Test func twoThermometerReadingsCalibrateFrame76() throws {
+        let run = marks(readings: [.roomTemperature: 22, .wristTemperature: 33])
+        let on = span(.backOn, in: run), wrist = span(.wristTemperature, in: run)
+        // 280 counts as the band goes back on (room temperature), 340 in the last worn minute.
+        let samples = stride(from: on.startMs, to: wrist.startMs, by: 1_000).map { ts in
+            BandTestSample(tsMs: ts, frame76: ts < on.startMs + 30_000 ? 280 : 340)
         }
-        let results = BandTestAnalysis.results(marks: run, events: events, samples: [])
-        let finding = results.events.first { $0.id == 42 }
-        #expect(finding?.proposed == .chargingOn)
-        #expect(finding?.name == "Event 42")
-        #expect(results.silentActions.contains(.doubleTap))
+        let results = BandTestAnalysis.results(marks: run, samples: samples, frames: [])
+        #expect(results.room == .init(celsius: 22, counts: 280))
+        #expect(results.skin == .init(celsius: 33, counts: 340))
+        let calibration = try #require(results.calibration)
+        #expect(abs(calibration.slope - 11.0 / 60) < 1e-9)
+        #expect(abs(calibration.celsius(310) - 27.5) < 1e-9)
     }
 
-    @Test func anEventSeenInTwoDifferentActionsIsNotProposed() {
-        let run = marks()
-        let events = [BandTestStep.chargerOn, .doubleTap].map { step in
-            StoredBandEvent(tsMs: mark(step, in: run).startMs + 5_000, kind: "event_42", id: 42, hex: nil)
-        }
-        let results = BandTestAnalysis.results(marks: run, events: events, samples: [])
-        #expect(results.events.first?.proposed == nil)
+    @Test func aSkippedThermometerStepLeavesNoCalibration() {
+        let run = marks(readings: [.roomTemperature: 22, .wristTemperature: 33], skipping: [.wristTemperature])
+        let on = span(.backOn, in: run)
+        let samples = (0..<60).map { BandTestSample(tsMs: on.startMs + Int64($0) * 1000, frame76: 300) }
+        let results = BandTestAnalysis.results(marks: run, samples: samples, frames: [])
+        #expect(results.room != nil)
+        #expect(results.calibration == nil)
     }
 
-    @Test func skippedStepsNeverCount() {
-        let run = marks(skipping: [.chargerOn, .chargerOnAgain])
-        let events = [BandTestStep.chargerOn, .chargerOnAgain].map { step in
-            StoredBandEvent(tsMs: mark(step, in: run).startMs + 5_000, kind: "event_42", id: 42, hex: nil)
-        }
-        let results = BandTestAnalysis.results(marks: run, events: events, samples: [])
-        #expect(results.events.isEmpty)
-        #expect(!results.silentActions.contains(.chargingOn))
-    }
-
-    @Test func aSlowChannelThatMovesOffAndBackPassesAndAFastOneFails() {
-        let run = marks()
-        let off = mark(.off, in: run), on = mark(.on, in: run)
-        let samples = stride(from: Int64(0), to: on.endMs, by: 1_000).map { ts -> BandTestSample in
-            let t = Double(ts) / 1000
-            let slow: Double
-            if ts < off.startMs {
-                slow = 300
-            } else if ts < on.startMs {
-                slow = 300 + 40 * (1 - exp(-(t - Double(off.startMs) / 1000) / 400))
-            } else {
-                slow = 300 + 38 * exp(-(t - Double(on.startMs) / 1000) / 300)
+    /// One R21 frame: four seconds of 25-a-second samples, with infrared (c) and red (f) carrying a 72-a-minute
+    /// pulse on different levels.
+    private func opticalFrame(second: Int, arrivalMs: Int64) -> BandTestFrame {
+        var payload = [UInt8](repeating: 0, count: 1_241)
+        let unix = UInt32(1_000 + second)
+        for byte in 0..<4 { payload[4 + byte] = UInt8((unix >> (8 * byte)) & 0xFF) }
+        payload[13] = 100
+        let offsets = [17, 217, 417, 629, 829, 1_029]
+        for (channel, start) in offsets.enumerated() {
+            for i in 0..<100 {
+                let t = Double(second) + Double(i) / 25
+                let level: Double = channel == 5 ? 20_000 : 10_000
+                let pulse = channel == 2 || channel == 5 ? 100 * sin(2 * .pi * 1.2 * t) : 0
+                let value = UInt16(level + pulse)
+                payload[start + i * 2] = UInt8(value & 0xFF)
+                payload[start + i * 2 + 1] = UInt8(value >> 8)
             }
-            let fast = 600 + 11 * (Int(t) % 2)
-            return BandTestSample(tsMs: ts, frame72: fast, frame76: Int(slow.rounded()))
         }
-        let results = BandTestAnalysis.results(marks: run, events: [], samples: samples)
-        let byChannel = Dictionary(uniqueKeysWithValues: results.temperature.map { ($0.channel, $0.verdict) })
-        #expect(byChannel["Frame 76"]??.passes == true)
-        #expect(byChannel["Frame 72"]??.passes == false)
-        #expect(byChannel["Frame 92"] == .some(nil))
-    }
-}
-
-struct BandTestReportTests {
-    @Test func channelMinutesAverageEachMinuteFromTheRunStart() {
-        let samples = [
-            BandTestSample(tsMs: 1_000, frame76: 300),
-            BandTestSample(tsMs: 30_000, frame76: 302),
-            BandTestSample(tsMs: 61_000, frame76: 310, frame92: 7),
-        ]
-        let minutes = BandTestAnalysis.channelMinutes(samples, from: 0)
-        #expect(minutes.map(\.minute) == [0, 1])
-        #expect(minutes[0].frame76 == 301)
-        #expect(minutes[0].frame92 == nil)
-        #expect(minutes[1].frame92 == 7)
+        return BandTestFrame(tsMs: arrivalMs, seq: 21, payload: payload)
     }
 
-    @Test func anInProgressRunRoundTrips() {
-        let saved = BandTestRunner.InProgress(runID: "r", step: 2, startedAt: Date(timeIntervalSince1970: 100))
+    @Test func theOpticalChannelsThatSeeThePulseAreFound() throws {
+        let run = marks()
+        let still = span(.opticalStill, in: run)
+        let frames = stride(from: 0, to: 120, by: 4).map { second in
+            opticalFrame(second: second, arrivalMs: still.startMs + Int64(second) * 1000)
+        } + [BandTestFrame(tsMs: still.startMs, seq: 10, payload: [1, 2])]
+        let samples = (0..<120).map { BandTestSample(tsMs: still.startMs + Int64($0) * 1000, bpm: 72) }
+        let results = BandTestAnalysis.results(marks: run, samples: samples, frames: frames)
+        #expect(results.opticalRecords == 30)
+        #expect(results.framesByType == ["21": 30, "10": 1])
+        #expect(abs((results.sampleRate ?? 0) - 25) < 0.01)
+        let byName = Dictionary(uniqueKeysWithValues: results.channels.map { ($0.channel, $0) })
+        #expect(byName["c (infrared)"]?.followsPulse == true)
+        #expect(byName["f (red)"]?.followsPulse == true)
+        #expect(byName["a (green)"]?.followsPulse == false)
+        let ratio = try #require(results.ratios.first { $0.step == .opticalStill }?.ratio)
+        #expect(abs(ratio - 0.5) < 0.02)
+    }
+
+    @Test func anInProgressRunRoundTripsAndOldStepsAreNotResumed() {
+        let saved = BandTestRunner.InProgress(runID: "r", step: BandTestStep.settle.rawValue,
+                                              startedAt: Date(timeIntervalSince1970: 100))
         saved.save()
         #expect(BandTestRunner.InProgress.saved == saved)
-        BandTestRunner.InProgress.clear()
+        BandTestRunner.InProgress(runID: "old", step: 3, startedAt: Date()).save()
         #expect(BandTestRunner.InProgress.saved == nil)
+        BandTestRunner.InProgress.clear()
     }
 }
-
-struct BandTestEventTimingTests {
-    /// Real charging-on payloads from the first run: the band's time is bytes 1–4, and each event arrived twice.
-    @Test func eventsArePlacedByTheBandsTimeAndKeptOnce() {
-        let bandSeconds: Int64 = 0x6AE7_EE42
-        let events = [
-            StoredBandEvent(tsMs: bandSeconds * 1000 + 300, kind: "charging_on", id: 7, hex: "0042eee76a583d0000"),
-            StoredBandEvent(tsMs: bandSeconds * 1000 + 300, kind: "event_59", id: 59, hex: "0042eee76a403c0000"),
-            StoredBandEvent(tsMs: bandSeconds * 1000 + 95_000, kind: "charging_on", id: 7, hex: "0042eee76a583d0000"),
-        ]
-        let distinct = BandTestAnalysis.distinctEvents(events)
-        #expect(distinct.count == 2)
-        #expect(distinct.allSatisfy { $0.tsMs == bandSeconds * 1000 })
-        #expect(BandTestAnalysis.companion(of: 59, in: distinct) == "Charging on")
-        #expect(BandTestAnalysis.companion(of: 7, in: distinct) == nil)
-    }
-}
-
-struct BandTestSensorsTests {
-    /// A sensors run whose steps follow each other.
-    private func marks() -> [BandTestMark] {
-        var start: Int64 = 0
-        return BandTestSuite.sensors.steps.map { step in
-            let length = Int64(step.minimumSeconds) * 1000
-            defer { start += length }
-            return BandTestMark(runID: "s", step: step.rawValue, label: step.title, startMs: start,
-                                endMs: start + length, skipped: false)
-        }
-    }
-
-    @Test func coldAndLightAreJudgedPerChannel() {
-        let run = marks()
-        func span(_ step: BandTestStep) -> BandTestMark { run.first { $0.step == step.rawValue }! }
-        let samples = stride(from: Int64(0), to: span(.recover).endMs, by: 1_000).map { ts -> BandTestSample in
-            // Lags like the real sensor: still falling for a minute into recovery, lowest at 290, then back to 315.
-            let skin: Int
-            let recoverStart = span(.recover).startMs
-            if ts < span(.cold).startMs {
-                skin = 320
-            } else if ts < recoverStart + 60_000 {
-                skin = ts < recoverStart ? 300 : 290
-            } else {
-                skin = 315
-            }
-            let light = ts >= span(.light).startMs && ts < span(.light).endMs ? 900 : 600
-            return BandTestSample(tsMs: ts, ppgGreen: 18_000, frame74: light, frame76: skin, frame92: 16_500)
-        }
-        let results = BandTestAnalysis.results(marks: run, events: [], samples: samples)
-        let cold = Dictionary(uniqueKeysWithValues: results.cold.map { ($0.channel, $0) })
-        #expect(cold["Frame 76"]?.responds == true)
-        #expect(cold["Frame 76"]?.coldChange == -30)
-        #expect(cold["Frame 76"]?.recoveryChange == 25)
-        #expect(cold["Frame 92"]?.responds == false)
-        let light = Dictionary(uniqueKeysWithValues: results.light.map { ($0.channel, $0) })
-        #expect(light["Frame 74"]?.responds == true)
-        #expect(light["Frame 76"]?.responds == false)
-        #expect(results.temperature.isEmpty)
-        #expect(BandTestSuite.of(run) == .sensors)
-    }
-
-    @Test func theBuzzGapRunsFromEvent60ToEvent100() {
-        let run = marks()
-        let buzz = run.first { $0.step == BandTestStep.longBuzz.rawValue }!
-        let events = [
-            StoredBandEvent(tsMs: buzz.startMs + 1_000, kind: "haptics_fired", id: 60, hex: nil),
-            StoredBandEvent(tsMs: buzz.startMs + 4_500, kind: "event_100", id: 100, hex: nil),
-        ]
-        let results = BandTestAnalysis.results(marks: run, events: events, samples: [])
-        #expect(results.buzzes.first { $0.step == .longBuzz }?.gapSeconds == 3.5)
-        #expect(results.buzzes.first { $0.step == .shortBuzz }?.gapSeconds == nil)
-    }
-}
-

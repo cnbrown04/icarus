@@ -1,12 +1,12 @@
-import AlarmKitBridge
 import BandKit
+import BandProtocol
 import Metrics
 import Store
 import SwiftUI
 import UserNotifications
 
-/// Band Tests: start a guided run, and every past run's results. A run takes about 50 minutes and needs the band
-/// connected on the band channel, since its events and records are what it measures.
+/// Band Tests: start the guided run, and every past run's results. The run needs the band connected on the band
+/// channel, since its records and optical stream are what it measures.
 struct BandTestsView: View {
     let environment: AppEnvironment
     let liveState: LiveState
@@ -30,10 +30,10 @@ struct BandTestsView: View {
                 Section {
                     Button("Start \(suite.title) Run") {
                         BandTestRunner.InProgress.clear()
-                        runner = BandTestRunner(environment: environment, liveState: liveState, suite: suite)
+                        runner = BandTestRunner(environment: environment, liveState: liveState)
                     }
                     .disabled(liveState.tierBState != .ready)
-                    .accessibilityIdentifier("bandTests.start.\(suite.rawValue)")
+                    .accessibilityIdentifier("bandTests.start")
                 } footer: {
                     Text(suite.summary)
                 }
@@ -46,14 +46,9 @@ struct BandTestsView: View {
                                 BandTestResultsView(environment: environment, runID: runID)
                             } label: {
                                 LabeledContent {
-                                    Text("\(marks.filter { !$0.skipped }.count) of \(BandTestSuite.of(marks).steps.count) steps")
+                                    Text("\(marks.filter { !$0.skipped }.count) of \(BandTestStep.allCases.count) steps")
                                 } label: {
-                                    VStack(alignment: .leading, spacing: Spacing.s4) {
-                                        Text(BandTestSuite.of(marks).title)
-                                        Text(Date(epochMs: start), format: .dateTime.month(.abbreviated).day().hour().minute())
-                                            .font(.footnote)
-                                            .foregroundStyle(.secondary)
-                                    }
+                                    Text(Date(epochMs: start), format: .dateTime.month(.abbreviated).day().hour().minute())
                                 }
                             }
                         }
@@ -75,7 +70,8 @@ struct BandTestsView: View {
         .task {
             do {
                 for try await value in environment.database.observe({ try $0.bandTestRuns() }) {
-                    runs = value
+                    // Only runs of the current steps: the finished earlier runs used steps 0–21.
+                    runs = value.filter { marks in marks.allSatisfy { BandTestStep(rawValue: $0.step) != nil } }
                 }
             } catch {
                 runs = []
@@ -84,7 +80,8 @@ struct BandTestsView: View {
     }
 }
 
-/// Drives one run: the current step, when it started, saving each step's span, and the sync at the end.
+/// Drives one run: the current step, when it started, saving each step's span and reading, the optical stream
+/// during the optical steps, and the sync at the end.
 @MainActor @Observable
 final class BandTestRunner: Identifiable {
     enum Phase: Equatable {
@@ -93,19 +90,21 @@ final class BandTestRunner: Identifiable {
         case finished
     }
 
-    /// The step under way, saved at each step's start so a run survives the app being closed during the long
-    /// band-off and band-on steps. Cleared when the run ends or is stopped.
+    /// The step under way, saved at each step's start so a run survives the app being closed during a long step.
+    /// Cleared when the run ends or is stopped.
     struct InProgress: Codable, Equatable {
         let runID: String
         let step: Int
         let startedAt: Date
-        /// Nil in runs saved before there were two suites: the first suite.
-        var suite: BandTestSuite? = nil
 
         private static let key = "bandTests.inProgress"
 
         static var saved: InProgress? {
-            UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(InProgress.self, from: $0) }
+            guard let data = UserDefaults.standard.data(forKey: key),
+                  let saved = try? JSONDecoder().decode(InProgress.self, from: data),
+                  BandTestStep(rawValue: saved.step) != nil
+            else { return nil }
+            return saved
         }
 
         func save() {
@@ -122,47 +121,51 @@ final class BandTestRunner: Identifiable {
     private static let notificationID = "bandTests.stepDone"
 
     let id: String
-    let suite: BandTestSuite
     private(set) var phase: Phase
     private(set) var stepStartedAt: Date
+    /// Frames of the realtime-raw stream received during the optical steps, saved when they end.
+    private(set) var capturedFrames = 0
 
     @ObservationIgnored private let environment: AppEnvironment
     @ObservationIgnored private let liveState: LiveState
+    @ObservationIgnored private var frames: [BandTestFrame] = []
 
-    init(
-        environment: AppEnvironment,
-        liveState: LiveState,
-        suite: BandTestSuite = .wearAndCharging,
-        resuming saved: InProgress? = nil
-    ) {
+    init(environment: AppEnvironment, liveState: LiveState, resuming saved: InProgress? = nil) {
         self.environment = environment
         self.liveState = liveState
         if let saved, let step = BandTestStep(rawValue: saved.step) {
             id = saved.runID
-            self.suite = saved.suite ?? .wearAndCharging
             phase = .step(step)
             stepStartedAt = saved.startedAt
+            if step.streamsOptical { startStream() }
         } else {
             id = UUID().uuidString
-            self.suite = suite
-            let first = suite.steps[0]
+            let first = BandTestStep.allCases[0]
             phase = .step(first)
             stepStartedAt = Date()
             begin(first)
         }
     }
 
-    /// "Step 3 of 14".
+    var drainFraction: Double? { liveState.drainProgress.fraction }
+
+    /// "Step 3 of 7".
     func position(of step: BandTestStep) -> String {
-        "Step \((suite.steps.firstIndex(of: step) ?? 0) + 1) of \(suite.steps.count)"
+        "Step \((BandTestStep.allCases.firstIndex(of: step) ?? 0) + 1) of \(BandTestStep.allCases.count)"
     }
 
-    /// Saves the step as under way and schedules its notification.
+    /// Seconds before Done is offered for the current step.
+    func secondsLeft(at now: Date) -> Int {
+        guard case let .step(step) = phase else { return 0 }
+        return max(0, step.minimumSeconds - Int(now.timeIntervalSince(stepStartedAt)))
+    }
+
+    /// Saves the step as under way, schedules its notification, and starts the optical stream when it needs one.
     private func begin(_ step: BandTestStep) {
-        InProgress(runID: id, step: step.rawValue, startedAt: stepStartedAt, suite: suite).save()
-        start(step)
+        InProgress(runID: id, step: step.rawValue, startedAt: stepStartedAt).save()
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [Self.notificationID])
+        if step.streamsOptical, liveState.rawFrameSink == nil { startStream() }
         guard step.minimumSeconds >= Self.notifyAfterSeconds else { return }
         let content = UNMutableNotificationContent()
         content.title = "Band Tests"
@@ -175,40 +178,38 @@ final class BandTestRunner: Identifiable {
         }
     }
 
-    /// What the app itself does as a step begins: the buzzes, and the band's alarm a minute ahead. A fired band
-    /// alarm sends event 57, on which `AlarmCoordinator` re-arms the user's own next alarm.
-    private func start(_ step: BandTestStep) {
-        let preset: BuiltInRhythm? = switch step {
-        case .buzz: .double
-        case .shortBuzz: .single
-        case .longBuzz: .long
-        default: nil
+    /// Collects every realtime-raw frame and asks the band for its optical stream.
+    private func startStream() {
+        liveState.rawFrameSink = { [weak self] frame, at in
+            guard let self, frame.packetType == .realtimeRawData else { return }
+            self.frames.append(BandTestFrame(tsMs: Int64(at.timeIntervalSince1970 * 1000), seq: Int(frame.seq),
+                                             payload: frame.payload))
+            self.capturedFrames += 1
         }
-        if let preset, let rhythm = try? RhythmSpec.builtIn(preset).rhythm() {
-            Task { await liveState.runRhythm(rhythm) }
-        }
-        if step == .bandAlarm {
-            Task { await liveState.armBandAlarm(Date().addingTimeInterval(60)) }
-        }
+        Task { await liveState.setOpticalStream(true) }
     }
 
-    /// Ends the run without finishing it: the steps already done stay stored, nothing is resumed.
+    /// Turns the optical stream off and stores what it sent.
+    private func endStream() async {
+        guard liveState.rawFrameSink != nil else { return }
+        liveState.rawFrameSink = nil
+        await liveState.setOpticalStream(false)
+        let captured = frames
+        frames.removeAll()
+        let runID = id
+        try? await environment.database.writer.write { db in try db.saveBandTestFrames(runID: runID, captured) }
+    }
+
+    /// Ends the run without finishing it: the steps already done stay stored, nothing is resumed, the stream stops.
     func stop() {
         InProgress.clear()
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [Self.notificationID])
+        Task { await endStream() }
     }
 
-    var drainFraction: Double? { liveState.drainProgress.fraction }
-
-    /// Seconds before Done is offered for the current step.
-    func secondsLeft(at now: Date) -> Int {
-        guard case let .step(step) = phase else { return 0 }
-        return max(0, step.minimumSeconds - Int(now.timeIntervalSince(stepStartedAt)))
-    }
-
-    /// Ends the current step (done or skipped), stores its span, and moves on. After the last step the band's
-    /// banked records are synced so the results have them.
-    func finishStep(skipped: Bool) async {
+    /// Ends the current step (done or skipped) with its reading, stores its span, and moves on. After the last step
+    /// the band's banked records are synced so the results have them.
+    func finishStep(skipped: Bool, reading: Double?) async {
         guard case let .step(step) = phase else { return }
         let mark = BandTestMark(
             runID: id,
@@ -216,16 +217,20 @@ final class BandTestRunner: Identifiable {
             label: step.title,
             startMs: Int64(stepStartedAt.timeIntervalSince1970 * 1000),
             endMs: Int64(Date().timeIntervalSince1970 * 1000),
-            skipped: skipped
+            skipped: skipped,
+            reading: skipped ? nil : reading
         )
         try? await environment.database.writer.write { db in try db.saveBandTestMark(mark) }
-        if let index = suite.steps.firstIndex(of: step), index + 1 < suite.steps.count {
-            let next = suite.steps[index + 1]
+        let steps = BandTestStep.allCases
+        if let index = steps.firstIndex(of: step), index + 1 < steps.count {
+            let next = steps[index + 1]
+            if step.streamsOptical, !next.streamsOptical { await endStream() }
             phase = .step(next)
             stepStartedAt = Date()
             begin(next)
         } else {
-            stop()
+            await endStream()
+            InProgress.clear()
             phase = .syncing
             if liveState.tierBState == .ready {
                 await liveState.drainFullHistory()
@@ -245,7 +250,8 @@ struct BandTestRunView: View {
         Group {
             switch runner.phase {
             case let .step(step):
-                stepCard(step)
+                BandTestStepCard(runner: runner, step: step)
+                    .id(step)
             case .syncing:
                 VStack(spacing: Spacing.s16) {
                     if let fraction = runner.drainFraction {
@@ -270,8 +276,28 @@ struct BandTestRunView: View {
         }
         .interactiveDismissDisabled()
     }
+}
 
-    private func stepCard(_ step: BandTestStep) -> some View {
+/// One step: the instruction, the countdown, the reading when the step asks for one, and Done or Skip.
+private struct BandTestStepCard: View {
+    let runner: BandTestRunner
+    let step: BandTestStep
+
+    @State private var text = ""
+    /// Fahrenheit where the region uses it.
+    @State private var fahrenheit = Locale.current.measurementSystem == .us
+
+    /// The entered reading in storage units (°C, or %), or nil when blank or not a number.
+    private var reading: Double? {
+        guard let value = Double(text.replacingOccurrences(of: ",", with: ".")) else { return nil }
+        if step.reading == .temperature, fahrenheit { return (value - 32) * 5 / 9 }
+        return value
+    }
+
+    /// A temperature step needs its reading; an oximeter reading is optional.
+    private var readingMissing: Bool { step.reading == .temperature && reading == nil }
+
+    var body: some View {
         VStack(alignment: .leading, spacing: Spacing.s16) {
             Text(runner.position(of: step))
                 .font(.subheadline)
@@ -280,7 +306,13 @@ struct BandTestRunView: View {
                 .font(.title2.weight(.semibold))
             Text(step.instruction)
                 .font(.body)
+            if step.streamsOptical {
+                Text("Light sensor frames received: \(runner.capturedFrames.formatted())")
+                    .font(.footnote.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
+            readingField
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let left = runner.secondsLeft(at: context.date)
                 VStack(spacing: Spacing.s12) {
@@ -291,16 +323,16 @@ struct BandTestRunView: View {
                             .frame(maxWidth: .infinity)
                     }
                     Button {
-                        Task { await runner.finishStep(skipped: false) }
+                        Task { await runner.finishStep(skipped: false, reading: reading) }
                     } label: {
                         Text("Done").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    .disabled(left > 0)
+                    .disabled(left > 0 || readingMissing)
                     .accessibilityIdentifier("bandTests.done")
                     Button("Skip This Step") {
-                        Task { await runner.finishStep(skipped: true) }
+                        Task { await runner.finishStep(skipped: true, reading: nil) }
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -308,16 +340,45 @@ struct BandTestRunView: View {
         }
         .padding(Spacing.s24)
     }
+
+    @ViewBuilder private var readingField: some View {
+        switch step.reading {
+        case .none:
+            EmptyView()
+        case .temperature:
+            HStack(spacing: Spacing.s12) {
+                TextField("Thermometer reading", text: $text)
+                    .keyboardType(.decimalPad)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("bandTests.reading")
+                Picker("Unit", selection: $fahrenheit) {
+                    Text("°F").tag(true)
+                    Text("°C").tag(false)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 110)
+            }
+        case .oxygen:
+            HStack(spacing: Spacing.s12) {
+                TextField("Pulse oximeter % (optional)", text: $text)
+                    .keyboardType(.decimalPad)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("bandTests.reading")
+                Text("%").foregroundStyle(.secondary)
+            }
+        }
+    }
 }
 
-/// One run's results: the events each action sent, the temperature verdict per channel, breathing by both
-/// methods, and the report to share.
+/// One run's results: the temperature calibration points, what the optical channels show, the red/infrared ratio
+/// through the breath hold, and the report to share.
 struct BandTestResultsView: View {
     let environment: AppEnvironment
     let runID: String
 
     @State private var report: BandTestReport?
     @State private var reportFile: URL?
+    private let fahrenheit = Locale.current.measurementSystem == .us
 
     var body: some View {
         List {
@@ -328,26 +389,9 @@ struct BandTestResultsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                eventsSection(results)
-                if !results.temperature.isEmpty {
-                    temperatureSection(results)
-                }
-                if !results.cold.isEmpty {
-                    coldSection(results)
-                }
-                if !results.light.isEmpty {
-                    lightSection(results)
-                }
-                if !results.buzzes.isEmpty {
-                    buzzSection(results)
-                }
-                if let charging = results.offWristCharging {
-                    Section("Charging Off the Wrist") {
-                        LabeledRow(title: "Band Records", value: charging.records.formatted())
-                        LabeledRow(title: "Frame 92 Change", value: signed(charging.frame92Change))
-                    }
-                }
-                breathingSection(results)
+                temperatureSection(results)
+                opticalSection(results)
+                ratioSection(results)
             }
             if let reportFile {
                 Section {
@@ -366,137 +410,80 @@ struct BandTestResultsView: View {
         }
     }
 
-    private func eventsSection(_ results: BandTestResults) -> some View {
-        Section("Events") {
-            ForEach(results.events, id: \.id) { finding in
-                VStack(alignment: .leading, spacing: Spacing.s4) {
-                    HStack {
-                        Text(finding.name)
-                        Spacer(minLength: Spacing.s8)
-                        if let proposed = finding.proposed {
-                            Text("\(proposed.label) · \(finding.actions.count) of \(finding.actions.count)")
-                                .foregroundStyle(Palette.syncOK)
-                        }
-                    }
-                    Text(finding.actions.map(\.label).joined(separator: ", "))
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    if let companion = finding.companion {
-                        Text("Comes with \(companion.lowercased())")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            ForEach(results.silentActions, id: \.self) { action in
-                LabeledRow(title: action.label, value: "No event")
-            }
-            if results.events.isEmpty, results.silentActions.isEmpty {
-                Text("No events").foregroundStyle(.secondary)
-            }
-        }
+    private func degrees(_ celsius: Double) -> String {
+        let value = fahrenheit ? celsius * 9 / 5 + 32 : celsius
+        return "\(value.formatted(.number.precision(.fractionLength(1)))) \(fahrenheit ? "°F" : "°C")"
     }
 
     private func temperatureSection(_ results: BandTestResults) -> some View {
         Section {
-            ForEach(results.temperature, id: \.channel) { finding in
-                VStack(alignment: .leading, spacing: Spacing.s4) {
-                    HStack {
-                        Text(finding.channel)
-                        Spacer(minLength: Spacing.s8)
-                        Text(verdictWord(finding.verdict))
-                            .foregroundStyle(finding.verdict?.passes == true ? Palette.syncOK : .secondary)
-                    }
-                    if let verdict = finding.verdict {
-                        Text(detail(verdict))
-                            .font(.footnote.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                }
+            if let room = results.room {
+                LabeledRow(title: "Room", value: "\(degrees(room.celsius)) · \(room.counts.formatted(.number.precision(.fractionLength(0)))) counts")
+            }
+            if let skin = results.skin {
+                LabeledRow(title: "Skin", value: "\(degrees(skin.celsius)) · \(skin.counts.formatted(.number.precision(.fractionLength(0)))) counts")
+            }
+            if let calibration = results.calibration {
+                LabeledRow(title: "Per Count", value: "\(calibration.slope.formatted(.number.precision(.fractionLength(3)))) °C")
+            } else {
+                Text("Needs both thermometer readings and the band's records around them.")
+                    .foregroundStyle(.secondary)
             }
         } header: {
             Text("Temperature")
         } footer: {
-            Text("A temperature channel changes slowly, moves steadily one way with the band off and back with it on.")
+            Text("Frame 76 against the thermometer at room temperature and on your wrist.")
         }
     }
 
-    private func coldSection(_ results: BandTestResults) -> some View {
+    private func opticalSection(_ results: BandTestResults) -> some View {
         Section {
-            ForEach(results.cold, id: \.channel) { finding in
-                LabeledRow(
-                    title: finding.channel,
-                    value: "cold \(signed(finding.coldChange)) · back \(signed(finding.recoveryChange))\(finding.responds ? " ✓" : "")"
-                )
+            LabeledRow(title: "Optical Records", value: results.opticalRecords.formatted())
+            LabeledRow(title: "Stream Frames",
+                       value: results.framesByType.sorted { $0.key < $1.key }.map { "type \($0.key) × \($0.value)" }
+                           .joined(separator: ", ").ifEmpty("None"))
+            if let rate = results.sampleRate {
+                LabeledRow(title: "Samples a Second", value: rate.formatted(.number.precision(.fractionLength(1))))
+            }
+            if let heartRate = results.heartRate {
+                LabeledRow(title: "Heart Rate", value: "\(Int(heartRate.rounded())) bpm")
+            }
+            ForEach(results.channels, id: \.channel) { finding in
+                LabeledRow(title: "Channel \(finding.channel)", value: channelText(finding))
             }
         } header: {
-            Text("Cold and Recovery")
+            Text("Light Sensors")
         } footer: {
-            Text("A skin temperature channel moves one way with the cold and back after it.")
+            Text("✓ marks a channel whose rhythm matches your heart rate: it sees the pulse.")
         }
     }
 
-    private func lightSection(_ results: BandTestResults) -> some View {
+    private func ratioSection(_ results: BandTestResults) -> some View {
         Section {
-            ForEach(results.light, id: \.channel) { finding in
-                LabeledRow(
-                    title: finding.channel,
-                    value: "dark \(plain(finding.dark)) · lit \(plain(finding.lit))\(finding.responds ? " ✓" : "")"
-                )
+            ForEach(results.ratios, id: \.step) { finding in
+                LabeledRow(title: finding.step.title, value: ratioText(finding))
             }
         } header: {
-            Text("Light")
+            Text("Red to Infrared")
         } footer: {
-            Text("✓ marks a channel that changed with light beyond its usual spread.")
+            Text("Pulse oximeters work from this ratio: it rises as oxygen falls. A pulse oximeter's readings beside it are what turn it into a percentage.")
         }
     }
 
-    private func buzzSection(_ results: BandTestResults) -> some View {
-        Section {
-            ForEach(results.buzzes, id: \.step) { finding in
-                LabeledRow(title: finding.step.title,
-                           value: finding.gapSeconds.map { "\($0.formatted(.number.precision(.fractionLength(1)))) s" } ?? "—")
-            }
-        } header: {
-            Text("Buzz to Event 100")
-        } footer: {
-            Text("If event 100 marks a buzz ending, the long buzz's gap is longer.")
-        }
+    private func channelText(_ finding: BandTestResults.ChannelFinding) -> String {
+        guard let summary = finding.summary else { return "No data" }
+        let pulse = summary.pulsePerMinute.map { "\(Int($0.rounded()))/min" } ?? "no rhythm"
+        let size = (summary.acOverDC * 100).formatted(.number.precision(.significantDigits(2)))
+        return "\(pulse) · \(size)%\(finding.followsPulse ? " ✓" : "")"
     }
 
-    private func signed(_ value: Double?) -> String {
-        value.map { $0.formatted(.number.precision(.fractionLength(1)).sign(strategy: .always())) } ?? "—"
+    private func ratioText(_ finding: BandTestResults.RatioFinding) -> String {
+        let ratio = finding.ratio.map { $0.formatted(.number.precision(.fractionLength(3))) } ?? "—"
+        guard let oximeter = finding.oximeter else { return ratio }
+        return "\(ratio) · oximeter \(Int(oximeter.rounded()))%"
     }
+}
 
-    private func plain(_ value: Double?) -> String {
-        value.map { $0.formatted(.number.precision(.fractionLength(0))) } ?? "—"
-    }
-
-    private func breathingSection(_ results: BandTestResults) -> some View {
-        Section("Breathing") {
-            ForEach(results.breathing, id: \.step) { finding in
-                LabeledRow(
-                    title: finding.step == .still ? "Sitting Still" : "Back On",
-                    value: "R-R \(rate(finding.rrBrpm)) · Green \(finding.greenBrpm.map(rate) ?? (finding.greenWithheld ?? "—"))"
-                )
-            }
-        }
-    }
-
-    private func verdictWord(_ verdict: TemperatureChannelCheck.Verdict?) -> String {
-        guard let verdict else { return "No records" }
-        return verdict.passes ? "Passed" : "Failed"
-    }
-
-    private func detail(_ verdict: TemperatureChannelCheck.Verdict) -> String {
-        func number(_ value: Double?) -> String {
-            value.map { $0.formatted(.number.precision(.fractionLength(1)).sign(strategy: .always())) } ?? "—"
-        }
-        let step = verdict.medianStep.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "—"
-        return "\(step)/s · off \(number(verdict.offChange)) · on \(number(verdict.onChange))"
-    }
-
-    private func rate(_ value: Double?) -> String {
-        value.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "—"
-    }
+private extension String {
+    func ifEmpty(_ fallback: String) -> String { isEmpty ? fallback : self }
 }

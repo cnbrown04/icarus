@@ -32,6 +32,7 @@ enum BandChannel {
 protocol RealtimeRawFloodTransport: BandTransport {
     func setRealtimeRawFlood(enabled: Bool) async throws
     func setHandshakeRealtimeRawFloodDisabled(_ disabled: Bool) async throws
+    func setOpticalStream(enabled: Bool) async throws
 }
 
 /// A transport whose Tier B controller can sync the strap's pending (unacked) history on demand
