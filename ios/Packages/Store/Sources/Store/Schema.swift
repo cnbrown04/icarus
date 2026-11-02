@@ -47,6 +47,9 @@ enum Schema {
         migrator.registerMigration("v14") { db in
             try db.execute(sql: v14)
         }
+        migrator.registerMigration("v15") { db in
+            try db.execute(sql: v15)
+        }
     }
 
     /// Migration v1, copied from PLAN.md 10.2. Times are epoch ms UTC.
@@ -256,6 +259,16 @@ enum Schema {
     static let v14 = """
     CREATE TABLE day_reading (band_id TEXT NOT NULL, vital TEXT NOT NULL, ts_ms INTEGER NOT NULL, value REAL NOT NULL,
       PRIMARY KEY (band_id, vital, ts_ms)) WITHOUT ROWID;
+    """
+    /// Migration v15, Band Tests. Additive. `historical_record.aux_92_raw` holds the u16 at frame offset 92 when a
+    /// record carries it (a temperature candidate under test, unconfirmed). `band_test_mark` holds one row per step
+    /// of a guided Band Tests run: the step's label and the exact span it ran, so the band's events and records in
+    /// that span are labelled examples. `skipped` steps never count as evidence.
+    static let v15 = """
+    ALTER TABLE historical_record ADD COLUMN aux_92_raw INTEGER;
+    CREATE TABLE band_test_mark (run_id TEXT NOT NULL, step INTEGER NOT NULL, label TEXT NOT NULL,
+      start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, skipped INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (run_id, step)) WITHOUT ROWID;
     """
     static let v11 = """
     CREATE TABLE daily_score (local_day TEXT PRIMARY KEY, recovery REAL, recovery_calibrating INTEGER,

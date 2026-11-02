@@ -41,6 +41,8 @@ public struct HistoricalRecordRow: Codable, Equatable, Sendable, FetchableRecord
     public var ambientDrive: Int?
     public var ledDrive1: Int?
     public var ledDrive2: Int?
+    /// The u16 at frame offset 92 when the record carries it (schema v15). A temperature candidate under test.
+    public var aux92Raw: Int? = nil
 
     enum CodingKeys: String, CodingKey {
         case rowid
@@ -66,6 +68,7 @@ public struct HistoricalRecordRow: Codable, Equatable, Sendable, FetchableRecord
         case ambientDrive = "ambient_drive"
         case ledDrive1 = "led_drive1"
         case ledDrive2 = "led_drive2"
+        case aux92Raw = "aux_92_raw"
     }
 
     /// The stored R-R values, or nil when the JSON did not decode.

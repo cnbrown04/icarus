@@ -39,6 +39,8 @@ extension Database {
         public let ambientDrive: Int?
         public let ledDrive1: Int?
         public let ledDrive2: Int?
+        /// The u16 at frame offset 92 when the record carries it (`historical_record.aux_92_raw`).
+        public let aux92Raw: Int?
 
         public init(
             peripheralUUID: UUID,
@@ -62,7 +64,8 @@ extension Database {
             gravity2Z: Double? = nil,
             ambientDrive: Int? = nil,
             ledDrive1: Int? = nil,
-            ledDrive2: Int? = nil
+            ledDrive2: Int? = nil,
+            aux92Raw: Int? = nil
         ) {
             self.peripheralUUID = peripheralUUID
             self.tsMs = tsMs
@@ -86,6 +89,7 @@ extension Database {
             self.ambientDrive = ambientDrive
             self.ledDrive1 = ledDrive1
             self.ledDrive2 = ledDrive2
+            self.aux92Raw = aux92Raw
         }
     }
 
@@ -98,8 +102,8 @@ extension Database {
         INSERT OR IGNORE INTO historical_record
           (band_id, ts_ms, version, bpm, contact, rr_ms, ppg_green, ppg_red_ir, spo2_red, spo2_ir,
            skin_temp_raw, resp_rate_raw, signal_quality, gravity_x, gravity_y, gravity_z,
-           gravity2_x, gravity2_y, gravity2_z, ambient_drive, led_drive1, led_drive2)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           gravity2_x, gravity2_y, gravity2_z, ambient_drive, led_drive1, led_drive2, aux_92_raw)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)
         var bandIDs: [UUID: String] = [:]
         var inserted = 0
@@ -134,6 +138,7 @@ extension Database {
                 sample.ambientDrive,
                 sample.ledDrive1,
                 sample.ledDrive2,
+                sample.aux92Raw,
             ])
             try statement.execute()
             inserted += changesCount

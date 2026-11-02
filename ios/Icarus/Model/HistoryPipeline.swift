@@ -18,6 +18,9 @@ import UIKit
 ///   already-sent ack and was lost whenever iOS suspended the app, which kept only ~3 of every 16
 ///   minutes of history.
 enum HistoryPipeline {
+    /// The record payload length is logged once per launch.
+    nonisolated(unsafe) private static var loggedPayloadLength = false
+
     /// Sleep is re-derived for sessions starting this far before the drained range, so a night the
     /// new records extend (it may have started up to `SleepDetector.maxSleepSeconds` earlier) and
     /// its same-day competitors for "main sleep" are all re-decided.
@@ -39,6 +42,11 @@ enum HistoryPipeline {
                 // stored or derived from it. It still counts as handled, so the strap's ack goes out.
                 let earliest = try db.earliestRecordMs(peripheralUUID: bandUUID, nowMs: nowMs)
                 let samples = records.map { sample($0, from: bandUUID) }.filter { $0.tsMs >= earliest }
+                if let first = records.first, !loggedPayloadLength {
+                    // What this firmware actually sends: the frame-92 candidate exists only past 87 payload bytes.
+                    loggedPayloadLength = true
+                    BandLog.tierB(.info, "app: history records carry \(first.payloadLength)-byte payloads")
+                }
                 if samples.count < records.count {
                     BandLog.tierB(.info, "app: dropped \(records.count - samples.count) record(s) dated before the band's reach (wrong strap clock)")
                 }
@@ -245,7 +253,8 @@ enum HistoryPipeline {
             gravity2Z: record.secondaryGravity.z,
             ambientDrive: raw(record.ambientDrive),
             ledDrive1: raw(record.ledDrive1),
-            ledDrive2: raw(record.ledDrive2)
+            ledDrive2: raw(record.ledDrive2),
+            aux92Raw: record.aux92Raw.map(Int.init)
         )
     }
 
