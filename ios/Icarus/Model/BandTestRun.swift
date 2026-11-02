@@ -245,12 +245,15 @@ struct BandTestResults: Codable, Sendable, Equatable {
         let responds: Bool
     }
 
-    /// One temperature-like channel through the cold and recovery steps.
+    /// One temperature-like channel through the cold and recovery steps. A worn sensor lags the surface by about a
+    /// minute (Sensors run, 2026-11-01: frame 76 kept falling for a minute after the cold came off), so the cold's
+    /// effect is its furthest point across both steps, not the cold step's end.
     struct ColdFinding: Codable, Sendable, Equatable {
         let channel: String
-        /// The cold step's last minute minus the still baseline's last minute.
+        /// The furthest 30-second mean from the baseline across the cold and recovery steps, minus the still
+        /// baseline's last minute.
         let coldChange: Double?
-        /// The recovery step's last minute minus the cold step's last minute.
+        /// The recovery step's last minute minus that furthest point.
         let recoveryChange: Double?
         /// Moved one way with cold and back after, each by at least 2 counts.
         let responds: Bool
@@ -455,7 +458,10 @@ enum BandTestAnalysis {
         if let coldSpan = span(.cold), let recovery = span(.recover) {
             results.cold = temperatureChannels.map { channel in
                 let base = lastMinute(still, channel.value)
-                let cold = lastMinute(coldSpan, channel.value)
+                // 30-second means across cold and recovery; the one furthest from the baseline is the cold's effect.
+                let bins = Dictionary(grouping: coldSpan + recovery) { $0.tsMs / 30_000 }
+                    .compactMap { _, rows in mean(values(rows, channel.value)) }
+                let cold = base.flatMap { b in bins.max { abs($0 - b) < abs($1 - b) } }
                 let back = lastMinute(recovery, channel.value)
                 let coldChange = base.flatMap { b in cold.map { $0 - b } }
                 let recoveryChange = cold.flatMap { c in back.map { $0 - c } }
