@@ -50,6 +50,9 @@ enum Schema {
         migrator.registerMigration("v15") { db in
             try db.execute(sql: v15)
         }
+        migrator.registerMigration("v16") { db in
+            try db.execute(sql: v16)
+        }
     }
 
     /// Migration v1, copied from PLAN.md 10.2. Times are epoch ms UTC.
@@ -269,6 +272,15 @@ enum Schema {
     CREATE TABLE band_test_mark (run_id TEXT NOT NULL, step INTEGER NOT NULL, label TEXT NOT NULL,
       start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, skipped INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (run_id, step)) WITHOUT ROWID;
+    """
+    /// Migration v16, Band Tests readings and stream capture. Additive. `band_test_mark.reading` holds what the user
+    /// read off a reference instrument at that step (a thermometer in °C, a pulse oximeter in %), nil when none.
+    /// `band_test_frame` keeps every frame of the band's realtime-raw stream during a run's optical steps, raw
+    /// (`seq` is the record type: 21 is the optical record), so they can be decoded again as the layout is learned.
+    static let v16 = """
+    ALTER TABLE band_test_mark ADD COLUMN reading REAL;
+    CREATE TABLE band_test_frame (run_id TEXT NOT NULL, ts_ms INTEGER NOT NULL, seq INTEGER NOT NULL, idx INTEGER NOT NULL,
+      payload BLOB NOT NULL, PRIMARY KEY (run_id, idx)) WITHOUT ROWID;
     """
     static let v11 = """
     CREATE TABLE daily_score (local_day TEXT PRIMARY KEY, recovery REAL, recovery_calibrating INTEGER,

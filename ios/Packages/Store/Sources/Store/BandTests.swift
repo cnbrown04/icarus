@@ -15,14 +15,32 @@ public struct BandTestMark: Sendable, Equatable, Codable {
     public let endMs: Int64
     /// The user skipped the step: its span is kept for the record but is never evidence.
     public let skipped: Bool
+    /// What the user read off a reference instrument at this step: °C from a thermometer, % from a pulse oximeter.
+    public var reading: Double? = nil
 
-    public init(runID: String, step: Int, label: String, startMs: Int64, endMs: Int64, skipped: Bool) {
+    public init(runID: String, step: Int, label: String, startMs: Int64, endMs: Int64, skipped: Bool,
+                reading: Double? = nil) {
         self.runID = runID
         self.step = step
         self.label = label
         self.startMs = startMs
         self.endMs = endMs
         self.skipped = skipped
+        self.reading = reading
+    }
+}
+
+/// One frame of the band's realtime-raw stream kept during a run's optical steps.
+public struct BandTestFrame: Sendable, Equatable {
+    public let tsMs: Int64
+    /// The frame's record type (`Frame.seq`): 21 is the optical record.
+    public let seq: Int
+    public let payload: [UInt8]
+
+    public init(tsMs: Int64, seq: Int, payload: [UInt8]) {
+        self.tsMs = tsMs
+        self.seq = seq
+        self.payload = payload
     }
 }
 
@@ -121,21 +139,47 @@ extension Database {
     /// Stores (or replaces) one step of a run.
     public func saveBandTestMark(_ mark: BandTestMark) throws {
         try execute(sql: """
-            INSERT OR REPLACE INTO band_test_mark (run_id, step, label, start_ms, end_ms, skipped) VALUES (?, ?, ?, ?, ?, ?)
-            """, arguments: [mark.runID, mark.step, mark.label, mark.startMs, mark.endMs, mark.skipped ? 1 : 0])
+            INSERT OR REPLACE INTO band_test_mark (run_id, step, label, start_ms, end_ms, skipped, reading)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, arguments: [mark.runID, mark.step, mark.label, mark.startMs, mark.endMs, mark.skipped ? 1 : 0, mark.reading])
     }
 
     /// Every run's marks, newest run first, steps in order.
     public func bandTestRuns() throws -> [[BandTestMark]] {
         let marks = try Row.fetchAll(self, sql: """
-            SELECT run_id, step, label, start_ms, end_ms, skipped FROM band_test_mark ORDER BY start_ms
+            SELECT run_id, step, label, start_ms, end_ms, skipped, reading FROM band_test_mark ORDER BY start_ms
             """).map { row in
-            BandTestMark(runID: row[0], step: row[1], label: row[2], startMs: row[3], endMs: row[4], skipped: row[5] as Bool)
+            BandTestMark(runID: row[0], step: row[1], label: row[2], startMs: row[3], endMs: row[4],
+                         skipped: row[5] as Bool, reading: row[6])
         }
         let byRun = Dictionary(grouping: marks, by: \.runID)
         return byRun.values
             .map { $0.sorted { $0.step < $1.step } }
             .sorted { ($0.first?.startMs ?? 0) > ($1.first?.startMs ?? 0) }
+    }
+
+    // MARK: Stream frames
+
+    /// Appends frames to a run's capture, after any already stored.
+    public func saveBandTestFrames(runID: String, _ frames: [BandTestFrame]) throws {
+        var next = try Int.fetchOne(self, sql: "SELECT COALESCE(MAX(idx) + 1, 0) FROM band_test_frame WHERE run_id = ?",
+                                    arguments: [runID]) ?? 0
+        let statement = try makeStatement(sql: """
+            INSERT INTO band_test_frame (run_id, ts_ms, seq, idx, payload) VALUES (?, ?, ?, ?, ?)
+            """)
+        for frame in frames {
+            statement.setUncheckedArguments([runID, frame.tsMs, frame.seq, next, Data(frame.payload)])
+            try statement.execute()
+            next += 1
+        }
+    }
+
+    /// A run's captured frames in arrival order.
+    public func bandTestFrames(runID: String) throws -> [BandTestFrame] {
+        try Row.fetchAll(self, sql: "SELECT ts_ms, seq, payload FROM band_test_frame WHERE run_id = ? ORDER BY idx",
+                         arguments: [runID]).map { row in
+            BandTestFrame(tsMs: row[0], seq: row[1], payload: [UInt8](row[2] as Data))
+        }
     }
 
     // MARK: Samples

@@ -53,3 +53,20 @@ struct BandTestsStoreTests {
         #expect(sample.gravity?.z == 1)
     }
 }
+
+@Suite("Band tests capture")
+struct BandTestsCaptureTests {
+    @Test func readingsAndFramesRoundTrip() throws {
+        let database = try seededDatabase()
+        try database.writer.write { db in
+            try db.saveBandTestMark(BandTestMark(runID: "r", step: 22, label: "room", startMs: 0, endMs: 10,
+                                                 skipped: false, reading: 22.5))
+            try db.saveBandTestFrames(runID: "r", [BandTestFrame(tsMs: 1, seq: 21, payload: [1, 2, 3])])
+            try db.saveBandTestFrames(runID: "r", [BandTestFrame(tsMs: 2, seq: 10, payload: [4])])
+        }
+        let runs = try database.writer.read { try $0.bandTestRuns() }
+        #expect(runs.first?.first?.reading == 22.5)
+        let frames = try database.writer.read { try $0.bandTestFrames(runID: "r") }
+        #expect(frames == [BandTestFrame(tsMs: 1, seq: 21, payload: [1, 2, 3]), BandTestFrame(tsMs: 2, seq: 10, payload: [4])])
+    }
+}
