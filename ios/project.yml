@@ -96,6 +96,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cnbrown04.icarus
         GENERATE_INFOPLIST_FILE: NO
+        # Icarus/Assets.xcassets/AppIcon: one 1024 px icon, the system derives every size.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
         # Overrides XcodeGen's legacy "iPhone Developer" target default so the
         # modern "Apple Development" cert is matched.
