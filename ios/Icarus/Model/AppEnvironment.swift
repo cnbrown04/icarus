@@ -193,6 +193,36 @@ final class AppEnvironment {
     /// `HistoryPipeline.persist` BEFORE acking it; its `.historical` event then only schedules
     /// derivation. A transport without one (fixtures) still emits unacked-by-us batches, which are
     /// persisted from the event.
+    /// Stores every band event with its payload and the moment's context (charging, heart rate, battery), so
+    /// unnamed event ids can be identified from what was happening (Event Log, Band Tests).
+    func connectBandEvents(band: LiveState) {
+        guard ingestsLiveData else { return }
+        let database = database
+        band.onBandEventRecord = { [weak band] event in
+            guard let band, let bandID = band.rememberedID ?? band.bands.first?.id else { return }
+            var context: [String: Any] = [
+                "id": Int(event.id),
+                "hex": event.payload.map { String(format: "%02x", $0) }.joined(),
+            ]
+            context["charging"] = band.isCharging
+            context["hr"] = band.latestBPM
+            context["battery"] = band.batteryPercent
+            let payload = (try? JSONSerialization.data(withJSONObject: context, options: [.sortedKeys]))
+                .flatMap { String(data: $0, encoding: .utf8) }
+            let tsMs = Int64(event.at.timeIntervalSince1970 * 1000)
+            let kind = event.kind.storageName
+            Task.detached(priority: .utility) {
+                do {
+                    try await database.writer.write { db in
+                        try db.recordBandEvent(peripheralUUID: bandID, tsMs: tsMs, kind: kind, payload: payload)
+                    }
+                } catch {
+                    BandLog.tierB(.error, "app: storing band event \(kind) failed: \(String(describing: error))")
+                }
+            }
+        }
+    }
+
     func connectHistoricalRecords(band: LiveState) {
         guard ingestsLiveData else { return }
         let database = database

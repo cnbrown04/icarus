@@ -17,6 +17,7 @@ struct IcarusApp: App {
         _liveState = State(initialValue: liveState)
         environment.alarms.connect(band: liveState)
         environment.connectHistoricalRecords(band: liveState)
+        environment.connectBandEvents(band: liveState)
         // [push disabled] Re-enable for PLAN.md 12.5 (alarm push dispatch).
         // PushRouter.shared.attach(sync: environment.sync, band: liveState)
         // Must run before launch finishes (PLAN.md 11.2).

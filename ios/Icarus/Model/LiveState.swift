@@ -75,6 +75,9 @@ final class LiveState {
     }
     @ObservationIgnored private var tierBChangeHandlers: [@MainActor (TierBState) -> Void] = []
     @ObservationIgnored var onBandEvent: (@MainActor (BandEventKind) -> Void)?
+    /// Called on the main actor with every EVENT frame, payload included, so it can be stored
+    /// (`AppEnvironment.connectBandEvents`).
+    @ObservationIgnored var onBandEventRecord: (@MainActor (BandEventRecord) -> Void)?
     /// Called on the main actor for each drained batch. The records are NOT stored here: with a
     /// sink installed (`installHistoricalSink`) they were already written before the strap was
     /// acked; otherwise the consumer owns their persistence (PLAN.md 5.3.4).
@@ -350,13 +353,15 @@ final class LiveState {
             }
         case let .tierBFailure(reason):
             tierBFailure = reason
-        case let .bandEvent(kind):
+        case let .bandEvent(event):
+            let kind = event.kind
             lastBandEvent = kind
             lastBandEventAt = clock.now
             if case let .unknown(id) = kind {
                 unknownEvents.record(id)
             }
             onBandEvent?(kind)
+            onBandEventRecord?(event)
         case let .charging(charging):
             isCharging = charging
         case let .linkKeepAlive(sentAt, failures):
