@@ -138,6 +138,10 @@ public actor TierBController {
     /// Durable store for drained records, awaited BEFORE each batch's ack (`setHistoricalSink`).
     private var historicalSink: HistoricalSink?
     /// Restarts the offload every `historicalRedrainInterval` while the link is ready.
+    /// True while `drainFullHistory` runs, so concurrent requests join it instead of interleaving.
+    private var fullSyncRunning = false
+    /// Requests that arrived during a full sync, resumed when it ends.
+    private var fullSyncWaiters: [CheckedContinuation<Void, Never>] = []
     private var offloadCadenceTask: Task<Void, Never>?
     /// Sleeps until the active drain's quiet deadline, then fires `.quietElapsed` (PLAN.md 5.3.4).
     private var offloadWatchdog: Task<Void, Never>?
@@ -399,6 +403,19 @@ public actor TierBController {
     /// position (just after the last acked page), whether the cursor was moved backwards or forwards.
     /// A rewind therefore never re-sent acked data, so no rewind is made here.
     public func drainFullHistory() async {
+        // One full sync at a time: a manual tap, a catch-up and the app opening can all ask at once.
+        guard !fullSyncRunning else {
+            BandLog.tierB(.info, "full-history sync already running; this request joins it")
+            await withCheckedContinuation { continuation in fullSyncWaiters.append(continuation) }
+            return
+        }
+        fullSyncRunning = true
+        defer {
+            fullSyncRunning = false
+            let waiters = fullSyncWaiters
+            fullSyncWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+        }
         guard enabled, state == .ready, linkOpen else {
             fullHistorySummary = "sync skipped: the channel is off or the link is not ready"
             BandLog.tierB(.info, "full-history sync skipped: the channel is off or the link is not ready")
@@ -899,6 +916,15 @@ public actor TierBController {
         drainEndWaiters.removeAll()
         for waiter in waiters {
             waiter.resume()
+        }
+        // A routine drain that hit its time limit stopped with history still banked: carry on until caught up,
+        // as Sync All Pending does. Without this, after the app was away for hours each 15-minute drain took one
+        // capped slice and the backlog was only cleared by hand. A full sync's own drains end here too, but
+        // `fullSyncRunning` is set, so they are not re-entered. A drain that received nothing also ends on the cap
+        // (the quiet timer starts with the first record): that is a silent band, not a backlog.
+        if case .stopped(.runCap) = offload.phase, drainKeptRecords > 0, !fullSyncRunning, enabled, linkOpen {
+            BandLog.tierB(.info, "drain hit its time limit with history still banked: catching up")
+            Task { await self.drainFullHistory() }
         }
     }
 

@@ -587,6 +587,24 @@ struct TierBControllerTests {
         #expect(historical == [[record]])
     }
 
+    /// A routine drain that hits its time limit still has history banked, so the controller carries on with a
+    /// full catch-up, whose first step is asking the band how far behind it is (GET_DATA_RANGE, cmd 34).
+    @Test func aDrainStoppedByItsTimeLimitCatchesUp() async throws {
+        let h = Harness()
+        await h.controller.connectionOpened()
+        let rangeReadsAtConnect = h.band.opcodes.filter { $0 == 34 }.count
+        // Records keep arriving, so the drain never goes quiet; it runs until its cap.
+        var second: UInt32 = 0
+        while h.clock.now() < ManualClock.origin.addingTimeInterval(OffloadStateMachine.runCap + 1) {
+            await h.controller.receive(historicalRecordFrame(unix: UInt32(ManualClock.origin.timeIntervalSince1970) - 7_200 + second))
+            second += 1
+            h.clock.advance(by: 5)
+            await flush()
+        }
+        await flush()
+        #expect(h.band.opcodes.filter { $0 == 34 }.count > rangeReadsAtConnect, "the catch-up reads the range")
+    }
+
     @Test func aFailedStoreLeavesTheBatchUnacked() async throws {
         let h = Harness()
         let stored = SinkRecorder(succeeds: false, band: h.band)
