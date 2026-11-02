@@ -660,6 +660,20 @@ public actor TierBController {
         BandLog.tierB(.info, "realtime-raw flood \(enabled ? "on" : "off") (cmd 63 [\(enabled ? "01" : "00")])")
     }
 
+    /// The optical stream for the Band Tests SpO2 steps: the realtime-raw stream (cmd 63) and the optical data
+    /// path (cmd 107) on, so R21 optical records arrive (`OpticalRecord`); off in the reverse order. Wrist-gated:
+    /// the forced and persistent optical commands (108, 154) are never sent.
+    public func setOpticalStream(enabled: Bool) async throws {
+        if enabled {
+            try await writeConfirmedWithoutReply(.toggleRealtimeRaw(on: true))
+            try await writeConfirmedWithoutReply(.enableOpticalData(on: true))
+        } else {
+            try await writeConfirmedWithoutReply(.enableOpticalData(on: false))
+            try await writeConfirmedWithoutReply(.toggleRealtimeRaw(on: false))
+        }
+        BandLog.tierB(.info, "optical stream \(enabled ? "on (cmd 63 [01], cmd 107 [01 01])" : "off (cmd 107 [01 00], cmd 63 [00])")")
+    }
+
     // MARK: Historical offload (PLAN.md 5.3.4)
 
     // MARK: Historical offload (PLAN.md 5.3.4, NOOP's backfill state machine)

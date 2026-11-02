@@ -189,6 +189,11 @@ public final class CoreBluetoothTransport: NSObject, BandTransport, CBCentralMan
         try await tierB.setRealtimeRawFlood(enabled: enabled)
     }
 
+    /// App-facing optical stream toggle for the Band Tests SpO2 steps (`TierBController.setOpticalStream`).
+    public func setOpticalStream(enabled: Bool) async throws {
+        try await tierB.setOpticalStream(enabled: enabled)
+    }
+
     /// App-facing handshake policy setter: whether future handshakes disable the raw flood. Also
     /// applies to the current link immediately (enable the stream again when the policy is lifted).
     public func setHandshakeRealtimeRawFloodDisabled(_ disabled: Bool) async throws {
