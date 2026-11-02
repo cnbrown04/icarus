@@ -280,17 +280,17 @@ struct TierBControllerTests {
     @Test func bandEventsAreEmittedAndUnknownIdsAreKept() async {
         let h = Harness()
         await h.controller.connectionOpened()
-        for id: UInt8 in [9, 10, 14, 23, 21] {
+        for id: UInt8 in [9, 10, 14, 23, 24] {
             await h.controller.receive(eventFrame(id))
         }
         #expect(h.events.all.hasBandEvent(.wristOn))
         #expect(h.events.all.hasBandEvent(.wristOff))
         #expect(h.events.all.hasBandEvent(.doubleTap))
         #expect(h.events.all.hasBandEvent(.bleBonded))
-        #expect(h.events.all.hasBandEvent(.unknown(21)))
+        #expect(h.events.all.hasBandEvent(.unknown(24)))
         // The whole event travels: its id and payload, so an unnamed id can be identified later.
         let unknown = h.events.all.compactMap { event -> BandEventRecord? in
-            if case let .bandEvent(record) = event, record.id == 21 { record } else { nil }
+            if case let .bandEvent(record) = event, record.id == 24 { record } else { nil }
         }
         #expect(unknown.count == 1)
     }

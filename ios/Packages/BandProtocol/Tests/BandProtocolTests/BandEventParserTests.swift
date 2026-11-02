@@ -19,9 +19,21 @@ struct BandEventParserTests {
     }
 
     @Test func undocumentedIDsAreKeptAsUnknown() throws {
-        for id: UInt8 in [0, 1, 21, 24, 33, 34, 200] {
+        for id: UInt8 in [0, 1, 24, 29, 33, 34, 59, 200] {
             #expect(BandEventParser.parse(try event(id)) == .unknown(id))
         }
+    }
+
+    /// Every named id decodes to its kind and back, and its storage name is distinct.
+    @Test func namedIDsRoundTrip() {
+        let named = (0...UInt8.max).map(BandEventKind.init(id:)).filter {
+            if case .unknown = $0 { false } else { true }
+        }
+        #expect(named.count == 21)
+        #expect(named.allSatisfy { BandEventKind(id: $0.id) == $0 })
+        #expect(Set(named.map(\.storageName)).count == named.count)
+        #expect(BandEventKind(id: 100) == .hapticsFinished)
+        #expect(BandEventKind(id: 56) == .alarmSet)
     }
 
     @Test func nonEventPacketsAreNotEvents() throws {
