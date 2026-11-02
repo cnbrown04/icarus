@@ -209,7 +209,8 @@ final class AppEnvironment {
             context["battery"] = band.batteryPercent
             let payload = (try? JSONSerialization.data(withJSONObject: context, options: [.sortedKeys]))
                 .flatMap { String(data: $0, encoding: .utf8) }
-            let tsMs = Int64(event.at.timeIntervalSince1970 * 1000)
+            // The band's own time: it delivers each event twice, and the stored (band, time, kind) key keeps one.
+            let tsMs = Int64((event.bandTime ?? event.at).timeIntervalSince1970 * 1000)
             let kind = event.kind.storageName
             Task.detached(priority: .utility) {
                 do {

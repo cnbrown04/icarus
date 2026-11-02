@@ -29,6 +29,17 @@ public struct BandEventRecord: Sendable, Equatable {
         self.payload = payload
         self.at = at
     }
+
+    /// When the band says the event happened: the unix seconds at payload bytes 1–4 (little-endian), found on every
+    /// event id in the first Band Tests run (2026-11-01; byte 0 is 0x00). The band delivers each event twice, the
+    /// second copy up to minutes later, so this, not the arrival time, places it. Nil when the payload is too short
+    /// or the value is more than a day from the arrival time (not a timestamp after all).
+    public var bandTime: Date? {
+        guard payload.count >= 5 else { return nil }
+        let seconds = UInt32(payload[1]) | UInt32(payload[2]) << 8 | UInt32(payload[3]) << 16 | UInt32(payload[4]) << 24
+        let time = Date(timeIntervalSince1970: TimeInterval(seconds))
+        return abs(time.timeIntervalSince(at)) <= 86_400 ? time : nil
+    }
 }
 
 /// Events emitted by a band transport.

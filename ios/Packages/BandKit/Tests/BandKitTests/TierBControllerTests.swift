@@ -267,6 +267,16 @@ struct TierBControllerTests {
 
     // MARK: Events
 
+    /// The band stamps its events: bytes 1–4 of the payload are unix seconds (payload of a real charging-on event).
+    @Test func eventsCarryTheBandsOwnTime() {
+        let arrived = Date(timeIntervalSince1970: 1_793_584_800)
+        let event = BandEventRecord(id: 7, payload: [0x00, 0x42, 0xEE, 0xE7, 0x6A, 0x58, 0x3D, 0x00, 0x00], at: arrived)
+        #expect(event.bandTime == Date(timeIntervalSince1970: 0x6AE7_EE42))
+        let notATime = BandEventRecord(id: 7, payload: [0x00, 0x01, 0x00, 0x00, 0x00], at: arrived)
+        #expect(notATime.bandTime == nil)
+        #expect(BandEventRecord(id: 7, payload: [0x00], at: arrived).bandTime == nil)
+    }
+
     @Test func bandEventsAreEmittedAndUnknownIdsAreKept() async {
         let h = Harness()
         await h.controller.connectionOpened()
