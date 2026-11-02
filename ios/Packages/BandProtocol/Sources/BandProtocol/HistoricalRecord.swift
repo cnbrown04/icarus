@@ -44,6 +44,7 @@
 /// | 74, 76, 78 | 2 each | ambient light and LED drives u16 | [Community-verified], meaning per slot unconfirmed |
 /// | 80 | 2 | respiratory rate raw u16 | [Community-verified] |
 /// | 82 | 2 | signal quality u16 | [Community-verified] |
+/// | 92 | 2 | slow u16, read only when the payload reaches it (`aux92Raw`) | [Unverified]: OpenStrap names it a temperature candidate |
 ///
 /// ## Cross-check against golden frames
 /// The eight `historical_seq0c_*` frames in `shared/golden/frames.json` are **version 12** records
@@ -107,6 +108,12 @@ public struct HistoricalRecord: Sendable, Equatable {
     public let respRateRaw: UInt16
     /// Signal quality raw (offset 82). The raw-to-fraction mapping is not verified.
     public let signalQuality: UInt16
+    /// The u16 at frame offset 92, or nil when the payload ends before it. OpenStrap (`protocol` records.dart,
+    /// inner[88]) finds it moving ~0.02 counts/s, a temperature-shaped rate, and names it a candidate without
+    /// claiming it. Stored raw for the Band Tests flow to judge; nothing reads it as temperature.
+    public let aux92Raw: UInt16?
+    /// Bytes in the record's payload, so a capture shows what each firmware actually sends.
+    public let payloadLength: Int
 
     public init(
         version: UInt8 = supportedVersion,
@@ -125,7 +132,9 @@ public struct HistoricalRecord: Sendable, Equatable {
         ledDrive1: UInt16,
         ledDrive2: UInt16,
         respRateRaw: UInt16,
-        signalQuality: UInt16
+        signalQuality: UInt16,
+        aux92Raw: UInt16? = nil,
+        payloadLength: Int = 0
     ) {
         self.version = version
         self.unixSeconds = unixSeconds
@@ -144,6 +153,8 @@ public struct HistoricalRecord: Sendable, Equatable {
         self.ledDrive2 = ledDrive2
         self.respRateRaw = respRateRaw
         self.signalQuality = signalQuality
+        self.aux92Raw = aux92Raw
+        self.payloadLength = payloadLength
     }
 
     /// One accelerometer triplet, in g.
@@ -195,6 +206,7 @@ public struct HistoricalRecord: Sendable, Equatable {
         static let ledDrive2 = 71
         static let respRateRaw = 73
         static let signalQuality = 75
+        static let aux92 = 85
     }
 
     /// Five fixed R-R slots (payload 16–25) precede the next fixed field, so at most this many
@@ -240,7 +252,9 @@ public struct HistoricalRecord: Sendable, Equatable {
             ledDrive1: u16(payload, Layout.ledDrive1),
             ledDrive2: u16(payload, Layout.ledDrive2),
             respRateRaw: u16(payload, Layout.respRateRaw),
-            signalQuality: u16(payload, Layout.signalQuality)
+            signalQuality: u16(payload, Layout.signalQuality),
+            aux92Raw: payload.count >= Layout.aux92 + 2 ? u16(payload, Layout.aux92) : nil,
+            payloadLength: payload.count
         )
     }
 

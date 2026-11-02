@@ -102,6 +102,26 @@ struct HistoricalRecordTests {
 
     // MARK: Parsing
 
+    /// The u16 at frame offset 92 is read when the payload reaches it, and nil on the 77-byte minimum.
+    @Test func readsTheFrame92CandidateOnlyWhenPresent() throws {
+        let short = try HistoricalRecord.parse(v24Frame(payload: v24Payload()))
+        #expect(short.aux92Raw == nil)
+        #expect(short.payloadLength == 77)
+
+        var long = v24Payload() + [UInt8](repeating: 0, count: 12)
+        littleEndian(UInt16(0x0123), into: &long, at: 85)
+        let record = try HistoricalRecord.parse(v24Frame(payload: long))
+        #expect(record.aux92Raw == 0x0123)
+        #expect(record.payloadLength == 89)
+    }
+
+    @Test func eventKindsKeepTheirIdAndStorageName() {
+        #expect(BandEventKind(id: 7).id == 7)
+        #expect(BandEventKind(id: 7).storageName == "charging_on")
+        #expect(BandEventKind(id: 42).id == 42)
+        #expect(BandEventKind(id: 42).storageName == "event_42")
+    }
+
     @Test func parsesEveryDocumentedField() throws {
         let record = try HistoricalRecord.parse(v24Frame(payload: v24Payload()))
 
