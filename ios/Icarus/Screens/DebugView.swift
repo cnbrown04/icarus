@@ -110,6 +110,7 @@ struct DebugView: View {
                     .font(.system(.footnote, design: .monospaced))
                     .textSelection(.enabled)
             }
+            #if DEBUG
             Button(serverRunning ? "Stop server" : "Start server") {
                 if serverRunning {
                     DebugServer.shared.stop()
@@ -118,6 +119,7 @@ struct DebugView: View {
                 }
                 refreshServerState()
             }
+            #endif
             if let serverError {
                 Text(serverError)
                     .font(.footnote)
@@ -132,9 +134,11 @@ struct DebugView: View {
     }
 
     private func refreshServerState() {
+        #if DEBUG
         serverRunning = DebugServer.shared.isRunning
         serverURL = DebugServer.shared.url
         serverError = DebugServer.shared.lastError
+        #endif
     }
 
     /// The most recent `minute_metric` and `sleep_session` rows, read straight from the store
