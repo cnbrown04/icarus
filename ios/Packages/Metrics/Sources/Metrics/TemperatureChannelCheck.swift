@@ -137,7 +137,7 @@ public enum TemperatureChannelCheck {
         return sxy / (sxx * syy).squareRoot()
     }
 
-    static func standardDeviation(_ values: [Double]) -> Double? {
+    public static func standardDeviation(_ values: [Double]) -> Double? {
         guard values.count >= 2 else { return nil }
         let mean = values.reduce(0, +) / Double(values.count)
         return (values.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(values.count - 1)).squareRoot()

@@ -20,6 +20,11 @@ enum BandTestAction: String, Codable, Sendable {
     case chargingOn
     case chargingOff
     case buzz
+    case singleTap
+    case tripleTap
+    case alarm
+    case bluetoothOff
+    case offWristCharging
 
     var label: String {
         switch self {
@@ -30,21 +35,79 @@ enum BandTestAction: String, Codable, Sendable {
         case .chargingOn: "Charging on"
         case .chargingOff: "Charging off"
         case .buzz: "Buzz"
+        case .singleTap: "Single tap"
+        case .tripleTap: "Triple tap"
+        case .alarm: "Band alarm"
+        case .bluetoothOff: "Bluetooth off"
+        case .offWristCharging: "Charging off the wrist"
         }
     }
 }
 
-/// One step of a run, in order.
+/// A guided run: which steps, in order.
+enum BandTestSuite: String, Codable, CaseIterable, Sendable {
+    /// The first run: still, band off and back on (temperature), double tap, the charger twice, a buzz.
+    case wearAndCharging
+    /// What the first run did not cover: light and dark, cold and recovery, buzz lengths, tap patterns, the band's
+    /// own alarm, a Bluetooth drop, charging off the wrist.
+    case sensors
+
+    var title: String {
+        switch self {
+        case .wearAndCharging: "Wear and Charging"
+        case .sensors: "Sensors"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .wearAndCharging:
+            "About 50 minutes: still, band off for 20, back on for 20, a double tap, the charger twice and a buzz."
+        case .sensors:
+            "About 22 minutes: dark and light, something cold, short and long buzzes, taps, the band's alarm, Bluetooth off, the charger off the wrist."
+        }
+    }
+
+    var steps: [BandTestStep] {
+        switch self {
+        case .wearAndCharging:
+            [.still, .off, .on, .doubleTap, .chargerOn, .chargerOff, .chargerOnAgain, .chargerOffAgain, .buzz]
+        case .sensors:
+            [.still, .dark, .light, .cold, .recover, .shortBuzz, .longBuzz, .singleTaps, .tripleTaps, .doubleTaps,
+             .bandAlarm, .bluetoothOff, .offWristCharger, .backOn]
+        }
+    }
+
+    /// The suite a stored run used, from its steps.
+    static func of(_ marks: [BandTestMark]) -> BandTestSuite {
+        marks.contains { $0.step >= BandTestStep.dark.rawValue } ? .sensors : .wearAndCharging
+    }
+}
+
+/// One step. The raw value is what `band_test_mark.step` stores, so values never change once used.
 enum BandTestStep: Int, CaseIterable, Codable, Sendable {
-    case still
-    case off
-    case on
-    case doubleTap
-    case chargerOn
-    case chargerOff
-    case chargerOnAgain
-    case chargerOffAgain
-    case buzz
+    case still = 0
+    case off = 1
+    case on = 2
+    case doubleTap = 3
+    case chargerOn = 4
+    case chargerOff = 5
+    case chargerOnAgain = 6
+    case chargerOffAgain = 7
+    case buzz = 8
+    case dark = 9
+    case light = 10
+    case cold = 11
+    case recover = 12
+    case shortBuzz = 13
+    case longBuzz = 14
+    case singleTaps = 15
+    case tripleTaps = 16
+    case doubleTaps = 17
+    case bandAlarm = 18
+    case bluetoothOff = 19
+    case offWristCharger = 20
+    case backOn = 21
 
     var title: String {
         switch self {
@@ -55,6 +118,19 @@ enum BandTestStep: Int, CaseIterable, Codable, Sendable {
         case .chargerOn, .chargerOnAgain: "Put the Band on Its Charger"
         case .chargerOff, .chargerOffAgain: "Take It Off the Charger"
         case .buzz: "Feel for a Buzz"
+        case .dark: "Cover the Band"
+        case .light: "Shine a Light on It"
+        case .cold: "Cool the Band"
+        case .recover: "Let It Warm Back Up"
+        case .shortBuzz: "Short Buzz"
+        case .longBuzz: "Long Buzz"
+        case .singleTaps: "Single Taps"
+        case .tripleTaps: "Triple Taps"
+        case .doubleTaps: "Double Taps"
+        case .bandAlarm: "Wait for the Band's Alarm"
+        case .bluetoothOff: "Turn Bluetooth Off"
+        case .offWristCharger: "Charge It Off Your Wrist"
+        case .backOn: "Put the Band Back On"
         }
     }
 
@@ -69,39 +145,62 @@ enum BandTestStep: Int, CaseIterable, Codable, Sendable {
         case .chargerOnAgain: "Put the charger back on once more."
         case .chargerOffAgain: "Take it off once more."
         case .buzz: "Keep the band on. It buzzes when this step starts."
+        case .dark: "Keep the band on and cover it completely with your other hand."
+        case .light: "Keep the band on and shine your phone's flashlight straight at it from Control Center."
+        case .cold: "Keep the band on and hold something cold against it, like a cold can or ice in a bag. Keep it dry."
+        case .recover: "Take the cold thing away and keep the band on while it warms back up."
+        case .shortBuzz: "Keep the band on. It buzzes once when this step starts."
+        case .longBuzz: "Keep the band on. It gives a long buzz when this step starts."
+        case .singleTaps: "Tap the band once, three times, about 10 seconds apart."
+        case .tripleTaps: "Triple-tap the band, wait 15 seconds, then triple-tap again."
+        case .doubleTaps: "Double-tap the band three times, about 10 seconds apart."
+        case .bandAlarm: "Keep the band on. The band's own alarm is set for one minute from now; wait for it to buzz."
+        case .bluetoothOff: "Turn Bluetooth off in Control Center, wait a minute, then turn it back on before tapping Done."
+        case .offWristCharger: "Take the band off and put it on its charger, off your wrist."
+        case .backOn: "Take it off the charger and put the band back on your wrist."
         }
     }
 
     /// The least time the step runs before Done is offered, seconds. Temperature needs its full spans.
     var minimumSeconds: Int {
         switch self {
-        case .still: 180
+        case .still, .cold, .recover, .offWristCharger: 180
         case .off, .on: 1_200
-        case .doubleTap: 45
-        case .chargerOn, .chargerOff, .chargerOnAgain, .chargerOffAgain: 30
-        case .buzz: 15
+        case .doubleTap, .singleTaps, .tripleTaps, .doubleTaps: 45
+        case .chargerOn, .chargerOff, .chargerOnAgain, .chargerOffAgain, .longBuzz: 30
+        case .buzz, .shortBuzz: 15
+        case .dark, .light, .backOn: 60
+        case .bandAlarm: 90
+        case .bluetoothOff: 75
         }
     }
 
     /// The notification when this step's time is up, naming what comes next.
     var doneNotice: String {
         switch self {
-        case .still: "Time to take the band off and leave it on a table."
+        case .still: "Time for the next step."
         case .off: "20 minutes are up. Put the band back on."
         case .on: "20 minutes are up. Open Icarus for the last few steps."
+        case .cold: "Time to take the cold away."
+        case .offWristCharger: "Time to put the band back on."
         default: "Open Icarus for the next step."
         }
     }
 
     var action: BandTestAction {
         switch self {
-        case .still: .none
+        case .still, .dark, .light, .cold, .recover: .none
         case .off: .wristOff
-        case .on: .wristOn
-        case .doubleTap: .doubleTap
+        case .on, .backOn: .wristOn
+        case .doubleTap, .doubleTaps: .doubleTap
         case .chargerOn, .chargerOnAgain: .chargingOn
         case .chargerOff, .chargerOffAgain: .chargingOff
-        case .buzz: .buzz
+        case .buzz, .shortBuzz, .longBuzz: .buzz
+        case .singleTaps: .singleTap
+        case .tripleTaps: .tripleTap
+        case .bandAlarm: .alarm
+        case .bluetoothOff: .bluetoothOff
+        case .offWristCharger: .offWristCharging
         }
     }
 }
@@ -137,11 +236,47 @@ struct BandTestResults: Codable, Sendable, Equatable {
         let greenWithheld: String?
     }
 
+    /// How one channel moved between the dark and the lit step, against the still baseline's spread.
+    struct LightFinding: Codable, Sendable, Equatable {
+        let channel: String
+        let dark: Double?
+        let lit: Double?
+        /// |lit − dark| beyond three baseline spreads (and at least 2 counts).
+        let responds: Bool
+    }
+
+    /// One temperature-like channel through the cold and recovery steps.
+    struct ColdFinding: Codable, Sendable, Equatable {
+        let channel: String
+        /// The cold step's last minute minus the still baseline's last minute.
+        let coldChange: Double?
+        /// The recovery step's last minute minus the cold step's last minute.
+        let recoveryChange: Double?
+        /// Moved one way with cold and back after, each by at least 2 counts.
+        let responds: Bool
+    }
+
+    /// The gap from a buzz's start event (60) to the next event 100, per buzz step.
+    struct BuzzFinding: Codable, Sendable, Equatable {
+        let step: BandTestStep
+        let gapSeconds: Double?
+    }
+
+    /// Charging with the band off the wrist: whether the band kept records, and how frame 92 moved.
+    struct OffWristChargingFinding: Codable, Sendable, Equatable {
+        let records: Int
+        let frame92Change: Double?
+    }
+
     let events: [EventFinding]
     /// Actions done (not skipped) during which the band sent no event.
     let silentActions: [BandTestAction]
     let temperature: [TemperatureFinding]
     let breathing: [BreathingFinding]
+    var light: [LightFinding] = []
+    var cold: [ColdFinding] = []
+    var buzzes: [BuzzFinding] = []
+    var offWristCharging: OffWristChargingFinding? = nil
     /// Band records found inside the run, so an empty result reads as "not synced", not "nothing found".
     let recordCount: Int
 }
@@ -158,6 +293,16 @@ enum BandTestAnalysis {
         ("Frame 76", { $0.frame76 }),
         ("Frame 78", { $0.frame78 }),
         ("Frame 92", { $0.frame92 }),
+    ]
+
+    /// The channels judged for light: the temperature candidates and the green light.
+    static let lightChannels: [(name: String, value: @Sendable (BandTestSample) -> Int?)] = [
+        ("Frame 72", { $0.frame72 }),
+        ("Frame 74", { $0.frame74 }),
+        ("Frame 76", { $0.frame76 }),
+        ("Frame 78", { $0.frame78 }),
+        ("Frame 92", { $0.frame92 }),
+        ("Green Light", { $0.ppgGreen }),
     ]
 
     /// Events placed at the band's own time (payload bytes 1–4, when they read as a time within a day of arrival)
@@ -254,7 +399,7 @@ enum BandTestAnalysis {
             return samples.filter { $0.tsMs >= mark.startMs && $0.tsMs < mark.endMs }
         }
         let still = span(.still), off = span(.off), on = span(.on)
-        let temperature = temperatureChannels.map { channel -> BandTestResults.TemperatureFinding in
+        let temperature = on == nil ? [] : temperatureChannels.map { channel -> BandTestResults.TemperatureFinding in
             func points(_ span: [BandTestSample]?) -> [(t: Double, v: Double)] {
                 (span ?? []).compactMap { sample in channel.value(sample).map { (Double(sample.tsMs) / 1000, Double($0)) } }
             }
@@ -285,8 +430,57 @@ enum BandTestAnalysis {
             }
         }
 
-        return BandTestResults(events: eventFindings, silentActions: silentActions, temperature: temperature,
-                               breathing: breathing, recordCount: samples.count)
+        var results = BandTestResults(events: eventFindings, silentActions: silentActions, temperature: temperature,
+                                      breathing: breathing, recordCount: samples.count)
+
+        // Sensors run. Light: each channel's mean in the dark and the lit step against the baseline's spread.
+        func values(_ span: [BandTestSample]?, _ value: (BandTestSample) -> Int?) -> [Double] {
+            (span ?? []).compactMap(value).map(Double.init)
+        }
+        func mean(_ values: [Double]) -> Double? { values.isEmpty ? nil : values.reduce(0, +) / Double(values.count) }
+        func lastMinute(_ span: [BandTestSample]?, _ value: (BandTestSample) -> Int?) -> Double? {
+            guard let span, let end = span.map(\.tsMs).max() else { return nil }
+            return mean(values(span.filter { $0.tsMs > end - 60_000 }, value))
+        }
+        if let dark = span(.dark), let lit = span(.light) {
+            results.light = Self.lightChannels.map { channel in
+                let darkMean = mean(values(dark, channel.value))
+                let litMean = mean(values(lit, channel.value))
+                let spread = TemperatureChannelCheck.standardDeviation(values(still, channel.value)) ?? 0
+                let responds = darkMean.flatMap { d in litMean.map { abs($0 - d) >= max(2, 3 * spread) } } ?? false
+                return .init(channel: channel.name, dark: darkMean, lit: litMean, responds: responds)
+            }
+        }
+        // Cold and recovery: the channels that behave like temperature.
+        if let coldSpan = span(.cold), let recovery = span(.recover) {
+            results.cold = temperatureChannels.map { channel in
+                let base = lastMinute(still, channel.value)
+                let cold = lastMinute(coldSpan, channel.value)
+                let back = lastMinute(recovery, channel.value)
+                let coldChange = base.flatMap { b in cold.map { $0 - b } }
+                let recoveryChange = cold.flatMap { c in back.map { $0 - c } }
+                let responds = coldChange.flatMap { c in recoveryChange.map { r in
+                    abs(c) >= 2 && abs(r) >= 2 && (c > 0) != (r > 0)
+                } } ?? false
+                return .init(channel: channel.name, coldChange: coldChange, recoveryChange: recoveryChange,
+                             responds: responds)
+            }
+        }
+        // Buzzes: the gap from the buzz event (60) to the next event 100 inside each buzz step.
+        results.buzzes = done.compactMap { mark -> BandTestResults.BuzzFinding? in
+            guard let step = step(of: mark), step.action == .buzz else { return nil }
+            let inStep = unique.filter { owningStep($0.tsMs, marks: marks) == mark }
+            guard let start = inStep.first(where: { $0.id == 60 })?.tsMs else { return .init(step: step, gapSeconds: nil) }
+            let end = inStep.first { $0.id == 100 && $0.tsMs >= start }?.tsMs
+            return .init(step: step, gapSeconds: end.map { Double($0 - start) / 1000 })
+        }
+        // Charging off the wrist: records kept, and how frame 92 moved across the step.
+        if let charging = span(.offWristCharger) {
+            let first = charging.first?.frame92, last = charging.last?.frame92
+            results.offWristCharging = .init(records: charging.count,
+                                             frame92Change: first.flatMap { f in last.map { Double($0 - f) } })
+        }
+        return results
     }
 }
 
