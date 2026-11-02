@@ -273,11 +273,16 @@ struct TierBControllerTests {
         for id: UInt8 in [9, 10, 14, 23, 21] {
             await h.controller.receive(eventFrame(id))
         }
-        #expect(h.events.all.contains(.bandEvent(.wristOn)))
-        #expect(h.events.all.contains(.bandEvent(.wristOff)))
-        #expect(h.events.all.contains(.bandEvent(.doubleTap)))
-        #expect(h.events.all.contains(.bandEvent(.bleBonded)))
-        #expect(h.events.all.contains(.bandEvent(.unknown(21))))
+        #expect(h.events.all.hasBandEvent(.wristOn))
+        #expect(h.events.all.hasBandEvent(.wristOff))
+        #expect(h.events.all.hasBandEvent(.doubleTap))
+        #expect(h.events.all.hasBandEvent(.bleBonded))
+        #expect(h.events.all.hasBandEvent(.unknown(21)))
+        // The whole event travels: its id and payload, so an unnamed id can be identified later.
+        let unknown = h.events.all.compactMap { event -> BandEventRecord? in
+            if case let .bandEvent(record) = event, record.id == 21 { record } else { nil }
+        }
+        #expect(unknown.count == 1)
     }
 
     /// The battery EVENT (id 3) carries a percent [Unverified]; the controller decodes it and
@@ -286,7 +291,7 @@ struct TierBControllerTests {
         let h = Harness()
         await h.controller.connectionOpened()
         await h.controller.receive(Frame(type: PacketType.event.rawValue, seq: 0, cmd: 3, payload: [0xD8, 0x03]))
-        #expect(h.events.all.contains(.bandEvent(.batteryLevel)))
+        #expect(h.events.all.hasBandEvent(.batteryLevel))
         #expect(h.events.all.contains(.battery(98)))
     }
 
@@ -326,7 +331,7 @@ struct TierBControllerTests {
         #expect(lastArming()?.payload == BandCommand.setAlarmTime(unix: UInt32(soon.timeIntervalSince1970)).payload)
 
         await h.controller.receive(eventFrame(57))
-        #expect(h.events.all.contains(.bandEvent(.strapDrivenAlarmExecuted)))
+        #expect(h.events.all.hasBandEvent(.strapDrivenAlarmExecuted))
         #expect(lastArming()?.payload == BandCommand.setAlarmTime(unix: UInt32(later.timeIntervalSince1970)).payload)
     }
 

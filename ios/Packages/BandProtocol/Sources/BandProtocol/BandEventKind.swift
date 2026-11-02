@@ -30,6 +30,40 @@ public enum BandEventKind: Sendable, Equatable {
         default: self = .unknown(id)
         }
     }
+
+    /// The event id this kind was decoded from.
+    public var id: UInt8 {
+        switch self {
+        case .batteryLevel: 3
+        case .chargingOn: 7
+        case .chargingOff: 8
+        case .wristOn: 9
+        case .wristOff: 10
+        case .rtcLost: 13
+        case .doubleTap: 14
+        case .bleBonded: 23
+        case .strapDrivenAlarmExecuted: 57
+        case .hapticsFired: 60
+        case let .unknown(id): id
+        }
+    }
+
+    /// Stable name for storage (`band_event.kind`): snake case for named ids, `event_<id>` otherwise.
+    public var storageName: String {
+        switch self {
+        case .batteryLevel: "battery_level"
+        case .chargingOn: "charging_on"
+        case .chargingOff: "charging_off"
+        case .wristOn: "wrist_on"
+        case .wristOff: "wrist_off"
+        case .rtcLost: "rtc_lost"
+        case .doubleTap: "double_tap"
+        case .bleBonded: "ble_bonded"
+        case .strapDrivenAlarmExecuted: "alarm_executed"
+        case .hapticsFired: "haptics_fired"
+        case let .unknown(id): "event_\(id)"
+        }
+    }
 }
 
 public enum BandEventParser {

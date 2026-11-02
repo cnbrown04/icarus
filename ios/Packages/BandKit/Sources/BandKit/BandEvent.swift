@@ -15,6 +15,22 @@ public struct DiscoveredBand: Sendable, Equatable, Identifiable {
     }
 }
 
+/// One EVENT (0x30) frame as received: its id (the frame's `cmd` byte), the decoded kind, the payload bytes
+/// and when it arrived.
+public struct BandEventRecord: Sendable, Equatable {
+    public let id: UInt8
+    public let kind: BandEventKind
+    public let payload: [UInt8]
+    public let at: Date
+
+    public init(id: UInt8, payload: [UInt8], at: Date) {
+        self.id = id
+        self.kind = BandEventKind(id: id)
+        self.payload = payload
+        self.at = at
+    }
+}
+
 /// Events emitted by a band transport.
 public enum BandEvent: Sendable, Equatable {
     case state(ConnectionState)
@@ -28,8 +44,9 @@ public enum BandEvent: Sendable, Equatable {
     case battery(Int)
     /// Tier B link state changed (PLAN.md 5.3.6, 7.2).
     case tierB(TierBState)
-    /// An EVENT (0x30) frame from the band, such as wrist on/off or a double tap (PLAN.md 5.3.4).
-    case bandEvent(BandEventKind)
+    /// An EVENT (0x30) frame from the band, such as wrist on/off or a double tap (PLAN.md 5.3.4), with its
+    /// payload bytes so unnamed ids can be identified later.
+    case bandEvent(BandEventRecord)
     /// Best-effort identity strings decoded from the GET_HELLO reply, emitted once per connection
     /// after the handshake completes (PLAN.md 5.3.4). Fields may all be nil when the reply holds
     /// nothing confident.

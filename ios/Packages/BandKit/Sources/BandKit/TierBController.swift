@@ -1047,7 +1047,7 @@ public actor TierBController {
             }
         } else if let kind = BandEventParser.parse(frame) {
             BandLog.tierB(.debug, "event: \(kind)")
-            emit(.bandEvent(kind))
+            emit(.bandEvent(BandEventRecord(id: frame.cmd, payload: frame.payload, at: clock.now())))
             if kind == .batteryLevel || kind == .chargingOn || kind == .chargingOff {
                 // Payload layouts for these events are not pinned (whoop-parity §3.7), so the raw
                 // bytes go to the log for hardware capture rather than being guessed at.

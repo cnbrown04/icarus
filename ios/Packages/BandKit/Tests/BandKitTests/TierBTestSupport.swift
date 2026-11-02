@@ -352,3 +352,12 @@ final class RingStrap: @unchecked Sendable {
         }
     }
 }
+
+extension Array where Element == BandEvent {
+    /// True when an EVENT frame of this kind was emitted.
+    func hasBandEvent(_ kind: BandEventKind) -> Bool {
+        contains { event in
+            if case let .bandEvent(record) = event { record.kind == kind } else { false }
+        }
+    }
+}

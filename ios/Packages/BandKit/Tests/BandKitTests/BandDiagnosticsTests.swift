@@ -115,7 +115,7 @@ struct BandDiagnosticsTests {
 
         await h.controller.receive(eventFrame(7))
         #expect(h.events.all.contains(.charging(true)))
-        #expect(h.events.all.contains(.bandEvent(.chargingOn)))
+        #expect(h.events.all.hasBandEvent(.chargingOn))
         // Inside the 10-minute window, so only the forced refresh can produce this read.
         await settle { count(h, 26) == reads + 1 }
 
